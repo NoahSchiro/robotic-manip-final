@@ -29,10 +29,10 @@ A rigid object rests on a planar surface. Its friction coefficient and mass dist
 = Approaches
 All methods share the same parameter estimator and the same MPC controller. Only the probe-selection policy differs.
 
-- **Baseline**: no probing. use adaptive MPC and estimate parameters during goal-directed pushing phase.
-- **Fixed probing**: predetermine probe sequence.
-- **Online adaptive probing**: iterate among potential pushes online and choose the most informative one.
-- **Learned probing**: like ASID, train a neural network to select pushes from observation history.
+- *Baseline*: no probing. use adaptive MPC and estimate parameters during goal-directed pushing phase.
+- *Fixed probing*: predetermine probe sequence.
+- *Online adaptive probing*: iterate among potential pushes online and choose the most informative one.
+- *Learned probing*: like ASID, train a neural network to select pushes from observation history.
 
 == Course content covered
 - Contact and friction modeling in simulation
@@ -51,9 +51,9 @@ Each method is evaluated over a set of randomized boxes and target poses, using:
 We will also vary the probing budget to characterize the trade-off between probing effort and task performance.
 
 = Milestones
-- **Progress update 1**: Working Drake pushing simulation with a randomized box. Parameter estimator implemented. Push library defined. No-probing baseline (adaptive MPC) running end to end.
-- **Progress update 2**: Fixed and online adaptive probing implemented. Evaluation pipeline and metrics complete. Preliminary results for three of the four methods.
-- **Final proposal / project completion**: Learned probing trained and evaluated. Full comparison, budget-sweep analysis, final video, and report.
+- *Progress update 1*: Working Drake pushing simulation with a randomized box. Parameter estimator implemented. Push library defined. No-probing baseline (adaptive MPC) running end to end.
+- *Progress update 2*: Fixed and online adaptive probing implemented. Evaluation pipeline and metrics complete. Preliminary results for three of the four methods.
+- *Final proposal / project completion*: Learned probing trained and evaluated. Full comparison, budget-sweep analysis, final video, and report.
 
 = Division of Work
 
