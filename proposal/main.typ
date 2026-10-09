@@ -21,18 +21,21 @@ We will build a simulated planar pushing testbed in Drake and compare four probi
 A robot manipulating an unfamiliar object cannot assume it knows the object's friction or mass distribution. These properties govern how the object responds to contact and directly limit placement accuracy. The robot can interact with the object to learn them, but interaction costs time. How much probing is worthwhile and how the probes should be chosen? This project isolates that question in a simple, controlled setting.
 
 = Problem Setup
-A rigid object rests on a planar surface. Its friction coefficient and mass distribution are unknown. The robot pushes the box with a point or flat-faced pusher. The valid action space is wrench on any point of the surface of the object. The action space is used for both probing and goal-directed pushing. The task has two phases: 
+A rigid object rests on a planar surface. Its friction coefficient and mass distribution are unknown. The robot pushes the box with a point or flat-faced pusher. The valid action space is a finite set of possible pushes, defined by location of contact and the motion profile (speed, contact time) of the pusher. The action space is used for both probing and goal-directed pushing.
+The estimator receives the object and pusher pose and velocity states and contact force measurements, but not the physical parameters of the object. (In the real world, these would be estimated from force-torque sensors and vision.) The goal is to push the object to a target pose with minimal error.
 
-1. Probe the object to estimate its parameters.
-2. Push it to a target pose.
+Methods with dedicated probing have two phases, whereas the baseline method skips to the pushing phase:
+
+1. Probing: contact the object to estimate its parameters.
+2. Goal-directed pushing: contact the object to move it to a target pose.
 
 = Approaches
-All methods share the same parameter estimator and the same MPC controller. Only the probe-selection policy differs.
+All methods share the same parameter estimator and the same MPC controller (which receives the state information and estimated parameters), and continue updating the estimator during goal-directed pushing. Only the probe-selection policy differs.
 
 - *Baseline*: no probing. use adaptive MPC and estimate parameters during goal-directed pushing phase.
 - *Fixed probing*: predetermine probe sequence.
-- *Online adaptive probing*: iterate among potential pushes online and choose the most informative one.
-- *Learned probing*: like ASID, train a neural network to select pushes from observation history.
+- *Online adaptive probing*: evaluate candidate probesand select the one that maximizes expected information gain.
+- *Learned probing*: train a neural probing policy in randomized simulation using an information-based reward inspired by ASID.
 
 == Course content covered
 - Contact and friction modeling in simulation
@@ -42,18 +45,19 @@ All methods share the same parameter estimator and the same MPC controller. Only
 - Learning-based policies
 
 == Evaluation
-Each method is evaluated over a set of randomized boxes and target poses, using:
+Each method is evaluated over the same set of randomized boxes and target poses, using:
 
 - Final placement error (position and orientation).
-- Elapsed time and push count.
+- Elapsed time and push count (including probing and placement, and reporting computation time).
 - Parameter estimation error.
 
-We will also vary the probing budget to characterize the trade-off between probing effort and task performance.
+We will also vary the probing budget (the number of dedicated probing pushes allowed) to characterize the trade-off between probing effort and task performance.
 
 = Milestones
-- *Progress update 1*: Working Drake pushing simulation with a randomized box. Parameter estimator implemented. Push library defined. No-probing baseline (adaptive MPC) running end to end.
-- *Progress update 2*: Fixed and online adaptive probing implemented. Evaluation pipeline and metrics complete. Preliminary results for three of the four methods.
-- *Final proposal / project completion*: Learned probing trained and evaluated. Full comparison, budget-sweep analysis, final video, and report.
+- *Progress update 1*: Working Drake pushing simulation with a randomized box. Push library defined. Compare MPC using true parameters against MPC using fixed nominal parameters to assess potential benefit of identification. Check whether the push library distinguishes the unknown parameters (and reduce the parameter set if necessary).
+- *Progress update 2*: Parameter estimator implemented. No-probing adaptive MPC baseline running end-to-end.
+- *Progress update 3*: Fixed and online adaptive probing implemented. Evaluation pipeline and metrics complete. Preliminary results for three of the four methods.
+- *Project completion*: Learned probing trained and evaluated. Full comparison, budget-sweep analysis, final video, and report.
 
 = Division of Work
 
@@ -74,6 +78,6 @@ Mark Rifkin: ...
 Noah Schiro: ...
 
 = References
-- #link("https://arxiv.org/abs/2404.12308")[ASID: Active Exploration for System Identification in Robotic Manipulation]
-- #link("https://arxiv.org/pdf/2510.19974")[Push Anything: Single- and Multi-Object Pushing From First Sight with Contact-Implicit MPC]
+- #link("https://arxiv.org/abs/2404.12308")[ASID: Active Exploration for System Identification in Robotic Manipulation]: reference on offline learning of information-maximizing exploration policies
+- #link("https://arxiv.org/pdf/2510.19974")[Push Anything: Single- and Multi-Object Pushing From First Sight with Contact-Implicit MPC]: reference on predictive control for planar pushing with unknown parameters. Implements CI-MPC which has a continuous rather than discrete action space (we use a discrete action space and focus on probing strategies).
 
