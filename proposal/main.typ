@@ -9,71 +9,83 @@
 #align(center, text(size: 14pt, weight: "bold")[#title])
 #align(center, authors)
 
-= Deliverable
-We will build a simulated planar pushing testbed in Drake and compare four probing strategies for identifying unknown physical parameters of a box before pushing it to a target pose. The deliverables are:
+= Overview
+We will build a simulated planar pushing testbed in Drake and use it to compare four strategies for probing a box before pushing it to a target pose. Each box has unknown physical parameters: its friction coefficient, its mass, and the offset of its center of mass. By the end of the project we will have:
 
-- A pushing simulation with a randomized object with variable (unknown) friction coefficient, mass, and center-of-mass offset.
-- A shared parameter estimator and MPC controller.
-- Four probing strategies built on top of the controller.
-- A quantitative comparison of the strategies.
+- A pushing simulation in which each box is randomized with different friction, mass, and center-of-mass offset.
+- A perception pipeline that estimates the box's pose from simulated camera images.
+- A parameter estimator and an MPC controller shared by all methods.
+- Four probing strategies built on top of that controller.
+- A quantitative comparison of how the strategies perform.
 
 = Motivation
-A robot manipulating an unfamiliar object cannot assume it knows the object's friction or mass distribution. These properties govern how the object responds to contact and directly limit placement accuracy. The robot can interact with the object to learn them, but interaction costs time. How much probing is worthwhile and how the probes should be chosen? This project isolates that question in a simple, controlled setting.
+When a robot handles an object it has never seen, it cannot assume it knows how slippery the object is or how its mass is distributed. These properties determine how the object moves when pushed, so they directly limit how accurately the robot can place it. The robot can learn them by interacting with the object first, but every probe costs time. This raises two questions: how much probing is worth doing, and which probes are most useful? This project studies those questions in a simple, controlled setting.
 
 = Problem Setup
-A rigid object rests on a planar surface. Its friction coefficient and mass distribution are unknown. The robot pushes the box with a point or flat-faced pusher. The valid action space is wrench on any point of the surface of the object. The action space is used for both probing and goal-directed pushing. The task has two phases: 
+A rigid box rests on a flat surface. Its friction coefficient and mass distribution are unknown to the robot. The robot interacts with the box using a point or flat-faced pusher, and can apply a force at any point on the box's surface. The same set of actions is used both for probing and for pushing toward the goal.
 
-1. Probe the object to estimate its parameters.
-2. Push it to a target pose.
+The robot has two simulated sensors in the Drake environment. A force sensor on the pusher measures the contact force applied to the box, and an RGB-D camera observes the scene. Rather than reading the box's pose directly from the simulator, the robot estimates it from the rendered camera images with a perception pipeline: it segments the box from the depth point cloud and registers it against the box's known geometry to recover its position and orientation.
+
+The task has two phases:
+
++ *Probe* the box to estimate its parameters.
++ *Push* the box to a target pose.
 
 = Approaches
-All methods share the same parameter estimator and the same MPC controller. Only the probe-selection policy differs.
+All four methods use the same parameter estimator and the same MPC controller. The only difference between them is how they choose probes.
 
-- *Baseline*: no probing. use adaptive MPC and estimate parameters during goal-directed pushing phase.
-- *Fixed probing*: predetermine probe sequence.
-- *Online adaptive probing*: iterate among potential pushes online and choose the most informative one.
-- *Learned probing*: like ASID, train a neural network to select pushes from observation history.
+- *No probing (baseline):* Skip the probing phase entirely. An adaptive MPC controller updates its parameter estimates while pushing toward the goal.
+- *Fixed probing:* Run the same predetermined sequence of probes on every box.
+- *Online adaptive probing:* At each step, evaluate a set of candidate pushes and pick the one expected to be most informative.
+- *Learned probing:* Following ASID, train a neural network that chooses the next push based on the history of observations.
 
-== Course content covered
+== Parameter Estimator
+The shared estimator uses measured pusher forces and perceived box poses to estimate friction, mass, and center-of-mass offset, along with its uncertainty, which online adaptive probing needs. Candidates:
+
+- *Unscented Kalman filter:* estimates the parameters jointly with the box's pose and velocity.
+- *Particle filter:* represents the parameter distribution with samples; handles multimodal posteriors.
+- *Grid Bayes filter:* discretizes the parameter space and updates the probability of each grid cell after every push.
+
+== Course Topics Covered
 - Contact and friction modeling in simulation
+- Geometric perception and pose estimation
 - Non-prehensile manipulation
 - Optimization-based control (MPC)
 - System identification
 - Learning-based policies
 
 == Evaluation
-Each method is evaluated over a set of randomized boxes and target poses, using:
+We will test each method on a set of randomized boxes and target poses, measuring:
 
-- Final placement error (position and orientation).
-- Elapsed time and push count.
-- Parameter estimation error.
+- *Placement accuracy:* final error in position and orientation.
+- *Efficiency:* total elapsed time and number of pushes.
+- *Estimation accuracy:* error in the estimated friction, mass, and center-of-mass offset.
 
-We will also vary the probing budget to characterize the trade-off between probing effort and task performance.
+We will also vary the probing budget to see how the amount of probing trades off against task performance.
 
 = Milestones
-- *Progress update 1*: Working Drake pushing simulation with a randomized box. Parameter estimator implemented. Push library defined. No-probing baseline (adaptive MPC) running end to end.
-- *Progress update 2*: Fixed and online adaptive probing implemented. Evaluation pipeline and metrics complete. Preliminary results for three of the four methods.
-- *Final proposal / project completion*: Learned probing trained and evaluated. Full comparison, budget-sweep analysis, final video, and report.
+- *Progress update 1:* The Drake pushing simulation runs with randomized boxes. The parameter estimator is implemented, the push library is defined, and the no-probing baseline (adaptive MPC) runs end to end using ground-truth box pose.
+- *Progress update 2:* The perception pipeline is integrated, so all methods use camera-estimated box pose. Fixed and online adaptive probing are implemented. The evaluation pipeline and metrics are complete, with preliminary results for three of the four methods.
+- *Project completion:* Learned probing is trained and evaluated. We deliver the full comparison, the probing-budget analysis, a final video, and the report.
 
 = Division of Work
-
 Tasks:
-- simulation environment
-- push action library
-- and evaluation pipeline
-- parameter estimator
+- Simulation environment
+- Perception pipeline
+- Push action library
+- Evaluation pipeline
+- Parameter estimator
 - MPC controller
-- no-probing and fixed-probing baselines
-- online adaptive probing
-- learned probing
+- No-probing and fixed-probing baselines
+- Online adaptive probing
+- Learned probing
 
-Joshua Martinez: ...
+*Joshua Martinez:* ...
 
-Mark Rifkin: ...
+*Mark Rifkin:* ...
 
-Noah Schiro: ...
+*Noah Schiro:* ...
 
 = References
 - #link("https://arxiv.org/abs/2404.12308")[ASID: Active Exploration for System Identification in Robotic Manipulation]
 - #link("https://arxiv.org/pdf/2510.19974")[Push Anything: Single- and Multi-Object Pushing From First Sight with Contact-Implicit MPC]
-
