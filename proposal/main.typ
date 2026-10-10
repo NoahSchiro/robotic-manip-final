@@ -74,22 +74,20 @@ We will also vary the probing budget (the number of dedicated probing pushes all
 - *Project completion*: Learned probing trained and evaluated. Full comparison, budget-sweep analysis, final video, and report.
 
 = Division of Work
-Tasks:
+*Joshua Martinez:*
 - Simulation environment
-- Perception pipeline
-- Push action library
-- Evaluation pipeline
 - Parameter estimator
 - MPC controller
+
+*Mark Rifkin:* 
 - No-probing and fixed-probing baselines
-- Online adaptive probing
 - Learned probing
+- Push action library
 
-*Joshua Martinez:* ...
-
-*Mark Rifkin:* ...
-
-*Noah Schiro:* ...
+*Noah Schiro:* 
+- Online adaptive probing
+- Perception pipeline
+- Evaluation pipeline
 
 = References
 - #link("https://arxiv.org/abs/2404.12308")[ASID: Active Exploration for System Identification in Robotic Manipulation]: reference on offline learning of information-maximizing exploration policies
