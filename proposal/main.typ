@@ -10,7 +10,10 @@
 #align(center, authors)
 
 = Overview
-We will build a simulated planar pushing testbed in Drake and use it to compare four strategies for probing a object before pushing it to a target pose. Each object has unknown physical parameters: its friction coefficient, its mass, and the offset of its center of mass. By the end of the project we will have:
+We will build a simulated planar pushing testbed in Drake and use it to compare four strategies for probing a object before pushing it to a target pose. Each object has unknown physical parameters: its friction coefficient, its mass, and the offset of its center of mass.
+
+== Deliverables
+By the end of the project we will have:
 
 - A pushing simulation in which each object is randomized with different friction, mass, and center-of-mass offset.
 - (Stretch) A perception pipeline that estimates the object's pose from simulated camera images.
