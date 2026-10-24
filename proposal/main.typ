@@ -1,6 +1,6 @@
 #show link: set text(fill: blue)
 
-#let title = "MIT 6.4212 final project pre-proposal"
+#let title = "MIT 6.4212 final project proposal"
 #let authors = "Joshua Martinez, Mark Rifkin, Noah Schiro"
 
 #set page(paper: "us-letter", margin: (x: 0.85in, top: 0.5in, bottom: 0.7in))
@@ -9,87 +9,71 @@
 #align(center, text(size: 14pt, weight: "bold")[#title])
 #align(center, authors)
 
-= Overview
-We will build a simulated planar pushing testbed in Drake and use it to compare four strategies for probing a object before pushing it to a target pose. Each object has unknown physical parameters: its friction coefficient, its mass, and the offset of its center of mass.
+= Introduction
 
-== Deliverables
-By the end of the project we will have:
+Robots handling unfamiliar objects must account for unknown friction
+and mass distribution. Interaction can reveal these properties, but
+dedicated probing costs time that could be spent pursuing the task.
+We will build a planar pushing testbed in Drake to evaluate different approaches to manipulating objects with unknown physical properties. By comparing a learned probing policy followed by MPC to both a no-probing adaptive MPC baseline and an end-to-end neural policy, we will investigate whether a separate probing phase improves performance enough to justify its cost. We will also compare learned and random probing with equal probe budgets and a shared estimator and MPC in order to evaluate the benefit of deliberate probe selection. 
 
-- A pushing simulation in which each object is randomized with different friction, mass, and center-of-mass offset.
-- (Stretch) A perception pipeline that estimates the object's pose from simulated camera images.
-- A parameter estimator and an MPC controller shared by all methods.
-- Four probing strategies built on top of that controller.
-- A quantitative comparison of how the strategies perform.
+= Problem setup
+== Object and unknown parameters
+We we will initially use a fixed, known object with uniform mass and a point mass displaced from the original COM by a 2-dimensional vector $b$ in the $x y$-plane. The unknown parameters are $eta = (mu, b) $, with $mu$ the friction coefficient between the object and the table. The total mass is fixed and known, though it may be added as a parameter after initial validation. The center of mass and rotational inertia are uniquely determined by $eta$, the point mass, the total mass, and the object geometry. The parameter set could be additionally extended to more complex friction modeling. 
 
-= Motivation
-When a robot handles an object it has never seen, it cannot assume it knows how slippery the object is or how its mass is distributed. These properties determine how the object moves when pushed, so they directly limit how accurately the robot can place it. The robot can learn them by interacting with the object first, but every probe costs time. This raises two questions: how much probing is worth doing, and which probes are most useful? This project studies those questions in a simple, controlled setting.
+== Observations and actions
+The robot has access to the object and pusher pose and velocity, in addition to its contact force during each push.
+Each action consists of pushing along an inward surface normal for a set speed and time $S_1$ and $T_1$ before the arm repositions for the next push (waiting and not pushing is also a valid action). The pushes are selected from a finite library of contact locations and commanded pusher speeds. Each push uses a fixed acceleration ramp to reach its commanded speed. 
 
-= Problem Setup
-A rigid object rests on a planar surface. Its friction coefficient and mass distribution are unknown. The robot pushes the object's with a point or flat-faced pusher. The valid action space is a finite set of possible pushes, defined by location of contact and the motion profile (speed, contact time) of the pusher. The action space is used for both probing and goal-directed pushing.
-The estimator receives the object and pusher pose and velocity states and contact force measurements, but not the physical parameters of the object. The goal is to push the object to a target pose with minimal error.
+= Dynamics modeling
+A dynamics model is required for estimation and planning. We will initially use short-horizon Drake simulations for parameter estimation and MPC prediction. If runtime is prohibitive, we can adjust the hypothesis grid and planning horizon. 
 
-As a stretch goal, we could prepare the algorithms for real-world deployment by removing state information from the estimator and using a visual perception (point cloud) pipeline and force sensors on the motor joints.
+= Parameter estimation
+Tentatively, we will use a grid Bayes filter over $eta = (mu, b)$, starting at 9 values per parameter and $N=81$ hypotheses. Starting from uniform probabilities, we update after each push $t$: 
+$ p_(t+1, i) = frac(p_(t,i) P (D_t | eta_i),sum_(j=1)^N p_(t,j) P (D_t | eta_j) ) $
+Here, $D_t$ is the measured outcome of push $t$, and $P(D_t | eta_i)$ is its likelihood under hypothesis $i$. For each hypothesis, the dynamics model (Drake initially) predicts the object's motion under the executed push. Let $e_(t,i)$ be the measured minus predicted endpoint pose and velocity (with angles wrapped). We assume zero-mean Gaussian prediction errors to define: 
+$ P(D_t | eta_i) prop exp(-frac(1,2) e_(t,i)^T R^(-1) e_(t,i)) $
+with $R$ the covariance of prediction errors, calibrated on sample trajectories. 
+As the confidence in the parameter estimation grows, we can adjust the grid search size to improve efficiency. 
+We could evaluate other estimation options if the grid search proves too costly. 
 
-Methods with dedicated probing have two phases, whereas the baseline method skips to the pushing phase:
+= MPC controller
+MPC optimizes over candidate push sequences using the estimator's maximum-probability hypothesis. Its pose cost is:
+$V(q) = norm(r-r_g)^2 / ell^2 +  lambda_phi op("wrap")(phi-phi_g)^2, $
+where $q=(r, phi)$, $r$ is position ($r_g$ goal position), $phi$ is orientation,  $ell$ is a representative object length, and $lambda_phi$ is a weight on orientation error. It minimizes predicted pose costs, in addition to action costs (the time that it takes to move the arm to the pushing pose, and the pushing time) over a short horizon (1-3 pushes/repositions), executes the first action, and replans. 
 
-1. Probing: contact the object to estimate its parameters.
-2. Goal-directed pushing: contact the object to move it to a target pose.
+= Approaches 
 
-= Approaches
-All methods share the same parameter estimator and the same MPC controller (which receives the state information and estimated parameters), and continue updating the estimator during goal-directed pushing. Only the probe-selection policy differs.
+- *Random probing*: select uniformly from the feasible push library for a fixed probing time $T_P$. After probing, push toward goal using MPC. Update the estimator throughout probing and placement
+- *Learned adaptive probing*: Using PPO with randomized simulations, train a neural policy to output a probability distribution over the push library, given the current object/pusher pose/velocities, the estimator's belief probabilities, and the remaining probe budget. Reward based on the reduction in parameter uncertainty the probe generates. Using the Shannon entropy $H(p) = - sum_(i=1)^N p_i log(p_i)$, set reward $r_t = H(p_t) - H(p_(t+1))$. After probing time $T_P$, follow the same MPC controller as random probing. 
+- *End-to-end neural policy:* Using PPO with random simulation, train a neural policy to output a probability distribution over push library, given a history of object/pusher pose and force. Reward based on reduction in distance from target pose, minimizing time, and bonus for successful placement.
+- *(Baseline) No-probing MPC*: skip the probing step ($T_P=0$) and update the estimator as the MPC performs goal-directed pushing. 
 
-- *No probing (baseline):* Skip the probing phase entirely. An adaptive MPC controller updates its parameter estimates while pushing toward the goal.
-- *Fixed probing:* Run the same predetermined sequence of probes on every object.
-- *Online adaptive probing:* At each step, evaluate a set of candidate pushes and pick the one expected to be most informative.
-- *Learned probing:* Following ASID, train a neural network that chooses the next push based on the history of observations.
-
-== Parameter Estimator
-The shared estimator uses measured pusher forces and perceived object poses to estimate friction, mass, and center-of-mass offset, along with its uncertainty, which online adaptive probing needs. Candidates:
-
-- *Unscented Kalman filter:* estimates the parameters jointly with the object's pose and velocity.
-- *Particle filter:* represents the parameter distribution with samples; handles multimodal posteriors.
-- *Grid Bayes filter:* discretizes the parameter space and updates the probability of each grid cell after every push.
-
-== Course Topics Covered
-- Contact and friction modeling in simulation
-- Geometric perception and pose estimation
-- Non-prehensile manipulation
-- Optimization-based control (MPC)
-- System identification
-- Learning-based policies
-
-== Evaluation
-Each method is evaluated over the same set of randomized objects and target poses, using:
-
-- *Placement accuracy:* final error in position and orientation.
-- *Efficiency:* total elapsed time and number of pushes.
-- *Estimation accuracy:* error in the estimated friction, mass, and center-of-mass offset.
-
-We will also vary the probing budget (the number of dedicated probing pushes allowed) to characterize the trade-off between probing effort and task performance.
+= Evaluation
+We will test the methods on a shared set of (held-out) parameters, initial poses, and target poses, with set maximum time. Define success as final pose within specified tolerances. We will report: success rate, final pose errors, total time (including probing), online computation time, and offline training cost. For estimator methods, we will also report parameter-estimation error. 
 
 = Milestones
-- *Progress update 1*: Working Drake pushing simulation with a randomized object. Push library defined. Compare MPC using true parameters against MPC using fixed nominal parameters to assess potential benefit of identification. Check whether the push library distinguishes the unknown parameters (and reduce the parameter set if necessary).
-- *Progress update 2*: Parameter estimator implemented. No-probing adaptive MPC baseline running end-to-end.
-- *Progress update 3*: Fixed and online adaptive probing implemented. Evaluation pipeline and metrics complete. Preliminary results for three of the four methods.
-- *Project completion*: Learned probing trained and evaluated. Full comparison, budget-sweep analysis, final video, and report.
+- *Milestone 1 - Feasibility:* Build simulation and push library.
+  Benchmark Drake prediction runtime, check whether parameters are identifiable given push library, and compare true-parameter
+  and nominal-parameter MPC. Verify PPO training of the end-to-end placement policy with fixed physical parameters. 
+- *Milestone 2 - Integration:* Validate the estimator and complete random and no-probing MPC. Begin PPO training of the learned prober (based on estimator entropy reduction), and extend end-to-end training with randomized parameters. 
+- *Milestone 3 - Comparison:* Compare all approaches on shared validation cases. Refine methods based on preliminary results. 
+- *Final submission: * Complete evaluation on a held-out test set, analyze results, produce final report and video. 
+= Division of work
 
-= Division of Work
-*Joshua Martinez:*
-- Simulation environment
-- Parameter estimator
-- MPC controller
+- *Joshua Martinez:* Object parameterization, estimator,
+  random-probing and no-probing baseline.
+- *Mark Rifkin:* MPC, dynamics model evaluation,
+  learned adaptive probing.
+- *Noah Schiro:* Simulation environment, action library,
+  end-to-end neural policy.
 
-*Mark Rifkin:* 
-- No-probing and fixed-probing baselines
-- Learned probing
-- Push action library
-
-*Noah Schiro:* 
-- Online adaptive probing
-- Perception pipeline
-- Evaluation pipeline
+= Course topics covered
+Contact and friction modeling, non-prehensile manipulation,
+Bayesian estimation, MPC, and reinforcement learning.
 
 = References
-- #link("https://arxiv.org/abs/2404.12308")[ASID: Active Exploration for System Identification in Robotic Manipulation]: reference on offline learning of information-maximizing exploration policies
-- #link("https://arxiv.org/pdf/2510.19974")[Push Anything: Single- and Multi-Object Pushing From First Sight with Contact-Implicit MPC]: reference on predictive control for planar pushing with unknown parameters. Implements CI-MPC which has a continuous rather than discrete action space (we use a discrete action space and focus on probing strategies).
 
+- #link("https://arxiv.org/abs/2404.12308")[ASID]:
+  inspiration for learned probing.
+- #link("https://arxiv.org/abs/2510.19974")[Push Anything]:
+  related work on predictive control for planar pushing.
