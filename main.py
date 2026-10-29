@@ -85,8 +85,9 @@ def main():
         time_step=1e-4,
         headless=bool(os.environ.get("HEADLESS"))
     )
+    rng = np.random.default_rng(seed=538)
 
-    obj = Object()
+    obj = Object(rng)
     pusher = Pusher()
     q_traj = make_push_trajectory(
         build_iiwa_pusher_plant(pusher), pusher, demo_tip_waypoints(obj)

@@ -10,7 +10,7 @@ from pydrake.all import LeafSystem, MultibodyForces
 class ArmPdController(LeafSystem):
     """Joint-space PD with gravity compensation on the iiwa's seven dofs."""
 
-    def __init__(self, plant, kp=400.0, kd=40.0):
+    def __init__(self, plant, kp=400.0, kd=60.0):
         LeafSystem.__init__(self)
         self.plant = plant
         self.context = plant.CreateDefaultContext()

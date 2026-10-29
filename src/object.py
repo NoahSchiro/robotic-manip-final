@@ -130,7 +130,10 @@ class Object(BoxComposite):
     """The pushed object: a T-shaped prism built from two exactly-touching
     boxes, a free body whose pose gets set per-run."""
 
-    def __init__(self):
+    pose_center = (0.55, 0.0)
+    pose_radius = 0.10
+
+    def __init__(self, rng: np.random.Generator):
         super().__init__(
             name="object",
             parts=[
@@ -142,8 +145,14 @@ class Object(BoxComposite):
             mass=0.4,
             color=(0.20, 0.45, 0.80),
         )
+        rho = self.pose_radius * np.sqrt(rng.uniform())
+        theta = rng.uniform(0.0, 2.0 * np.pi)
         # x, y, yaw (rad), resting on the table top
-        self.pose = (0.60, 0.00, 0.0)
+        self.pose = (
+            self.pose_center[0] + rho * np.cos(theta),
+            self.pose_center[1] + rho * np.sin(theta),
+            rng.uniform(0.0, 2.0 * np.pi),
+        )
 
     def x_wo(self):
         """Get the transformation from world origin to object."""
