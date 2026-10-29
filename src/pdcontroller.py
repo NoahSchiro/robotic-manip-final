@@ -44,9 +44,7 @@ class ArmPdController(LeafSystem):
         self.plant.SetVelocities(plant_context, v)
         self.forces.SetZero()
         self.plant.CalcForceElementsContribution(plant_context, self.forces)
-        tau = self.plant.CalcInverseDynamics(
-            plant_context, self.zero_vdot, self.forces
-        )
+        tau = self.plant.CalcInverseDynamics(plant_context, self.zero_vdot, self.forces)
 
         output.SetFromVector(
             tau[self.arm_v]

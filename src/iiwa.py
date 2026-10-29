@@ -33,7 +33,7 @@ class Pusher:
         self.length = 0.15
         self.mass = 0.2
         # grippier than table, can play with this later
-        self.friction = 0.6 
+        self.friction = 0.6
         self.color = (0.90, 0.45, 0.10)
         # stiffer than the block
         self.hydroelastic_modulus = 1.0e7
@@ -104,9 +104,7 @@ def add_iiwa_and_pusher(pusher: Pusher, plant, parser):
     # Add stick
     plant.WeldFrames(
         plant.GetFrameByName("iiwa_link_7"),
-        plant.GetFrameByName(
-            pusher.body, plant.GetModelInstanceByName(pusher.name)
-        ),
+        plant.GetFrameByName(pusher.body, plant.GetModelInstanceByName(pusher.name)),
         RigidTransform(),
     )
     # Weld the iiwa to the floor
@@ -127,9 +125,7 @@ def solve_tip_ik(
 ) -> np.ndarray:
     """Solve for the arm's joint angles that put `pusher`'s tip at `X_WT`."""
     world = plant.world_frame()
-    stick = plant.GetFrameByName(
-        pusher.body, plant.GetModelInstanceByName(pusher.name)
-    )
+    stick = plant.GetFrameByName(pusher.body, plant.GetModelInstanceByName(pusher.name))
     ik = InverseKinematics(plant)
     ik.AddPositionConstraint(
         stick,
@@ -147,10 +143,13 @@ def solve_tip_ik(
     ik_fallback_seed = np.array([0.0, 1.0, 0.0, -1.8, 0.0, 1.4, 0.0])
 
     # Warm start with the caller's seed, then the fallback shapes.
-    seeds = [q_seed, *(
-        ik_fallback_seed + np.array([yaw, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        for yaw in ik_fallback_shoulder_yaws
-    )]
+    seeds = [
+        q_seed,
+        *(
+            ik_fallback_seed + np.array([yaw, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            for yaw in ik_fallback_shoulder_yaws
+        ),
+    ]
     for seed in seeds:
         ik.get_mutable_prog().SetInitialGuess(ik.q(), seed)
         result = Solve(ik.get_mutable_prog())

@@ -4,16 +4,18 @@ import time
 import numpy as np
 from pydrake.all import (
     AddMultibodyPlantSceneGraph,
+    Box,
     ConstantVectorSource,
     DiagramBuilder,
     MeshcatVisualizer,
     Parser,
     PiecewisePolynomial,
+    RigidTransform,
     Simulator,
     StartMeshcat,
     TrajectorySource,
 )
-from pydrake.geometry import Meshcat
+from pydrake.geometry import Meshcat, Rgba
 
 from src.iiwa import (
     Q_HOME,
@@ -80,11 +82,19 @@ def build_diagram(
     return builder.Build(), plant
 
 
+def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
+    """Draw a translucent ghost of the block at its goal orientation."""
+    X_WG = obj.x_wg()
+    r, g, b = obj.color
+    for i, (part, center) in enumerate(zip(obj.parts, obj.body_part_centers())):
+        sx, sy = part[:2]
+        path = f"goal/{i}"
+        meshcat.SetObject(path, Box(sx, sy, obj.height), Rgba(r, g, b, 0.35))
+        meshcat.SetTransform(path, X_WG @ RigidTransform(center))
+
+
 def main():
-    sim = Sim(
-        time_step=1e-4,
-        headless=bool(os.environ.get("HEADLESS"))
-    )
+    sim = Sim(time_step=1e-4, headless=bool(os.environ.get("HEADLESS")))
     rng = np.random.default_rng(seed=538)
 
     obj = Object(rng)
@@ -105,13 +115,16 @@ def main():
     )
     plant.SetFreeBodyPose(plant_context, object_body, X_WO)
     print(f"object starts at {np.array2string(X_WO.translation(), precision=3)}")
+    print(f"object goal is {np.array2string(obj.x_wg().translation(), precision=3)}")
+    if sim.meshcat is not None:
+        show_object_goal(sim.meshcat, obj)
 
     simulator = Simulator(diagram, context)
     if not sim.headless:
         simulator.set_target_realtime_rate(1.0)
     end_time = q_traj.end_time()
     simulator.AdvanceTo(0.05 if sim.headless else end_time)
-    
+
     X_WO_final = plant.EvalBodyPoseInWorld(plant_context, object_body)
     print(f"object ends at   {np.array2string(X_WO_final.translation(), precision=3)}")
 
