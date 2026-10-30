@@ -7,6 +7,8 @@ uv run python main.py
 HEADLESS=1 uv run python main.py
 ```
 
+There is a number of options. Run `uv run main.py --help` to see them.
+
 `main.py` builds a KUKA iiwa14 welded to a table, with a T-shaped block
 resting on the table in front of it and a stick pusher welded to the
 arm's flange.

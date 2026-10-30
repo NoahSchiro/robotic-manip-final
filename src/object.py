@@ -9,9 +9,10 @@ shared box-prism SDF renderer.
 
 import itertools
 from pathlib import Path
+from typing import cast
 
 import numpy as np
-from pydrake.all import RigidTransform, RotationMatrix
+from pydrake.all import MultibodyPlant, Parser, RigidTransform, RotationMatrix
 
 from . import ASSET_DIR
 
@@ -20,21 +21,29 @@ class BoxComposite:
     """A prism built from exactly-touching axis-aligned boxes ("parts").
 
     The shared writer behind the pushed object and the table: name,
-    parts, height, mass, and color are per-instance knobs that can be
-    tuned.
+    parts, height, mass, color, and friction are per-instance knobs that
+    can be tuned.
     """
 
     body_box = "base_link"
-    friction = 0.35
     hydroelastic_modulus = 1.0e6
 
-    def __init__(self, name, parts, height, mass, color):
+    def __init__(
+        self,
+        name: str,
+        parts: list[tuple[float, float, float, float]],
+        height: float,
+        mass: float,
+        color: tuple[float, float, float],
+        friction: float,
+    ) -> None:
         self.asset_dir = ASSET_DIR
         self.name = name
         self.parts = parts
         self.height = height
         self.mass = mass
         self.color = color
+        self.friction = friction
 
     def compound_inertia(self) -> tuple[np.ndarray, np.ndarray]:
         """Compute the compound COM plus rotational inertia of exactly-touching
@@ -54,7 +63,11 @@ class BoxComposite:
         ]
 
         # Box inertia per part, then the parallel-axis theorem into the COM.
-        com = sum(m * c for m, c in zip(masses, part_coms)) / self.mass
+        # sum() starts at int 0, so mypy widens the element type to float;
+        # parts is never empty, so the result is always the ndarray.
+        com = cast(
+            np.ndarray, sum(m * c for m, c in zip(masses, part_coms))
+        ) / self.mass
         inertia = np.zeros((3, 3))
         for (sx, sy, cx, cy), m, c in zip(self.parts, masses, part_coms):
             inertia += m * np.diag(
@@ -152,7 +165,7 @@ class Object(BoxComposite):
     pose_center = (0.55, 0.0)
     pose_radius = 0.10
 
-    def __init__(self, rng: np.random.Generator):
+    def __init__(self, rng: np.random.Generator, friction: float = 0.3):
         super().__init__(
             name="object",
             parts=[
@@ -163,6 +176,7 @@ class Object(BoxComposite):
             height=0.03,
             mass=0.4,
             color=(0.20, 0.45, 0.80),
+            friction=friction,
         )
         rho_start = self.pose_radius * np.sqrt(rng.uniform())
         theta_start = rng.uniform(0.0, 2.0 * np.pi)
@@ -180,14 +194,14 @@ class Object(BoxComposite):
             rng.uniform(0.0, 2.0 * np.pi),
         )
 
-    def x_wo(self):
+    def x_wo(self) -> RigidTransform:
         """Get the transformation from world origin to object."""
         return RigidTransform(
             RotationMatrix.MakeZRotation(self.pose[2]),
             np.array([self.pose[0], self.pose[1], 0.0]),
         )
 
-    def x_wg(self):
+    def x_wg(self) -> RigidTransform:
         """Get the goal transformation from world origin to object: its start
         position with the goal yaw."""
         return RigidTransform(
@@ -196,7 +210,7 @@ class Object(BoxComposite):
         )
 
 
-def add_object(obj: Object, parser):
+def add_object(obj: Object, parser: Parser) -> None:
     """Add the block into `plant` as a free body."""
     parser.AddModelsFromUrl(obj.write_sdf().as_uri())
 
@@ -204,17 +218,18 @@ def add_object(obj: Object, parser):
 class Table(BoxComposite):
     """The scene's table: one big box whose top surface is the work plane."""
 
-    def __init__(self):
+    def __init__(self, friction: float = 0.3):
         super().__init__(
             name="table",
             parts=[(2.0, 2.0, 0.0, 0.0)],
             height=0.1,
             mass=20.0,
             color=(0.55, 0.50, 0.45),
+            friction=friction,
         )
 
 
-def add_table(table: Table, plant, parser):
+def add_table(table: Table, plant: MultibodyPlant, parser: Parser) -> None:
     """Parse the table into `plant`, welded down with its top surface at z = 0."""
     parser.AddModelsFromUrl(table.write_sdf().as_uri())
     plant.WeldFrames(

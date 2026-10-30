@@ -25,7 +25,7 @@ class Pusher:
     """The stick pusher: a vertical cylinder welded to the flange
     (iiwa_link_7) along its +z tool axis; the tip is what pushes."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.asset_dir = ASSET_DIR
         self.name = "pusher"
         self.body = "stick"
@@ -94,7 +94,7 @@ class Pusher:
         return path
 
 
-def add_iiwa_and_pusher(pusher: Pusher, plant, parser):
+def add_iiwa_and_pusher(pusher: Pusher, plant: MultibodyPlant, parser: Parser) -> None:
     """Parse the iiwa14 into `plant` with `pusher`'s stick welded to the
     flange, bolted down at the origin."""
     parser.AddModelsFromUrl(

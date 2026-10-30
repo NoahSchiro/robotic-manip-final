@@ -3,14 +3,24 @@
 Roughly: tau = tau_gravity(q) + Kp (q_d - q) - Kd v
 """
 
+from typing import cast
+
 import numpy as np
-from pydrake.all import LeafSystem, MultibodyForces
+from pydrake.all import (
+    BasicVector,
+    Context,
+    LeafSystem,
+    MultibodyForces,
+    MultibodyPlant,
+)
 
 
 class ArmPdController(LeafSystem):
     """Joint-space PD with gravity compensation on the iiwa's seven dofs."""
 
-    def __init__(self, plant, kp=400.0, kd=60.0):
+    def __init__(
+        self, plant: MultibodyPlant, kp: float = 400.0, kd: float = 60.0
+    ) -> None:
         LeafSystem.__init__(self)
         self.plant = plant
         self.context = plant.CreateDefaultContext()
@@ -33,10 +43,12 @@ class ArmPdController(LeafSystem):
         self.DeclareVectorInputPort("q_desired", 7)
         self.DeclareVectorOutputPort("tau", 7, self.calc_tau)
 
-    def calc_tau(self, context, output):
+    def calc_tau(self, context: Context, output: BasicVector) -> None:
         """Blend the gravity feedforward with PD tracking toward `q_desired`."""
-        x = self.get_input_port(0).Eval(context)
-        q_desired = self.get_input_port(1).Eval(context)
+        # pydrake's InputPort.Eval is typed `-> object` because the port's
+        # element type is only known at runtime; these ports hold vectors.
+        x = cast(np.ndarray, self.get_input_port(0).Eval(context))
+        q_desired = cast(np.ndarray, self.get_input_port(1).Eval(context))
         q, v = x[: self.nq], x[self.nq :]
 
         plant_context = self.context

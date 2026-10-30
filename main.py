@@ -1,4 +1,4 @@
-import os
+import argparse
 import time
 
 import numpy as np
@@ -6,8 +6,10 @@ from pydrake.all import (
     AddMultibodyPlantSceneGraph,
     Box,
     ConstantVectorSource,
+    Diagram,
     DiagramBuilder,
     MeshcatVisualizer,
+    MultibodyPlant,
     Parser,
     PiecewisePolynomial,
     RigidTransform,
@@ -34,14 +36,16 @@ class Sim:
     time_step: float
     headless: bool
 
-    def __init__(self, headless, time_step):
+    def __init__(self, headless: bool, time_step: float) -> None:
         """Set up the run's pacing and, unless headless, its Meshcat server."""
         self.time_step = time_step
         self.headless = headless
         self.meshcat = None
         if headless:
             return
-        self.meshcat = StartMeshcat()
+        # StartMeshcat lives in pydrake's unannotated _geometry_extra.py,
+        # so strict mypy sees the call as untyped.
+        self.meshcat = StartMeshcat()  # type: ignore[no-untyped-call]
         # Wait for connect, or timeout and run anyhow.
         deadline = time.time() + 10.0
         while time.time() < deadline and self.meshcat.GetNumActiveConnections() == 0:
@@ -49,8 +53,12 @@ class Sim:
 
 
 def build_diagram(
-    sim: Sim, obj: Object, pusher: Pusher, q_ref: PiecewisePolynomial | None = None
-):
+    sim: Sim,
+    obj: Object,
+    table: Table,
+    pusher: Pusher,
+    q_ref: PiecewisePolynomial | None = None,
+) -> tuple[Diagram, MultibodyPlant]:
     """Assemble the scene (arm with stick, table, block) plus the arm controller."""
     builder = DiagramBuilder()
     plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=sim.time_step)
@@ -59,7 +67,7 @@ def build_diagram(
     # The arm with its stick, bolted to the world at the origin.
     add_iiwa_and_pusher(pusher, plant, parser)
     # The table, welded down with its top surface at z = 0.
-    add_table(Table(), plant, parser)
+    add_table(table, plant, parser)
     # The block, a free body; its pose gets set per-run in main().
     add_object(obj, parser)
 
@@ -93,16 +101,51 @@ def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
         meshcat.SetTransform(path, X_WG @ RigidTransform(center))
 
 
-def main():
-    sim = Sim(time_step=1e-4, headless=bool(os.environ.get("HEADLESS")))
-    rng = np.random.default_rng(seed=538)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--time-step",
+        type=float,
+        default=1e-4,
+        help="simulation timestep (nonnegative)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without visualization"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=538,
+        help="PRNG seed"
+    )
+    parser.add_argument(
+        "--mu",
+        type=float,
+        default=0.3,
+        help="object-table friction coefficient (nonnegative)",
+    )
+    args = parser.parse_args()
+    
+    if args.time_step < 0.0:
+        raise SystemExit("--time-step must be nonnegative")
+    if args.mu < 0.0:
+        raise SystemExit("--mu must be nonnegative")
 
-    obj = Object(rng)
+    return args
+
+
+def main(args: argparse.Namespace) -> None:
+    sim = Sim(time_step=args.time_step, headless=args.headless)
+    rng = np.random.default_rng(seed=args.seed)
+
+    obj = Object(rng, friction=args.mu)
     pusher = Pusher()
     q_traj = make_push_trajectory(
         build_iiwa_pusher_plant(pusher), pusher, demo_tip_waypoints(obj)
     )
-    diagram, plant = build_diagram(sim, obj, pusher, q_traj)
+    diagram, plant = build_diagram(sim, obj, Table(args.mu), pusher, q_traj)
 
     context = diagram.CreateDefaultContext()
     plant_context = plant.GetMyMutableContextFromRoot(context)
@@ -114,6 +157,7 @@ def main():
         obj.body_box, plant.GetModelInstanceByName(obj.name)
     )
     plant.SetFreeBodyPose(plant_context, object_body, X_WO)
+    print(f"object-table friction mu = {args.mu}")
     print(f"object starts at {np.array2string(X_WO.translation(), precision=3)}")
     print(f"object goal is {np.array2string(obj.x_wg().translation(), precision=3)}")
     if sim.meshcat is not None:
@@ -134,4 +178,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)
