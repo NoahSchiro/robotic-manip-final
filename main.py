@@ -27,7 +27,7 @@ from src.iiwa import (
     demo_tip_waypoints,
     make_push_trajectory,
 )
-from src.object import Object, Table, add_object, add_table
+from src.object import Object, Rod, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
 
 
@@ -126,12 +126,32 @@ def parse_args() -> argparse.Namespace:
         default=0.3,
         help="object-table friction coefficient (nonnegative)",
     )
+    parser.add_argument(
+        "--rod-x",
+        type=float,
+        default=0.05,
+        help="rod x in the object body frame (m)",
+    )
+    parser.add_argument(
+        "--rod-y",
+        type=float,
+        default=0,
+        help="rod y in the object body frame (m)",
+    )
+    parser.add_argument(
+        "--rod-mass",
+        type=float,
+        default=0.2,
+        help="rod mass (kg), additional to the block's own mass",
+    )
     args = parser.parse_args()
     
     if args.time_step < 0.0:
         raise SystemExit("--time-step must be nonnegative")
     if args.mu < 0.0:
         raise SystemExit("--mu must be nonnegative")
+    if args.rod_mass <= 0.0:
+        raise SystemExit("--rod-mass must be positive")
 
     return args
 
@@ -140,8 +160,13 @@ def main(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
     rng = np.random.default_rng(seed=args.seed)
 
-    obj = Object(rng, friction=args.mu)
+    obj = Object(
+        rng,
+        rod=Rod(x=args.rod_x, y=args.rod_y, mass=args.rod_mass),
+        friction=args.mu,
+    )
     pusher = Pusher()
+
     q_traj = make_push_trajectory(
         build_iiwa_pusher_plant(pusher), pusher, demo_tip_waypoints(obj)
     )
@@ -158,6 +183,15 @@ def main(args: argparse.Namespace) -> None:
     )
     plant.SetFreeBodyPose(plant_context, object_body, X_WO)
     print(f"object-table friction mu = {args.mu}")
+    if obj.rod is not None:
+        print(
+            f"rod welded at ({obj.rod.x}, {obj.rod.y}) m, "
+            f"mass {obj.rod.mass} kg"
+        )
+    print(
+        f"object com (body frame) = "
+        f"{np.array2string(obj.com_in_body_frame(), precision=3)}"
+    )
     print(f"object starts at {np.array2string(X_WO.translation(), precision=3)}")
     print(f"object goal is {np.array2string(obj.x_wg().translation(), precision=3)}")
     if sim.meshcat is not None:

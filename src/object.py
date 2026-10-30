@@ -8,6 +8,7 @@ shared box-prism SDF renderer.
 """
 
 import itertools
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -17,16 +18,30 @@ from pydrake.all import MultibodyPlant, Parser, RigidTransform, RotationMatrix
 from . import ASSET_DIR
 
 
+@dataclass(frozen=True)
+class Rod:
+    """A heavy thin cylinder welded into a composite at body-frame (x, y),
+    z-centered in its height, to shift the composite's COM."""
+
+    x: float
+    y: float
+    mass: float
+    radius: float = 0.004
+
+
 class BoxComposite:
     """A prism built from exactly-touching axis-aligned boxes ("parts").
 
     The shared writer behind the pushed object and the table: name,
-    parts, height, mass, color, and friction are per-instance knobs that
-    can be tuned.
+    parts, height, mass, color, friction, and an optional welded-in rod
+    are per-instance knobs that can be tuned.
     """
 
     body_box = "base_link"
     hydroelastic_modulus = 1.0e6
+    rod_marker_color = (0.85, 0.15, 0.12)
+    rod_marker_radius = 0.008
+    rod_marker_thickness = 0.0005
 
     def __init__(
         self,
@@ -36,6 +51,7 @@ class BoxComposite:
         mass: float,
         color: tuple[float, float, float],
         friction: float,
+        rod: Rod | None = None,
     ) -> None:
         self.asset_dir = ASSET_DIR
         self.name = name
@@ -44,10 +60,20 @@ class BoxComposite:
         self.mass = mass
         self.color = color
         self.friction = friction
+        self.rod = rod
+        if rod is not None and not self.contains_disk(rod.x, rod.y, rod.radius):
+            raise ValueError(
+                f"rod at ({rod.x}, {rod.y}) pokes outside the parts' outline"
+            )
+
+    @property
+    def total_mass(self) -> float:
+        """Get the composite's mass, including any welded rod."""
+        return self.mass + (self.rod.mass if self.rod is not None else 0.0)
 
     def compound_inertia(self) -> tuple[np.ndarray, np.ndarray]:
-        """Compute the compound COM plus rotational inertia of exactly-touching
-        boxes under uniform density."""
+        """Compute the composite's COM plus rotational inertia: uniform-density
+        exactly-touching boxes, plus the optional welded rod."""
         for a, b in itertools.combinations(self.parts, 2):
             if (
                 abs(a[2] - b[2]) < (a[0] + b[0]) / 2
@@ -62,7 +88,7 @@ class BoxComposite:
             np.array([cx, cy, self.height / 2]) for sx, sy, cx, cy in self.parts
         ]
 
-        # Box inertia per part, then the parallel-axis theorem into the COM.
+        # Box inertia per part, accumulated about the body's own COM.
         # sum() starts at int 0, so mypy widens the element type to float;
         # parts is never empty, so the result is always the ndarray.
         com = cast(
@@ -77,9 +103,37 @@ class BoxComposite:
                     (sx**2 + sy**2) / 12,
                 ]
             )
-            d = c - com
-            inertia += m * (d @ d * np.eye(3) - np.outer(d, d))
+            inertia += self._shift_inertia(m, c - com)
+
+        if self.rod is None:
+            return com, inertia
+
+        # Adding the rod now. Its COM shares the boxes' z (half height), then
+        # both bodies' inertias move onto the combined COM.
+        fx, fy = self.footprint_center()
+        rod_com = np.array([self.rod.x + fx, self.rod.y + fy, self.height / 2])
+        r, length = self.rod.radius, self.height
+        rod_inertia = self.rod.mass * np.diag(
+            [
+                (3 * r**2 + length**2) / 12,
+                (3 * r**2 + length**2) / 12,
+                r**2 / 2,
+            ]
+        )
+        total_mass = self.total_mass
+        block_com = com
+        com = (self.mass * block_com + self.rod.mass * rod_com) / total_mass
+        inertia += self._shift_inertia(self.mass, block_com - com)
+        inertia += rod_inertia + self._shift_inertia(self.rod.mass, rod_com - com)
         return com, inertia
+
+    @staticmethod
+    def _shift_inertia(mass: float, offset: np.ndarray) -> np.ndarray:
+        """Shift a body's inertia to a point displaced by `offset` from its
+        COM (parallel-axis theorem)."""
+        return cast(
+            np.ndarray, mass * (offset @ offset * np.eye(3) - np.outer(offset, offset))
+        )
 
     def footprint_center(self) -> np.ndarray:
         """Get the xy center of the parts' bounding box."""
@@ -98,10 +152,48 @@ class BoxComposite:
             for sx, sy, cx, cy in self.parts
         ]
 
+    def contains_disk(self, x: float, y: float, radius: float) -> bool:
+        """Check whether a disk of `radius` centered at body-frame (x, y) lies
+        wholly inside the parts' union outline."""
+        fx, fy = self.footprint_center()
+        # body frame -> parts frame
+        x, y = x + fx, y + fy  
+        lo, hi = x - radius, x + radius
+        edges = {
+            edge
+            for sx, _sy, cx, _cy in self.parts
+            for edge in (cx - sx / 2, cx + sx / 2)
+            if lo < edge < hi
+        }
+        breaks = sorted({lo, hi, *edges})
+        for u, v in itertools.pairwise(breaks):
+            # The disk's y-interval is widest at the slab point nearest (x, y).
+            w = np.sqrt(radius**2 - (min(max(x, u), v) - x) ** 2)
+            spans = sorted(
+                (cy - sy / 2, cy + sy / 2)
+                for sx, sy, cx, cy in self.parts
+                if cx - sx / 2 <= u and v <= cx + sx / 2
+            )
+            merged: list[list[float]] = []
+            for a, b in spans:
+                if merged and a <= merged[-1][1]:
+                    merged[-1][1] = max(merged[-1][1], b)
+                else:
+                    merged.append([a, b])
+            if not any(a <= y - w and y + w <= b for a, b in merged):
+                return False
+        return True
+
+    def com_in_body_frame(self) -> np.ndarray:
+        """Get the composite's COM in the body frame (footprint bottom
+        center)."""
+        com, _ = self.compound_inertia()
+        return cast(np.ndarray, com - np.r_[self.footprint_center(), 0.0])
+
     def sdf(self) -> str:
         """Render the prism's model SDF text."""
-        com, inertia = self.compound_inertia()
-        com_body = com - np.r_[self.footprint_center(), 0.0]
+        _, inertia = self.compound_inertia()
+        com_body = self.com_in_body_frame()
         ixx, iyy, izz = inertia[0, 0], inertia[1, 1], inertia[2, 2]
         ixy, ixz, iyz = inertia[0, 1], inertia[0, 2], inertia[1, 2]
 
@@ -130,6 +222,17 @@ class BoxComposite:
             )
         bodies = "\n".join(boxes)
 
+        marker = ""
+        if self.rod is not None:
+            mr, mg, mb = self.rod_marker_color
+            z = self.height + self.rod_marker_thickness / 2
+            marker = f"""
+                    <visual name="rod_marker">
+                      <pose>{self.rod.x:.6g} {self.rod.y:.6g} {z:.6g} 0 0 0</pose>
+                      <geometry><cylinder><radius>{self.rod_marker_radius}</radius><length>{self.rod_marker_thickness}</length></cylinder></geometry>
+                      <material><diffuse>{mr} {mg} {mb} 1</diffuse></material>
+                    </visual>"""
+
         return f"""
             <?xml version="1.0"?>
               <sdf version="1.7">
@@ -137,14 +240,14 @@ class BoxComposite:
                   <link name="{self.body_box}">
                     <inertial>
                       <pose>{com_body[0]:.6g} {com_body[1]:.6g} {com_body[2]:.6g} 0 0 0</pose>
-                      <mass>{self.mass}</mass>
+                      <mass>{self.total_mass}</mass>
                       <inertia>
                         <ixx>{ixx:.6g}</ixx><ixy>{ixy:.6g}</ixy><ixz>{ixz:.6g}</ixz>
                         <iyy>{iyy:.6g}</iyy><iyz>{iyz:.6g}</iyz>
                         <izz>{izz:.6g}</izz>
                       </inertia>
                     </inertial>
-                    {bodies}
+                    {bodies}{marker}
                   </link>
                 </model>
               </sdf>"""
@@ -165,7 +268,9 @@ class Object(BoxComposite):
     pose_center = (0.55, 0.0)
     pose_radius = 0.10
 
-    def __init__(self, rng: np.random.Generator, friction: float = 0.3):
+    def __init__(
+        self, rng: np.random.Generator, rod: Rod, friction: float = 0.3, 
+    ):
         super().__init__(
             name="object",
             parts=[
@@ -177,6 +282,7 @@ class Object(BoxComposite):
             mass=0.4,
             color=(0.20, 0.45, 0.80),
             friction=friction,
+            rod=rod,
         )
         rho_start = self.pose_radius * np.sqrt(rng.uniform())
         theta_start = rng.uniform(0.0, 2.0 * np.pi)
