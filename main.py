@@ -135,16 +135,9 @@ def parse_args() -> argparse.Namespace:
         help="simulation timestep (nonnegative)",
     )
     parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run without visualization"
+        "--headless", action="store_true", help="Run without visualization"
     )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=538,
-        help="PRNG seed"
-    )
+    parser.add_argument("--seed", type=int, default=538, help="PRNG seed")
     parser.add_argument(
         "--mu",
         type=float,
@@ -176,7 +169,7 @@ def parse_args() -> argparse.Namespace:
         help="push-contact density: surface normals per cm of object outline",
     )
     args = parser.parse_args()
-    
+
     if args.time_step < 0.0:
         raise SystemExit("--time-step must be nonnegative")
     if args.mu < 0.0:
@@ -185,7 +178,7 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--rod-mass must be positive")
     if args.push_density <= 0.0:
         raise SystemExit("--push-density must be positive")
-    args.push_density *= 100 # count/meter -> count/cm
+    args.push_density *= 100  # count/meter -> count/cm
 
     return args
 
@@ -218,10 +211,7 @@ def main(args: argparse.Namespace) -> None:
     plant.SetFreeBodyPose(plant_context, object_body, X_WO)
     print(f"object-table friction mu = {args.mu}")
     if obj.rod is not None:
-        print(
-            f"rod welded at ({obj.rod.x}, {obj.rod.y}) m, "
-            f"mass {obj.rod.mass} kg"
-        )
+        print(f"rod welded at ({obj.rod.x}, {obj.rod.y}) m, mass {obj.rod.mass} kg")
     print(
         f"object com (body frame) = "
         f"{np.array2string(obj.com_in_body_frame(), precision=3)}"

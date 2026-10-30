@@ -73,7 +73,9 @@ def boundary_edges(parts: list[SurfacePart]) -> list[SurfaceEdge]:
     for j, y in enumerate(ys):
         for i in range(len(xs) - 1):
             south = covered(xs[i], xs[i + 1], ys[j - 1], y) if j > 0 else False
-            north = covered(xs[i], xs[i + 1], y, ys[j + 1]) if j + 1 < len(ys) else False
+            north = (
+                covered(xs[i], xs[i + 1], y, ys[j + 1]) if j + 1 < len(ys) else False
+            )
             if south != north:
                 # Interior on the north side means the edge travels eastward.
                 a, b = (xs[i], xs[i + 1]) if north else (xs[i + 1], xs[i])
@@ -168,9 +170,9 @@ class BoxComposite:
         # Box inertia per part, accumulated about the body's own COM.
         # sum() starts at int 0, so mypy widens the element type to float;
         # parts is never empty, so the result is always the ndarray.
-        com = cast(
-            np.ndarray, sum(m * c for m, c in zip(masses, part_coms))
-        ) / self.mass
+        com = (
+            cast(np.ndarray, sum(m * c for m, c in zip(masses, part_coms))) / self.mass
+        )
         inertia = np.zeros((3, 3))
         for (sx, sy, cx, cy), m, c in zip(self.parts, masses, part_coms):
             inertia += m * np.diag(
@@ -268,7 +270,7 @@ class BoxComposite:
         wholly inside the parts' union outline."""
         fx, fy = self.footprint_center()
         # body frame -> parts frame
-        x, y = x + fx, y + fy  
+        x, y = x + fx, y + fy
         lo, hi = x - radius, x + radius
         edges = {
             edge
@@ -380,7 +382,10 @@ class Object(BoxComposite):
     pose_radius = 0.10
 
     def __init__(
-        self, rng: np.random.Generator, rod: Rod, friction: float = 0.3, 
+        self,
+        rng: np.random.Generator,
+        rod: Rod,
+        friction: float = 0.3,
     ):
         super().__init__(
             name="object",
