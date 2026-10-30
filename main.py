@@ -27,7 +27,7 @@ from src.iiwa import (
     demo_tip_waypoints,
     make_push_trajectory,
 )
-from src.object import Object, Rod, Table, add_object, add_table
+from src.object import Object, Rod, SurfaceNormal, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
 
 
@@ -101,6 +101,31 @@ def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
         meshcat.SetTransform(path, X_WG @ RigidTransform(center))
 
 
+def show_push_sites(
+    meshcat: Meshcat,
+    obj: Object,
+    sites: list[SurfaceNormal],
+    arrow_length: float = 0.02,
+) -> None:
+    """Draw the push library in world frame: one segment per site, approaching
+    its contact point from outside along the inward normal."""
+    X_WO = obj.x_wo()
+    tips = [X_WO @ site.position for site in sites]
+    # Tails reach outside the block: an inward arrow drawn from the contact
+    # point onward would hide inside the block's opaque visual.
+    tails = [
+        tip - arrow_length * (X_WO.rotation() @ site.normal)
+        for tip, site in zip(tips, sites)
+    ]
+    meshcat.SetLineSegments(
+        "push_sites",
+        np.stack(tails, axis=1),
+        np.stack(tips, axis=1),
+        line_width=4.0,
+        rgba=Rgba(0.1, 0.65, 0.15, 1.0),
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -144,6 +169,12 @@ def parse_args() -> argparse.Namespace:
         default=0.2,
         help="rod mass (kg), additional to the block's own mass",
     )
+    parser.add_argument(
+        "--push-density",
+        type=float,
+        default=2.0,
+        help="push-contact density: surface normals per cm of object outline",
+    )
     args = parser.parse_args()
     
     if args.time_step < 0.0:
@@ -152,6 +183,9 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--mu must be nonnegative")
     if args.rod_mass <= 0.0:
         raise SystemExit("--rod-mass must be positive")
+    if args.push_density <= 0.0:
+        raise SystemExit("--push-density must be positive")
+    args.push_density *= 100 # count/meter -> count/cm
 
     return args
 
@@ -192,10 +226,16 @@ def main(args: argparse.Namespace) -> None:
         f"object com (body frame) = "
         f"{np.array2string(obj.com_in_body_frame(), precision=3)}"
     )
+    push_sites = obj.surface_normals(args.push_density)
+    print(
+        f"push library: {len(push_sites)} contact sites "
+        f"({args.push_density} per cm of outline, all at mid-height)"
+    )
     print(f"object starts at {np.array2string(X_WO.translation(), precision=3)}")
     print(f"object goal is {np.array2string(obj.x_wg().translation(), precision=3)}")
     if sim.meshcat is not None:
         show_object_goal(sim.meshcat, obj)
+        show_push_sites(sim.meshcat, obj, push_sites)
 
     simulator = Simulator(diagram, context)
     if not sim.headless:
