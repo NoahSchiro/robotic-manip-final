@@ -9,7 +9,7 @@ from pydrake.all import Simulator
 from src import ASSET_DIR
 from src.action import Action
 from src.dynamics import ParallelPushModel
-from src.estimator import GridBayesFilter, load_R
+from src.estimator import DEFAULT_NU, GridBayesFilter, load_R
 from src.geometry import SurfaceNormal
 from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
 from src.object import Object, Rod, Table
@@ -92,6 +92,12 @@ def parse_args() -> argparse.Namespace:
         default=0.1,
         help="measurement delay after each push segment ends (s)",
     )
+    parser.add_argument(
+        "--nu",
+        type=float,
+        default=DEFAULT_NU,
+        help="estimator Student-t degrees of freedom (0: Gaussian likelihood)",
+    )
     args = parser.parse_args()
 
     if args.time_step < 0.0:
@@ -104,6 +110,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--push-density must be positive")
     if args.pushes < 1:
         raise SystemExit("--pushes must be at least 1")
+    if args.nu < 0.0:
+        raise SystemExit("--nu must be nonnegative")
     args.push_density *= 100  # count/cm -> count/m
 
     return args
@@ -140,7 +148,7 @@ def run_estimation(
     with ParallelPushModel(
         args.workers, time_step=args.model_time_step, rod_mass=args.rod_mass
     ) as model:
-        belief = GridBayesFilter(grid, model, R)
+        belief = GridBayesFilter(grid, model, R, nu=args.nu or None)
         print(f"push 0: entropy {belief.entropy():.3f}")
         for k in range(1, args.pushes + 1):
             if sim.meshcat is not None:

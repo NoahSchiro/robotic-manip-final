@@ -39,3 +39,6 @@ uv run python main.py --headless --estimate --pushes 5
 The default grid is 9 values each of mu, rod x and rod y, keeping only rod
 positions inside the T (405 hypotheses); change it via `params.GridSpec`.
 Without `assets/R.npy` the estimator falls back to an uncalibrated diagonal R.
+The likelihood is a Student-t (`--nu 3` by default), which keeps one badly
+mispredicted push from eliminating the right hypothesis; `--nu 0` uses the
+proposal's Gaussian instead.

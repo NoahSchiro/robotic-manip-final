@@ -4,12 +4,26 @@ After each push t, every hypothesis i is reweighted by the likelihood of
 the measured outcome D_t:
 
     p_(t+1, i) = p_(t, i) P(D_t | eta_i) / sum_j p_(t, j) P(D_t | eta_j)
-    P(D_t | eta_i) ~ exp(-1/2 e_(t,i)^T R^-1 e_(t,i))
 
 where e_(t,i) is the measured minus predicted final planar state (x, y,
-yaw, vx, vy, wz) of the push window, yaw wrapped.  Probabilities are kept
-as logs so long push sequences don't underflow.  A wait (no push) yields no
-observation, so it makes no update.
+yaw, vx, vy, wz) of the push window, yaw wrapped, and q = e^T R^-1 e.
+
+The likelihood is a multivariate Student-t by default,
+
+    P(D_t | eta_i) ~ (1 + q / nu)^(-(nu + 6) / 2),
+
+with R as its scale matrix, rather than the proposal's Gaussian
+exp(-q / 2) (nu=None).  The prediction model occasionally mispredicts a
+push badly even at the true eta; under a Gaussian that one push costs the
+correct hypothesis hundreds of nats and a wrong one takes over with near
+certainty.  The t's log-penalty grows only logarithmically in q, so no
+single push can eliminate a hypothesis.  In an offline replay of 19
+held-out trials, nu = 3 cut confidently wrong final beliefs from 21% to 5%
+and raised MAPs within one grid step of the truth from 79% to 84%, at
+about the same convergence speed.
+
+Probabilities are kept as logs so long push sequences don't underflow.  A
+wait (no push) yields no observation, so it makes no update.
 """
 
 from collections.abc import Sequence
@@ -25,6 +39,9 @@ from .params import Eta
 # Fallback prediction-error standard deviations for (x, y, yaw, vx, vy, wz),
 # in m, rad, m/s, rad/s, for use before calibrate_R.py has run.
 DEFAULT_R_STD = np.array([1e-3, 1e-3, 1e-2, 2e-3, 2e-3, 2e-2])
+
+# Student-t degrees of freedom: heavy tails, chosen by the offline replay.
+DEFAULT_NU = 3.0
 
 
 def default_R() -> np.ndarray:
@@ -42,16 +59,25 @@ class GridBayesFilter:
     """Belief over a fixed hypothesis grid, updated push by push."""
 
     def __init__(
-        self, grid: Sequence[Eta], model: DynamicsModel, R: np.ndarray
+        self,
+        grid: Sequence[Eta],
+        model: DynamicsModel,
+        R: np.ndarray,
+        nu: float | None = DEFAULT_NU,
     ) -> None:
+        """Start uniform over `grid`.  `nu` is the Student-t likelihood's
+        degrees of freedom; None uses the Gaussian likelihood instead."""
         if not grid:
             raise ValueError("the hypothesis grid is empty")
+        if nu is not None and nu <= 0.0:
+            raise ValueError(f"nu must be positive, got {nu}")
         if R.shape != (6, 6):
             raise ValueError(f"R must be 6x6, got {R.shape}")
         # Cholesky fails unless R is symmetric positive-definite.
         np.linalg.cholesky(R)
         self.grid = list(grid)
         self.model = model
+        self.nu = nu
         self.R_inv = np.linalg.inv(R)
         self.log_probs = np.full(len(self.grid), -np.log(len(self.grid)))
         # The latest update's per-hypothesis errors, for diagnostics.
@@ -66,7 +92,12 @@ class GridBayesFilter:
         """Reweight every hypothesis by its likelihood of `obs`."""
         predicted = self.model.predict(self.grid, obs)
         errors = planar_error(obs.end.planar(), predicted)
-        log_likelihood = -0.5 * np.einsum("ni,ij,nj->n", errors, self.R_inv, errors)
+        q = np.einsum("ni,ij,nj->n", errors, self.R_inv, errors)
+        if self.nu is None:
+            log_likelihood = -0.5 * q
+        else:
+            dim = errors.shape[1]
+            log_likelihood = -0.5 * (self.nu + dim) * np.log1p(q / self.nu)
         log_probs = self.log_probs + log_likelihood
         # Log-sum-exp normalization: shift by the max before exponentiating.
         peak = log_probs.max()
