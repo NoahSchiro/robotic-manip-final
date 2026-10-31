@@ -15,10 +15,16 @@ from pydrake.all import (
 )
 
 from . import ASSET_DIR
+from .action import Action
 from .object import Object
 
 # Home position for the iiwa
 Q_HOME = np.array([0.0, 0.4, 0.0, -1.6, 0.0, 1.2, 0.0])
+
+# Maneuver knobs. This moves reasonably fast
+STANDOFF = 0.015
+MOVE_TIME = 0.35
+HOLD_TIME = 0.1
 
 
 class Pusher:
@@ -158,34 +164,65 @@ def solve_tip_ik(
     raise RuntimeError(f"no IK solution for stick tip pose\n{X_WT}")
 
 
-def demo_tip_waypoints(obj: Object) -> list[RigidTransform]:
-    """Tip waypoints for the demo approach: park the stick a few
-    centimeters above the block, tool pointing straight down."""
+def hover_tip_pose(obj: Object) -> RigidTransform:
+    """The tip pose parked a few centimeters above the block, tool pointing
+    straight down."""
     # The block's body frame sits at the footprint's bottom center, so
     # obj.pose's x, y is a point directly over the block and its top face
     # is at z = obj.height.
     x_block, y_block = obj.pose[:2]
     R_down = RotationMatrix.MakeXRotation(np.pi)  # tool axis -> straight down
     hover_clearance = 0.04
-    X_WT = RigidTransform(
+    return RigidTransform(
         R_down, np.array([x_block, y_block, obj.height + hover_clearance])
     )
-    return [X_WT]
+
+
+def push_maneuver(
+    obj: Object, action: Action, hover: RigidTransform
+) -> list[tuple[RigidTransform, float]]:
+    """Compute the tip's world-frame maneuver for `action`: waypoints paired
+    with each straight segment's duration, starting and ending parked at
+    `hover` with the tool pointing down."""
+    X_WO = obj.x_wo()
+    contact = X_WO @ action.contact.position
+    normal = X_WO.rotation() @ action.contact.normal
+
+    approach = contact - STANDOFF * normal
+    tool_down = hover.rotation()
+    over = RigidTransform(
+        tool_down, np.array([approach[0], approach[1], hover.translation()[2]])
+    )
+    lowered = RigidTransform(tool_down, approach)
+    push_end = RigidTransform(
+        tool_down, contact + action.velocity * action.time * normal
+    )
+    push_time = (STANDOFF + action.velocity * action.time) / action.velocity
+
+    return [
+        (over, MOVE_TIME),  # move over the standoff point
+        (lowered, MOVE_TIME),  # lower to the contact height
+        (push_end, push_time),  # push at the commanded speed and contact time
+        (lowered, push_time),  # back off the way it came
+        (over, MOVE_TIME),  # raise
+        (hover, MOVE_TIME),  # return to the hover
+    ]
 
 
 def make_push_trajectory(
-    ik_plant: MultibodyPlant, pusher: Pusher, tip_waypoints: list[RigidTransform]
+    ik_plant: MultibodyPlant, pusher: Pusher, obj: Object, action: Action
 ) -> PiecewisePolynomial:
-    """Plan the joint-space trajectory that carries the stick tip from
-    Q_HOME through `tip_waypoints`, holding at the last one."""
-    q_samples = [Q_HOME]
-    for X_WT in tip_waypoints:
-        q_samples.append(solve_tip_ik(ik_plant, pusher, X_WT, q_samples[-1]))
+    """Plan the joint-space trajectory that starts parked at the block's hover
+    pose, executes `push_maneuver` for `action`, and parks there for HOLD_TIME."""
+    hover = hover_tip_pose(obj)
+    maneuver = push_maneuver(obj, action, hover)
 
-    segment_time = 2.0
-    hold_time = 1.0
+    q_samples = [solve_tip_ik(ik_plant, pusher, hover, Q_HOME)]
+    for pose, _duration in maneuver:
+        q_samples.append(solve_tip_ik(ik_plant, pusher, pose, q_samples[-1]))
 
-    breaks = np.cumsum([0.0, *([segment_time] * len(tip_waypoints)), hold_time])
+    durations = [duration for _pose, duration in maneuver]
+    breaks = np.cumsum([0.0, *durations, HOLD_TIME])
     samples = np.column_stack([*q_samples, q_samples[-1]]).astype(float)
     return PiecewisePolynomial.FirstOrderHold(
         [float(t) for t in breaks], samples.tolist()

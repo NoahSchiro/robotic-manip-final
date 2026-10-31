@@ -72,13 +72,19 @@ def build_diagram(
     plant.Finalize()
 
     iiwa = plant.GetBodyByName("iiwa_link_0").model_instance()
-    plant.SetDefaultPositions(iiwa, Q_HOME)
+    q_start = Q_HOME if q_ref is None else q_ref.value(0.0).ravel()
+    plant.SetDefaultPositions(iiwa, q_start)
 
     controller = builder.AddSystem(ArmPdController(plant))
     builder.Connect(plant.get_state_output_port(), controller.get_input_port(0))
-    reference = builder.AddSystem(
-        ConstantVectorSource(Q_HOME) if q_ref is None else TrajectorySource(q_ref)
-    )
+    if q_ref is None:
+        reference = builder.AddSystem(
+            ConstantVectorSource(np.concatenate([Q_HOME, np.zeros(len(Q_HOME))]))
+        )
+    else:
+        reference = builder.AddSystem(
+            TrajectorySource(q_ref, output_derivative_order=1)
+        )
     builder.Connect(reference.get_output_port(), controller.get_input_port(1))
     builder.Connect(controller.get_output_port(), plant.get_actuation_input_port())
 

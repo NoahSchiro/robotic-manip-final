@@ -5,12 +5,9 @@ import argparse
 import numpy as np
 from pydrake.all import Simulator
 
-from src.iiwa import (
-    Pusher,
-    build_iiwa_pusher_plant,
-    demo_tip_waypoints,
-    make_push_trajectory,
-)
+from src.action import Action
+from src.geometry import SurfaceNormal
+from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
 from src.object import Object, Rod, Table
 from src.scene import (
     Sim,
@@ -78,6 +75,14 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def demo_action(obj: Object, push_sites: list[SurfaceNormal]) -> Action:
+    """Pick the demo's push: the face nearest the arm, at a slow speed for a
+    short contact time."""
+    R_WO = obj.x_wo().rotation()
+    site = max(push_sites, key=lambda s: (R_WO @ s.normal)[0])
+    return Action(contact=site, velocity=0.05, time=0.4)
+
+
 def main(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
     rng = np.random.default_rng(seed=args.seed)
@@ -89,9 +94,9 @@ def main(args: argparse.Namespace) -> None:
     )
     pusher = Pusher()
 
-    q_traj = make_push_trajectory(
-        build_iiwa_pusher_plant(pusher), pusher, demo_tip_waypoints(obj)
-    )
+    push_sites = obj.surface_normals(args.push_density)
+    action = demo_action(obj, push_sites)
+    q_traj = make_push_trajectory(build_iiwa_pusher_plant(pusher), pusher, obj, action)
     diagram, plant = build_diagram(
         args.time_step, obj, Table(args.mu), pusher, meshcat=sim.meshcat, q_ref=q_traj
     )
@@ -110,10 +115,13 @@ def main(args: argparse.Namespace) -> None:
         f"object com (body frame) = "
         f"{np.array2string(obj.com_in_body_frame(), precision=3)}"
     )
-    push_sites = obj.surface_normals(args.push_density)
     print(
         f"push library: {len(push_sites)} contact sites "
         f"({args.push_density} per m of outline, all at mid-height)"
+    )
+    print(
+        f"demo push: {action.velocity:.2f} m/s along the contact's inward "
+        f"normal for {action.time:.2f} s in contact"
     )
     print(f"object starts at {np.array2string(X_WO.translation(), precision=3)}")
     print(f"object goal is {np.array2string(obj.x_wg().translation(), precision=3)}")
