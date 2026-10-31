@@ -1,14 +1,20 @@
 """Entry point."""
 
 import argparse
+import time
 
 import numpy as np
 from pydrake.all import Simulator
 
+from src import ASSET_DIR
 from src.action import Action
+from src.dynamics import ParallelPushModel
+from src.estimator import GridBayesFilter, load_R
 from src.geometry import SurfaceNormal
 from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
 from src.object import Object, Rod, Table
+from src.observation import record_random_push
+from src.params import Eta, GridSpec, make_grid
 from src.scene import (
     Sim,
     build_diagram,
@@ -60,6 +66,32 @@ def parse_args() -> argparse.Namespace:
         default=2.0,
         help="push-contact density: surface normals per cm of object outline",
     )
+    parser.add_argument(
+        "--estimate",
+        action="store_true",
+        help="run random pushes and estimate (mu, rod x, rod y) after each",
+    )
+    parser.add_argument(
+        "--pushes", type=int, default=5, help="pushes to run with --estimate"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="prediction processes for --estimate (default: all CPUs)",
+    )
+    parser.add_argument(
+        "--model-time-step",
+        type=float,
+        default=2e-3,
+        help="estimator prediction model timestep",
+    )
+    parser.add_argument(
+        "--settle-time",
+        type=float,
+        default=0.1,
+        help="measurement delay after each push segment ends (s)",
+    )
     args = parser.parse_args()
 
     if args.time_step < 0.0:
@@ -70,6 +102,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--rod-mass must be positive")
     if args.push_density <= 0.0:
         raise SystemExit("--push-density must be positive")
+    if args.pushes < 1:
+        raise SystemExit("--pushes must be at least 1")
     args.push_density *= 100  # count/cm -> count/m
 
     return args
@@ -83,6 +117,61 @@ def demo_action(obj: Object, push_sites: list[SurfaceNormal]) -> Action:
     return Action(contact=site, velocity=0.05, time=0.4)
 
 
+def run_estimation(
+    args: argparse.Namespace,
+    sim: Sim,
+    rng: np.random.Generator,
+    obj: Object,
+    pusher: Pusher,
+) -> None:
+    """Run random pushes from the push library, chained from each push's
+    final pose, and update the grid Bayes filter after each."""
+    eta_true = Eta(args.mu, args.rod_x, args.rod_y)
+    push_sites = obj.surface_normals(args.push_density)
+    grid = make_grid(GridSpec(), obj.parts)
+    r_path = ASSET_DIR / "R.npy"
+    R = load_R(r_path)
+    print(
+        f"estimating eta = (mu, rod x, rod y), true {eta_true}, over "
+        f"{len(grid)} hypotheses; R "
+        f"{'from ' + str(r_path) if r_path.exists() else 'uncalibrated default'}"
+    )
+
+    with ParallelPushModel(
+        args.workers, time_step=args.model_time_step, rod_mass=args.rod_mass
+    ) as model:
+        belief = GridBayesFilter(grid, model, R)
+        print(f"push 0: entropy {belief.entropy():.3f}")
+        for k in range(1, args.pushes + 1):
+            if sim.meshcat is not None:
+                show_object_goal(sim.meshcat, obj)
+                show_push_sites(sim.meshcat, obj, push_sites)
+            obs = record_random_push(
+                rng,
+                obj,
+                pusher,
+                push_sites,
+                args.time_step,
+                args.settle_time,
+                meshcat=sim.meshcat,
+                realtime_rate=0.0 if sim.headless else 1.0,
+            )
+            started = time.time()
+            belief.update(obs)
+            mu, bx, by = belief.map_eta().as_array()
+            d_mu, d_bx, d_by = belief.estimation_error(eta_true)
+            print(
+                f"push {k}: v={obs.action.velocity:.2f} m/s for "
+                f"{obs.action.time:.1f} s, update {time.time() - started:.1f} s, "
+                f"entropy {belief.entropy():.3f}, max p {belief.probs.max():.3f}\n"
+                f"  MAP mu={mu:.3f} b=({bx:+.4f}, {by:+.4f}) m; error "
+                f"mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, {d_by * 100:+.2f}) cm"
+            )
+            # Chain the next push from where this one left the object.
+            x, y, yaw = obs.end.planar()[:3]
+            obj.pose = (float(x), float(y), float(yaw))
+
+
 def main(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
     rng = np.random.default_rng(seed=args.seed)
@@ -93,6 +182,12 @@ def main(args: argparse.Namespace) -> None:
         friction=args.mu,
     )
     pusher = Pusher()
+
+    if args.estimate:
+        run_estimation(args, sim, rng, obj, pusher)
+        if not sim.headless:
+            input("Press Enter to quit.")
+        return
 
     push_sites = obj.surface_normals(args.push_density)
     action = demo_action(obj, push_sites)
