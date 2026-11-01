@@ -1,12 +1,16 @@
-"""Prediction models for the estimator: where the object ends a push window
-under a hypothesized eta.
+"""Prediction models for the estimator and the MPC: where a push leaves the
+object under a hypothesized eta.
 
-DrakePushModel replays the measured tip path in a small plant: the table,
-the object, and a lone stick tip on x/y/z prismatic joints that Drake's
-built-in actuator PD drives along the path (no arm, IK, or arm PD).  One
-plant serves every hypothesis: each prediction swaps eta's inertia and
-friction into the context.  ParallelPushModel fans the hypotheses for one
-push out over worker processes, each chunk on its own DrakePushModel.
+DrakePushModel drives a tip path in a small plant: the table, the object,
+and a lone stick tip on x/y/z prismatic joints that Drake's built-in
+actuator PD drives along the path (no arm, IK, or arm PD).  For the
+estimator, predict replays a push's measured tip path under each
+hypothesis.  For the MPC, predict_pushes runs pushes not yet made under
+one eta, along their nominal tip path: straight and at the commanded
+speed, without the real arm's lag.  One plant serves every prediction:
+each swaps eta's inertia and friction into the context.
+ParallelPushModel fans predictions out over worker processes, each chunk
+on its own DrakePushModel.
 """
 
 from collections.abc import Sequence
@@ -36,13 +40,18 @@ from pydrake.all import (
     RotationalInertia,
     Simulator,
     SpatialInertia,
+    SpatialVelocity,
     TrajectorySource,
 )
 
-from .iiwa import Pusher
+from .action import Action
+from .iiwa import Pusher, hover_tip_pose, push_maneuver
 from .object import Object, Table, add_object, add_table
 from .observation import ObjectState, PushObservation, measurement
 from .params import Eta
+
+# A planar object pose (x, y, yaw), as Object.pose holds it.
+Pose = tuple[float, float, float]
 
 
 class DynamicsModel(Protocol):
@@ -53,6 +62,43 @@ class DynamicsModel(Protocol):
         vx, vy, wz at the push segment's end; see observation.measurement)
         under each of `etas`, as an (N, 6) array."""
         ...
+
+
+class PlanningModel(Protocol):
+    """Predicts where commanded pushes leave the object."""
+
+    def predict_pushes(
+        self, eta: Eta, pose: Pose, actions: Sequence[Action]
+    ) -> np.ndarray:
+        """Predict where each of `actions`, commanded with the object at
+        rest at `pose`, leaves it under `eta` once the stick has risen
+        clear, as an (N, 3) array of (x, y, yaw)."""
+        ...
+
+
+def nominal_tip_path(obj: Object, action: Action) -> tuple[PiecewisePolynomial, float]:
+    """Get the tip's commanded path for `action` from `obj`'s current pose,
+    as push_maneuver lays it out: from the standoff point, push at the
+    commanded speed, back off the same way, and rise clear of the block,
+    each leg straight and at constant speed.  Times start at 0 at the
+    standoff, like a push window's.  Also returns the path's end time.
+
+    The rise matters: backing off along the push line can strike a block
+    the push has rotated, and the stick drags it until it clears the top.
+    """
+    maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
+    # Segment 1 lowers to the standoff; 2 pushes; 3 backs off; 4 rises.
+    (lowered, _), (push_end, t_push), (_, t_back_off), (over, t_rise) = maneuver[1:5]
+    times = list(np.cumsum([0.0, t_push, t_back_off, t_rise]))
+    positions = np.column_stack(
+        [
+            lowered.translation(),
+            push_end.translation(),
+            lowered.translation(),
+            over.translation(),
+        ]
+    )
+    return PiecewisePolynomial.FirstOrderHold(times, positions.tolist()), times[-1]
 
 
 @dataclass(frozen=True)
@@ -147,9 +193,9 @@ def _hypothesis_object(eta: Eta, rod_mass: float) -> Object:
     return eta.to_object(np.random.default_rng(0), rod_mass)
 
 
-class DrakePushModel(DynamicsModel):
-    """Short-horizon Drake prediction: replay the measured tip path against
-    the object under a hypothesized eta, from the measured start state."""
+class DrakePushModel(DynamicsModel, PlanningModel):
+    """Short-horizon Drake prediction: drive a tip path against the object
+    under a hypothesized eta, from a given start state."""
 
     def __init__(self, config: PushModelConfig) -> None:
         self.rod_mass = config.rod_mass
@@ -240,6 +286,26 @@ class DrakePushModel(DynamicsModel):
             predictions[i] = measurement(push_end, end)
         return predictions
 
+    def predict_pushes(
+        self, eta: Eta, pose: Pose, actions: Sequence[Action]
+    ) -> np.ndarray:
+        """Predict where each of `actions`, commanded with the object at
+        rest at `pose`, leaves it under `eta` once the stick has risen
+        clear, as an (N, 3) array of (x, y, yaw)."""
+        self.set_eta(eta)
+        obj = _hypothesis_object(eta, self.rod_mass)
+        obj.pose = pose
+        start = ObjectState(pose=obj.x_wo(), velocity=SpatialVelocity.Zero())
+        predictions = np.empty((len(actions), 3))
+        for i, action in enumerate(actions):
+            path, end_time = nominal_tip_path(obj, action)
+            self.source.UpdateTrajectory(path)
+            (final,) = self._simulate(
+                start, path.value(0.0).ravel(), np.zeros(3), [end_time]
+            )
+            predictions[i] = final[:3]
+        return predictions
+
     def _simulate(
         self,
         start: ObjectState,
@@ -274,10 +340,10 @@ class DrakePushModel(DynamicsModel):
         ).planar()
 
 
-class ParallelPushModel(DynamicsModel):
-    """DrakePushModel's predictions for one push split across `workers`
-    processes: the hypotheses run in parallel, never the pushes themselves.
-    Use as a context manager, or call close()."""
+class ParallelPushModel(DynamicsModel, PlanningModel):
+    """DrakePushModel's predictions split across `workers` processes.  What
+    runs in parallel is simulated predictions for one decision; real pushes
+    still happen one at a time.  Use as a context manager, or call close()."""
 
     def __init__(self, workers: int, config: PushModelConfig) -> None:
         self.workers = workers
@@ -293,18 +359,46 @@ class ParallelPushModel(DynamicsModel):
         # milliseconds, against seconds simulating the chunk.
         return DrakePushModel(config).predict(etas, obs)
 
+    @staticmethod
+    def _predict_pushes_chunk(
+        config: PushModelConfig, eta: Eta, pose: Pose, actions: list[Action]
+    ) -> np.ndarray:
+        """Predict one chunk of commanded pushes, running in a worker process."""
+        return DrakePushModel(config).predict_pushes(eta, pose, actions)
+
     def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
         """Predict the push's measurement under each of `etas`."""
-        chunks = [
-            [etas[int(i)] for i in chunk]
-            for chunk in np.array_split(np.arange(len(etas)), self.workers)
-            if chunk.size
-        ]
         futures = [
-            self.pool.submit(self._predict_chunk, self.config, chunk, obs)
-            for chunk in chunks
+            self.pool.submit(
+                self._predict_chunk,
+                self.config,
+                [etas[int(i)] for i in chunk],
+                obs,
+            )
+            for chunk in self._chunks(len(etas))
         ]
         return np.concatenate([f.result() for f in futures])
+
+    def predict_pushes(
+        self, eta: Eta, pose: Pose, actions: Sequence[Action]
+    ) -> np.ndarray:
+        """Predict where each of `actions`, commanded with the object at
+        rest at `pose`, leaves it under `eta`."""
+        futures = [
+            self.pool.submit(
+                self._predict_pushes_chunk,
+                self.config,
+                eta,
+                pose,
+                [actions[int(i)] for i in chunk],
+            )
+            for chunk in self._chunks(len(actions))
+        ]
+        return np.concatenate([f.result() for f in futures])
+
+    def _chunks(self, n: int) -> list[np.ndarray]:
+        """Split indices 0..n-1 into one contiguous chunk per worker."""
+        return [c for c in np.array_split(np.arange(n), self.workers) if c.size]
 
     def close(self) -> None:
         """Shut the worker processes down."""
