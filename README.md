@@ -56,7 +56,13 @@ uv run python main.py --headless --mpc
 uv run python main.py --headless --mpc --probe-pushes 3
 # Check the controller alone, planning with the true eta
 uv run python main.py --headless --mpc --plan-with-true-eta
+# Set the start and goal poses (x m, y m, yaw deg) instead of the seed's
+uv run python main.py --headless --mpc --start 0.55 -0.15 0 --goal 0.55 0.15 130
 ```
+
+The seed draws start and goal within 10 cm of (0.55, 0), so at most
+20 cm apart.  The arm reaches the push height for x between about 0.40
+and 0.75 m, so set wider layouts along y.
 
 Before each push, the MPC predicts where every candidate push would
 leave the block under the MAP eta and picks the cheapest push the arm can
