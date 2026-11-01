@@ -209,6 +209,13 @@ def push_maneuver(
     ]
 
 
+def maneuver_time(obj: Object, action: Action) -> float:
+    """Get the push trajectory's length for `action`: push_maneuver's
+    segments plus the final hold, as make_push_trajectory plans it."""
+    maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
+    return sum(duration for _pose, duration in maneuver) + HOLD_TIME
+
+
 def make_push_trajectory(
     ik_plant: MultibodyPlant, pusher: Pusher, obj: Object, action: Action
 ) -> PiecewisePolynomial:

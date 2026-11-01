@@ -144,7 +144,7 @@ def run_estimation(
         started = time.time()
         belief.update(obs)
         print(format_push_report(k, obs, time.time() - started, belief, eta_true))
-        obj.pose = obs.end_pose()
+        obj.pose = obs.final_pose()
 
 
 def main(args: argparse.Namespace) -> None:

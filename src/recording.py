@@ -21,6 +21,7 @@ from .iiwa import (
     build_iiwa_pusher_plant,
     hover_tip_pose,
     make_push_trajectory,
+    maneuver_time,
     push_maneuver,
 )
 from .object import Object, Table
@@ -111,14 +112,15 @@ def observe_push(
     settle_time: float,
     realtime_rate: float,
 ) -> PushObservation:
-    """Run the truth sim through `action`'s push window, leaving `context` at
-    the window's end.
+    """Run the truth sim through `action`'s trajectory (or its push window, if
+    longer), leaving `context` at the end.
 
     Raises RuntimeError when `diagram` has no state logger; record_push builds
     one correctly.
     """
     plant_context = plant.GetMyContextFromRoot(context)
     window = push_window(obj, action, settle_time)
+    t_final = max(maneuver_time(obj, action), window.end)
     logger = state_logger(diagram)
 
     simulator = Simulator(diagram, context)
@@ -131,6 +133,8 @@ def observe_push(
     simulator.AdvanceTo(window.end)
     end = read_object_state(plant, plant_context, obj)
     tip_end = read_tip(plant, plant_context, pusher)
+    simulator.AdvanceTo(t_final)
+    final = read_object_state(plant, plant_context, obj)
 
     log = logger.FindLog(context)
     inside_times, inside_tips = tip_samples_inside_window(
@@ -143,6 +147,7 @@ def observe_push(
         start=start,
         push_end=push_end,
         end=end,
+        final=final,
         push_end_time=window.push_end - window.start,
         tip_times=np.concatenate(
             [[0.0], inside_times - window.start, [window.end - window.start]]
