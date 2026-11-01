@@ -1,6 +1,6 @@
 """What one push produces for the estimator: the object's state before and
 after, plus the pusher tip's measured path in between, recorded from the
-truth sim.
+truth sim.  Also where the push leaves the object, for chaining pushes.
 
 The push window opens when the tip has lowered to its standoff point
 (before contact) and closes `settle_time` after the push segment ends.
@@ -22,6 +22,7 @@ from pydrake.all import (
     Context,
     Diagram,
     MultibodyPlant,
+    PiecewisePolynomial,
     RigidTransform,
     RollPitchYaw,
     Simulator,
@@ -33,6 +34,7 @@ from pydrake.geometry import Meshcat
 from .action import Action, sample_action
 from .geometry import SurfaceNormal
 from .iiwa import (
+    HOLD_TIME,
     Pusher,
     build_iiwa_pusher_plant,
     hover_tip_pose,
@@ -72,12 +74,15 @@ def measurement(push_end: np.ndarray, end: np.ndarray) -> np.ndarray:
 class PushObservation:
     """One executed push: the object's state at the window's start, at the
     push segment's end, and at the window's end, and the tip's world-frame
-    path over the window, times starting at 0."""
+    path over the window, times starting at 0.  `final` is the object's
+    state at the push trajectory's end, the arm parked back at its hover:
+    where the push leaves it."""
 
     action: Action
     start: ObjectState
     push_end: ObjectState
     end: ObjectState
+    final: ObjectState
     push_end_time: float  # s, from the window's start
     tip_times: np.ndarray  # (n,) s, from the window's start
     tip_positions: np.ndarray  # (3, n) world frame
@@ -119,6 +124,13 @@ def push_window(
     return start, push_end, push_end + settle_time
 
 
+def maneuver_time(obj: Object, action: Action) -> float:
+    """Get the push trajectory's length for `action`: push_maneuver's
+    segments plus the final hold, as make_push_trajectory plans it."""
+    maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
+    return sum(duration for _pose, duration in maneuver) + HOLD_TIME
+
+
 def read_object_state(
     plant: MultibodyPlant, plant_context: Context, obj: Object
 ) -> ObjectState:
@@ -154,11 +166,13 @@ def observe_push(
     """Run the truth sim through `action`'s push window and record it.
 
     `diagram` must come from build_diagram with logging on, with its
-    reference trajectory planned for `action`.  The sim stops at the
-    window's end, leaving `context` there.
+    reference trajectory planned for `action`.  The sim runs to the
+    trajectory's end (or the window's end, if later), leaving `context`
+    there.
     """
     plant_context = plant.GetMyContextFromRoot(context)
     t_start, t_push_end, t_end = push_window(obj, action, settle_time)
+    t_final = max(maneuver_time(obj, action), t_end)
 
     simulator = Simulator(diagram, context)
     simulator.set_target_realtime_rate(realtime_rate)
@@ -170,6 +184,8 @@ def observe_push(
     simulator.AdvanceTo(t_end)
     end = read_object_state(plant, plant_context, obj)
     tip_end = read_tip(plant, plant_context, pusher)
+    simulator.AdvanceTo(t_final)
+    final = read_object_state(plant, plant_context, obj)
 
     # Logged samples strictly inside the window, rebuilt into tip kinematics
     # on a scratch context; the exact endpoints come from the live context.
@@ -193,10 +209,40 @@ def observe_push(
         start=start,
         push_end=push_end,
         end=end,
+        final=final,
         push_end_time=t_push_end - t_start,
         tip_times=np.concatenate([[0.0], times[inside] - t_start, [t_end - t_start]]),
         tip_positions=np.column_stack([p for p, _v in tips]),
         tip_velocities=np.column_stack([v for _p, v in tips]),
+    )
+
+
+def record_push(
+    obj: Object,
+    pusher: Pusher,
+    action: Action,
+    q_traj: PiecewisePolynomial,
+    time_step: float,
+    settle_time: float = 0.1,
+    meshcat: Meshcat | None = None,
+    realtime_rate: float = 0.0,
+) -> PushObservation:
+    """Run `action`, planned as `q_traj` by make_push_trajectory, in the
+    truth sim from `obj`'s current pose, and record it.  The table shares
+    the object's friction, as in main.py."""
+    diagram, plant = build_diagram(
+        time_step,
+        obj,
+        Table(obj.friction),
+        pusher,
+        meshcat=meshcat,
+        q_ref=q_traj,
+        log_period=LOG_PERIOD,
+    )
+    context = diagram.CreateDefaultContext()
+    place_object(plant, plant.GetMyMutableContextFromRoot(context), obj)
+    return observe_push(
+        diagram, plant, context, obj, pusher, action, settle_time, realtime_rate
     )
 
 
@@ -212,8 +258,7 @@ def record_random_push(
     max_tries: int = 20,
 ) -> PushObservation:
     """Draw a random library push the arm can reach, run it in the truth
-    sim from `obj`'s current pose, and record it.  The table shares the
-    object's friction, as in main.py."""
+    sim from `obj`'s current pose, and record it."""
     ik_plant = build_iiwa_pusher_plant(pusher)
     for _ in range(max_tries):
         action = sample_action(rng, sites)
@@ -221,18 +266,7 @@ def record_random_push(
             q_traj = make_push_trajectory(ik_plant, pusher, obj, action)
         except RuntimeError:
             continue  # this contact is out of the arm's reach; draw again
-        diagram, plant = build_diagram(
-            time_step,
-            obj,
-            Table(obj.friction),
-            pusher,
-            meshcat=meshcat,
-            q_ref=q_traj,
-            log_period=LOG_PERIOD,
-        )
-        context = diagram.CreateDefaultContext()
-        place_object(plant, plant.GetMyMutableContextFromRoot(context), obj)
-        return observe_push(
-            diagram, plant, context, obj, pusher, action, settle_time, realtime_rate
+        return record_push(
+            obj, pusher, action, q_traj, time_step, settle_time, meshcat, realtime_rate
         )
     raise RuntimeError(f"no reachable push in {max_tries} draws")

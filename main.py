@@ -172,7 +172,7 @@ def run_estimation(
                 f"mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, {d_by * 100:+.2f}) cm"
             )
             # Chain the next push from where this one left the object.
-            x, y, yaw = obs.end.planar()[:3]
+            x, y, yaw = obs.final.planar()[:3]
             obj.pose = (float(x), float(y), float(yaw))
 
 
