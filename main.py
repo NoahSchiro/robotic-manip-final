@@ -1,14 +1,21 @@
 """Entry point."""
 
 import argparse
+import time
 
 import numpy as np
 from pydrake.all import Simulator
 
-from src.action import Action
+from src.action import Action, push_library
+from src.dynamics import ParallelPushModel
+from src.episode import MAX_PUSHES, run_episode
+from src.estimator import DEFAULT_NU, GridBayesFilter
 from src.geometry import SurfaceNormal
 from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
+from src.mpc import MpcController, clear_sites, goal_error
 from src.object import Object, Rod, Table
+from src.observation import record_random_push
+from src.params import Eta, GridSpec, make_grid
 from src.scene import (
     Sim,
     build_diagram,
@@ -60,6 +67,76 @@ def parse_args() -> argparse.Namespace:
         default=2.0,
         help="push-contact density: surface normals per cm of object outline",
     )
+    parser.add_argument(
+        "--start",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "YAW"),
+        default=None,
+        help="object start pose (m, m, deg), instead of the seed's random one",
+    )
+    parser.add_argument(
+        "--goal",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "YAW"),
+        default=None,
+        help="object goal pose (m, m, deg), instead of the seed's random one",
+    )
+    parser.add_argument(
+        "--estimate",
+        action="store_true",
+        help="run random pushes and estimate (mu, rod x, rod y) after each",
+    )
+    parser.add_argument(
+        "--pushes", type=int, default=5, help="pushes to run with --estimate"
+    )
+    parser.add_argument(
+        "--mpc",
+        action="store_true",
+        help="push the object to its goal with MPC, estimating eta along the way",
+    )
+    parser.add_argument(
+        "--probe-pushes",
+        type=int,
+        default=0,
+        help="random probe pushes before MPC with --mpc (0: no probing)",
+    )
+    parser.add_argument(
+        "--max-pushes",
+        type=int,
+        default=MAX_PUSHES,
+        help="push budget per --mpc episode, probes included",
+    )
+    parser.add_argument(
+        "--plan-with-true-eta",
+        action="store_true",
+        help="with --mpc, plan with the true eta and skip estimation",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="prediction processes for --estimate/--mpc (default: all CPUs)",
+    )
+    parser.add_argument(
+        "--model-time-step",
+        type=float,
+        default=2e-3,
+        help="estimator prediction model timestep",
+    )
+    parser.add_argument(
+        "--settle-time",
+        type=float,
+        default=0.1,
+        help="measurement delay after each push segment ends (s)",
+    )
+    parser.add_argument(
+        "--nu",
+        type=float,
+        default=DEFAULT_NU,
+        help="estimator Student-t degrees of freedom (0: Gaussian likelihood)",
+    )
     args = parser.parse_args()
 
     if args.time_step < 0.0:
@@ -70,6 +147,14 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--rod-mass must be positive")
     if args.push_density <= 0.0:
         raise SystemExit("--push-density must be positive")
+    if args.pushes < 1:
+        raise SystemExit("--pushes must be at least 1")
+    if args.probe_pushes < 0:
+        raise SystemExit("--probe-pushes must be nonnegative")
+    if args.max_pushes < 1:
+        raise SystemExit("--max-pushes must be at least 1")
+    if args.nu < 0.0:
+        raise SystemExit("--nu must be nonnegative")
     args.push_density *= 100  # count/cm -> count/m
 
     return args
@@ -83,6 +168,119 @@ def demo_action(obj: Object, push_sites: list[SurfaceNormal]) -> Action:
     return Action(contact=site, velocity=0.05, time=0.4)
 
 
+def run_estimation(
+    args: argparse.Namespace,
+    sim: Sim,
+    rng: np.random.Generator,
+    obj: Object,
+    pusher: Pusher,
+) -> None:
+    """Run random pushes from the push library, chained from each push's
+    final pose, and update the grid Bayes filter after each."""
+    eta_true = Eta(args.mu, args.rod_x, args.rod_y)
+    push_sites = obj.surface_normals(args.push_density)
+    grid = make_grid(GridSpec(), obj.parts)
+    print(
+        f"estimating eta = (mu, rod x, rod y), true {eta_true}, over "
+        f"{len(grid)} hypotheses"
+    )
+
+    with ParallelPushModel(
+        args.workers, time_step=args.model_time_step, rod_mass=args.rod_mass
+    ) as model:
+        belief = GridBayesFilter(grid, model, nu=args.nu or None)
+        print(f"push 0: entropy {belief.entropy():.3f}")
+        for k in range(1, args.pushes + 1):
+            if sim.meshcat is not None:
+                show_object_goal(sim.meshcat, obj)
+                show_push_sites(sim.meshcat, obj, push_sites)
+            obs = record_random_push(
+                rng,
+                obj,
+                pusher,
+                push_sites,
+                args.time_step,
+                args.settle_time,
+                meshcat=sim.meshcat,
+                realtime_rate=0.0 if sim.headless else 1.0,
+            )
+            started = time.time()
+            belief.update(obs)
+            mu, bx, by = belief.map_eta().as_array()
+            d_mu, d_bx, d_by = belief.estimation_error(eta_true)
+            print(
+                f"push {k}: v={obs.action.velocity:.2f} m/s for "
+                f"{obs.action.time:.1f} s, update {time.time() - started:.1f} s, "
+                f"entropy {belief.entropy():.3f}, max p {belief.probs.max():.3f}\n"
+                f"  MAP mu={mu:.3f} b=({bx:+.4f}, {by:+.4f}) m; error "
+                f"mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, {d_by * 100:+.2f}) cm"
+            )
+            # Chain the next push from where this one left the object.
+            x, y, yaw = obs.final.planar()[:3]
+            obj.pose = (float(x), float(y), float(yaw))
+
+
+def run_mpc(
+    args: argparse.Namespace,
+    sim: Sim,
+    rng: np.random.Generator,
+    obj: Object,
+    pusher: Pusher,
+) -> None:
+    """Run one placement episode: optional random probing, then MPC pushes
+    toward the goal, with the grid Bayes filter updated after every push
+    (unless planning with the true eta)."""
+    eta_true = Eta(args.mu, args.rod_x, args.rod_y)
+    push_sites = obj.surface_normals(args.push_density)
+    actions = push_library(clear_sites(obj, push_sites, pusher))
+    position_error, yaw_error = goal_error(obj)
+    print(
+        f"placing the object, true eta {eta_true}: start "
+        f"{np.array2string(np.array(obj.pose), precision=3)}, goal "
+        f"{np.array2string(np.array(obj.goal), precision=3)} "
+        f"({position_error * 100:.1f} cm, {np.rad2deg(yaw_error):.1f} deg away); "
+        f"{len(actions)} candidate pushes"
+    )
+
+    with ParallelPushModel(
+        args.workers, time_step=args.model_time_step, rod_mass=args.rod_mass
+    ) as model:
+        controller = MpcController(model, actions)
+        belief = None
+        if not args.plan_with_true_eta:
+            grid = make_grid(GridSpec(), obj.parts)
+            belief = GridBayesFilter(grid, model, nu=args.nu or None)
+        result = run_episode(
+            rng,
+            obj,
+            pusher,
+            controller,
+            belief,
+            push_sites,
+            args.time_step,
+            args.settle_time,
+            probe_pushes=args.probe_pushes,
+            max_pushes=args.max_pushes,
+            known_eta=eta_true if args.plan_with_true_eta else None,
+            meshcat=sim.meshcat,
+            realtime_rate=0.0 if sim.headless else 1.0,
+        )
+    print(
+        f"{'success' if result.success else 'failure'} ({result.stop_reason}) "
+        f"after {result.probe_pushes} probe + {result.mpc_pushes} MPC pushes: "
+        f"goal error {result.position_error * 100:.1f} cm, "
+        f"{np.rad2deg(result.yaw_error):.1f} deg; {result.sim_time:.1f} s "
+        f"simulated, planning {result.planning_time:.0f} s, estimation "
+        f"{result.estimation_time:.0f} s"
+    )
+    if belief is not None:
+        d_mu, d_bx, d_by = belief.estimation_error(eta_true)
+        print(
+            f"final MAP error mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, "
+            f"{d_by * 100:+.2f}) cm"
+        )
+
+
 def main(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
     rng = np.random.default_rng(seed=args.seed)
@@ -92,7 +290,20 @@ def main(args: argparse.Namespace) -> None:
         rod=Rod(x=args.rod_x, y=args.rod_y, mass=args.rod_mass),
         friction=args.mu,
     )
+    if args.start is not None:
+        x, y, yaw = args.start
+        obj.pose = (x, y, float(np.deg2rad(yaw)))
+    if args.goal is not None:
+        x, y, yaw = args.goal
+        obj.goal = (x, y, float(np.deg2rad(yaw)))
     pusher = Pusher()
+
+    if args.estimate or args.mpc:
+        run = run_mpc if args.mpc else run_estimation
+        run(args, sim, rng, obj, pusher)
+        if not sim.headless:
+            input("Press Enter to quit.")
+        return
 
     push_sites = obj.surface_normals(args.push_density)
     action = demo_action(obj, push_sites)

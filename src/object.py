@@ -286,7 +286,9 @@ class Object(BoxComposite):
 
 def add_object(obj: Object, parser: Parser) -> None:
     """Add the block into `plant` as a free body."""
-    parser.AddModelsFromUrl(obj.write_sdf().as_uri())
+    # Parsed from the string, not a file under assets/: parallel runs with
+    # different objects would race on the one shared path.
+    parser.AddModelsFromString(obj.sdf(), "sdf")
 
 
 class Table(BoxComposite):
@@ -305,7 +307,7 @@ class Table(BoxComposite):
 
 def add_table(table: Table, plant: MultibodyPlant, parser: Parser) -> None:
     """Parse the table into `plant`, welded down with its top surface at z = 0."""
-    parser.AddModelsFromUrl(table.write_sdf().as_uri())
+    parser.AddModelsFromString(table.sdf(), "sdf")
     plant.WeldFrames(
         plant.world_frame(),
         plant.GetFrameByName(table.body_box, plant.GetModelInstanceByName(table.name)),

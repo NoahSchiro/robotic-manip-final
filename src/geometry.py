@@ -168,3 +168,15 @@ def contains_disk(parts: list[SurfacePart], x: float, y: float, radius: float) -
         if not any(a <= y - w and y + w <= b for a, b in merged):
             return False
     return True
+
+
+def distance_to_footprint(parts: list[SurfacePart], x: float, y: float) -> float:
+    """Get the distance from body-frame point (x, y) to the parts' union
+    footprint, 0 inside it."""
+    fx, fy = footprint_center(parts)
+    # body frame -> parts frame
+    x, y = x + fx, y + fy
+    return min(
+        math.hypot(max(abs(x - cx) - sx / 2, 0.0), max(abs(y - cy) - sy / 2, 0.0))
+        for sx, sy, cx, cy in parts
+    )

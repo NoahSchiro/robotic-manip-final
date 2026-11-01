@@ -106,7 +106,7 @@ def add_iiwa_and_pusher(pusher: Pusher, plant: MultibodyPlant, parser: Parser) -
     parser.AddModelsFromUrl(
         "package://drake_models/iiwa_description/urdf/iiwa14_primitive_collision.urdf"
     )
-    parser.AddModelsFromUrl(pusher.write_sdf().as_uri())
+    parser.AddModelsFromString(pusher.sdf(), "sdf")
     # Add stick
     plant.WeldFrames(
         plant.GetFrameByName("iiwa_link_7"),
