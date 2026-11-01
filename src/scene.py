@@ -11,6 +11,7 @@ from pydrake.all import (
     Context,
     Diagram,
     DiagramBuilder,
+    LogVectorOutput,
     MeshcatVisualizer,
     MultibodyPlant,
     Parser,
@@ -26,6 +27,9 @@ from src.geometry import SurfaceNormal
 from src.iiwa import Q_HOME, Pusher, add_iiwa_and_pusher
 from src.object import Object, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
+
+# Name of the plant-state logger build_diagram adds when asked to log.
+STATE_LOGGER = "state_logger"
 
 
 class Sim:
@@ -56,8 +60,12 @@ def build_diagram(
     pusher: Pusher,
     meshcat: Meshcat | None = None,
     q_ref: PiecewisePolynomial | None = None,
+    log_period: float | None = None,
 ) -> tuple[Diagram, MultibodyPlant]:
-    """Assemble the scene (arm with stick, table, block) plus the arm controller."""
+    """Assemble the scene (arm with stick, table, block) plus the arm controller.
+
+    With `log_period`, the plant state is also logged at that period, in a
+    logger named STATE_LOGGER (see observation.py)."""
     builder = DiagramBuilder()
     plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
     parser = Parser(plant)
@@ -87,6 +95,10 @@ def build_diagram(
         )
     builder.Connect(reference.get_output_port(), controller.get_input_port(1))
     builder.Connect(controller.get_output_port(), plant.get_actuation_input_port())
+
+    if log_period is not None:
+        logger = LogVectorOutput(plant.get_state_output_port(), builder, log_period)
+        logger.set_name(STATE_LOGGER)
 
     if meshcat is not None:
         MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
