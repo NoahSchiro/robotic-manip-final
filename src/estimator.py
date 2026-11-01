@@ -5,22 +5,23 @@ the measured outcome D_t:
 
     p_(t+1, i) = p_(t, i) P(D_t | eta_i) / sum_j p_(t, j) P(D_t | eta_j)
 
-where e_(t,i) is the measured minus predicted final planar state (x, y,
-yaw, vx, vy, wz) of the push window, yaw wrapped, and q = e^T R^-1 e.
+where e_(t,i) is the measured minus predicted measurement (x, y, yaw at
+the push window's end; vx, vy, wz at the push segment's end; see
+observation.py), yaw wrapped, and q = e^T R^-1 e.
 
 The likelihood is a multivariate Student-t by default,
 
     P(D_t | eta_i) ~ (1 + q / nu)^(-(nu + 6) / 2),
 
 with R as its scale matrix, rather than the proposal's Gaussian
-exp(-q / 2) (nu=None).  The prediction model occasionally mispredicts a
-push badly even at the true eta; under a Gaussian that one push costs the
-correct hypothesis hundreds of nats and a wrong one takes over with near
-certainty.  The t's log-penalty grows only logarithmically in q, so no
-single push can eliminate a hypothesis.  In an offline replay of 19
-held-out trials, nu = 3 cut confidently wrong final beliefs from 21% to 5%
-and raised MAPs within one grid step of the truth from 79% to 84%, at
-about the same convergence speed.
+exp(-q / 2) (nu=None).  Under a Gaussian, a single badly mispredicted push
+costs the correct hypothesis hundreds of nats and a wrong one takes over
+with near certainty; the t's log-penalty grows only logarithmically in q,
+so no single push can eliminate a hypothesis.  Measuring velocity at the
+push segment's end removed the outliers seen so far, so the t is a safety
+net: in an offline replay of 19 held-out trials it still took MAPs within
+one grid step of the truth from 89% to 100% and confidently wrong final
+beliefs from 5% to 0%.
 
 Probabilities are kept as logs so long push sequences don't underflow.  A
 wait (no push) yields no observation, so it makes no update.
@@ -91,7 +92,7 @@ class GridBayesFilter:
     def update(self, obs: PushObservation) -> None:
         """Reweight every hypothesis by its likelihood of `obs`."""
         predicted = self.model.predict(self.grid, obs)
-        errors = planar_error(obs.end.planar(), predicted)
+        errors = planar_error(obs.measured(), predicted)
         q = np.einsum("ni,ij,nj->n", errors, self.R_inv, errors)
         if self.nu is None:
             log_likelihood = -0.5 * q

@@ -40,16 +40,17 @@ from pydrake.all import (
 
 from .iiwa import Pusher
 from .object import Table, add_object, add_table
-from .observation import ObjectState, PushObservation
+from .observation import ObjectState, PushObservation, measurement
 from .params import ROD_MASS, Eta
 
 
 class DynamicsModel(Protocol):
-    """Predicts a push window's final planar state under each hypothesis."""
+    """Predicts a push's measurement under each hypothesis."""
 
     def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
-        """Predict the object's planar state (x, y, yaw, vx, vy, wz) at the
-        window's end under each of `etas`, as an (N, 6) array."""
+        """Predict the push's measurement (x, y, yaw at the window's end;
+        vx, vy, wz at the push segment's end; see observation.measurement)
+        under each of `etas`, as an (N, 6) array."""
         ...
 
 
@@ -198,7 +199,7 @@ class DrakePushModel:
             )
 
     def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
-        """Predict the window's final planar state under each of `etas`."""
+        """Predict the push's measurement under each of `etas`."""
         self.source.UpdateTrajectory(
             PiecewisePolynomial.CubicHermite(
                 [float(t) for t in obs.tip_times],
@@ -223,16 +224,20 @@ class DrakePushModel:
                 self.plant_context, self.object_body, obs.start.velocity
             )
             self.simulator.Initialize()
+            self.simulator.AdvanceTo(obs.push_end_time)
+            push_end = self._object_planar()
             self.simulator.AdvanceTo(obs.duration)
-            predictions[i] = ObjectState(
-                pose=self.plant.EvalBodyPoseInWorld(
-                    self.plant_context, self.object_body
-                ),
-                velocity=self.plant.EvalBodySpatialVelocityInWorld(
-                    self.plant_context, self.object_body
-                ),
-            ).planar()
+            predictions[i] = measurement(push_end, self._object_planar())
         return predictions
+
+    def _object_planar(self) -> np.ndarray:
+        """Read the object's current planar state."""
+        return ObjectState(
+            pose=self.plant.EvalBodyPoseInWorld(self.plant_context, self.object_body),
+            velocity=self.plant.EvalBodySpatialVelocityInWorld(
+                self.plant_context, self.object_body
+            ),
+        ).planar()
 
 
 # Each worker process's own model, built once by _init_worker.
@@ -273,7 +278,7 @@ class ParallelPushModel:
         )
 
     def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
-        """Predict the window's final planar state under each of `etas`."""
+        """Predict the push's measurement under each of `etas`."""
         chunks = [
             [etas[int(i)] for i in chunk]
             for chunk in np.array_split(np.arange(len(etas)), self.workers)

@@ -73,7 +73,7 @@ def calibration_sample(
     except RuntimeError:
         return None
     nearest, true = _model.predict([nearest_hypothesis(grid, eta_true), eta_true], obs)
-    measured = obs.end.planar()
+    measured = obs.measured()
     return planar_error(measured, nearest), planar_error(measured, true)
 
 

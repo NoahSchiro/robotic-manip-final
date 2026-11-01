@@ -3,9 +3,16 @@ after, plus the pusher tip's measured path in between, recorded from the
 truth sim.
 
 The push window opens when the tip has lowered to its standoff point
-(before contact) and closes `settle_time` after the push segment ends, so
-the post-release slide, which depends on friction, lands in the
-measurement.
+(before contact) and closes `settle_time` after the push segment ends.
+
+The estimator's measurement is the object's pose at the window's end and
+its velocity at the push segment's end.  The late pose carries the
+post-release slide, which depends on friction.  The velocity is read while
+the stick still pushes steadily: by the window's end the arm is reversing,
+and its PD lag makes the stick tap the block, so a velocity read then lands
+mid-collision and is noise.  In an offline replay of 19 held-out trials,
+this split removed every prediction outlier and gave the best estimates of
+the schemes compared.
 """
 
 from dataclasses import dataclass
@@ -55,14 +62,23 @@ class ObjectState:
         return np.array([x, y, yaw, vx, vy, wz])
 
 
+def measurement(push_end: np.ndarray, end: np.ndarray) -> np.ndarray:
+    """Combine planar states into the estimator's measurement (x, y, yaw,
+    vx, vy, wz): the pose from `end`, the velocity from `push_end`."""
+    return np.concatenate([end[..., :3], push_end[..., 3:]], axis=-1)
+
+
 @dataclass(frozen=True)
 class PushObservation:
-    """One executed push: the object's state at the window's start and end,
-    and the tip's world-frame path over the window, times starting at 0."""
+    """One executed push: the object's state at the window's start, at the
+    push segment's end, and at the window's end, and the tip's world-frame
+    path over the window, times starting at 0."""
 
     action: Action
     start: ObjectState
+    push_end: ObjectState
     end: ObjectState
+    push_end_time: float  # s, from the window's start
     tip_times: np.ndarray  # (n,) s, from the window's start
     tip_positions: np.ndarray  # (3, n) world frame
     tip_velocities: np.ndarray  # (3, n) world frame
@@ -71,6 +87,11 @@ class PushObservation:
     def duration(self) -> float:
         """Get the window's length (s)."""
         return float(self.tip_times[-1])
+
+    def measured(self) -> np.ndarray:
+        """Get the estimator's measurement: pose at the window's end,
+        velocity at the push segment's end."""
+        return measurement(self.push_end.planar(), self.end.planar())
 
 
 def wrap_angle(angle: np.ndarray | float) -> np.ndarray:
@@ -85,14 +106,17 @@ def planar_error(measured: np.ndarray, predicted: np.ndarray) -> np.ndarray:
     return e
 
 
-def push_window(obj: Object, action: Action, settle_time: float) -> tuple[float, float]:
-    """Get the push window (start, end) on the push trajectory's clock: from
-    the tip parked at its standoff point to `settle_time` after the push
-    segment ends."""
+def push_window(
+    obj: Object, action: Action, settle_time: float
+) -> tuple[float, float, float]:
+    """Get the push window's (start, push end, end) on the push trajectory's
+    clock: from the tip parked at its standoff point, through the push
+    segment's end, to `settle_time` after it."""
     durations = [d for _pose, d in push_maneuver(obj, action, hover_tip_pose(obj))]
     # Segments 0-1 move over and lower to the standoff; segment 2 pushes.
     start = durations[0] + durations[1]
-    return start, start + durations[2] + settle_time
+    push_end = start + durations[2]
+    return start, push_end, push_end + settle_time
 
 
 def read_object_state(
@@ -134,13 +158,15 @@ def observe_push(
     window's end, leaving `context` there.
     """
     plant_context = plant.GetMyContextFromRoot(context)
-    t_start, t_end = push_window(obj, action, settle_time)
+    t_start, t_push_end, t_end = push_window(obj, action, settle_time)
 
     simulator = Simulator(diagram, context)
     simulator.set_target_realtime_rate(realtime_rate)
     simulator.AdvanceTo(t_start)
     start = read_object_state(plant, plant_context, obj)
     tip_start = read_tip(plant, plant_context, pusher)
+    simulator.AdvanceTo(t_push_end)
+    push_end = read_object_state(plant, plant_context, obj)
     simulator.AdvanceTo(t_end)
     end = read_object_state(plant, plant_context, obj)
     tip_end = read_tip(plant, plant_context, pusher)
@@ -165,7 +191,9 @@ def observe_push(
     return PushObservation(
         action=action,
         start=start,
+        push_end=push_end,
         end=end,
+        push_end_time=t_push_end - t_start,
         tip_times=np.concatenate([[0.0], times[inside] - t_start, [t_end - t_start]]),
         tip_positions=np.column_stack([p for p, _v in tips]),
         tip_velocities=np.column_stack([v for _p, v in tips]),
