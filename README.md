@@ -20,8 +20,10 @@ The subsystems live in `src/`
 - `params.py` (unknown parameters eta = (mu, rod x, rod y) and the hypothesis grid)
 - `observation.py` (what a push produces: object start/end state, tip path, measurement math)
 - `recording.py` (running a push in the truth sim and recording it)
-- `dynamics.py` (Drake prediction model replaying a recorded tip path, plus a process-parallel wrapper)
+- `dynamics.py` (Drake prediction model: replays a recorded tip path for the estimator, or runs a push's nominal tip path for the MPC; plus a process-parallel wrapper)
 - `estimator.py` (grid Bayes filter: MAP, mean, entropy)
+- `mpc.py` (one-push MPC: pose cost, candidate pushes, ranking)
+- `episode.py` (a placement episode: optional random probing, then MPC to the goal)
 - `cli.py` (the command-line options `main.py` and `scripts/calibrate_R.py` share)
 
 `main.py` assembles the scene, sets the per-run block pose, and holds the
@@ -46,3 +48,23 @@ prints into `src/estimator.py`.
 The likelihood is a Student-t (`--nu 3` by default), which keeps one badly
 mispredicted push from eliminating the right hypothesis; `--nu 0` uses the
 proposal's Gaussian instead.
+
+## Placement with MPC
+
+```sh
+# No-probing baseline: MPC from the first push, estimating eta as it goes
+uv run python main.py --headless --mpc
+# Random probing: 3 random pushes first, then MPC (20 pushes in all)
+uv run python main.py --headless --mpc --probe-pushes 3
+# Check the controller alone, planning with the true eta
+uv run python main.py --headless --mpc --plan-with-true-eta
+```
+
+Before each push, the MPC predicts where every candidate push would
+leave the block under the MAP eta and picks the cheapest push the arm can
+reach.  The cost is the proposal's pose cost plus a small time cost.  The
+candidates are the push library minus the inner-corner sites, where the
+lowered stick would land on the block.  An episode succeeds within 1 cm
+and 10 degrees of the goal.  It stops after 20 pushes (`--max-pushes`,
+probes included) or when no push is predicted to help.  Each MPC
+decision takes about 35 to 50 s on 12 cores, plus the estimator update.
