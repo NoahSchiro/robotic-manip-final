@@ -18,18 +18,29 @@ from pydrake.all import (
     PiecewisePolynomial,
     RigidBody,
     RigidTransform,
+    RotationMatrix,
     StartMeshcat,
     TrajectorySource,
 )
 from pydrake.geometry import Meshcat, Rgba
 
 from src.geometry import SurfaceNormal
-from src.iiwa import Q_HOME, Pusher, add_iiwa_and_pusher
+from src.iiwa import (
+    Q_HOME,
+    Pusher,
+    add_iiwa_and_pusher,
+    build_iiwa_pusher_plant,
+    hover_tip_pose,
+    solve_tip_ik,
+)
 from src.object import Object, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
 
 # Name of the plant-state logger build_diagram adds when asked to log.
 STATE_LOGGER = "state_logger"
+
+# Color of the ghost showing where the MPC predicts its push leaves the block.
+PREDICTION_COLOR = (0.95, 0.80, 0.15)
 
 
 class Sim:
@@ -117,15 +128,50 @@ def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidB
     return object_body
 
 
-def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
-    """Draw a translucent ghost of the block at its goal orientation."""
-    X_WG = obj.x_wg()
-    r, g, b = obj.color
+def show_scene(meshcat: Meshcat, obj: Object, pusher: Pusher, time_step: float) -> None:
+    """Draw the scene as it stands between pushes: the block at its pose and
+    the arm parked over it, as each push starts."""
+    q_hover = solve_tip_ik(
+        build_iiwa_pusher_plant(pusher), pusher, hover_tip_pose(obj), Q_HOME
+    )
+    diagram, plant = build_diagram(
+        time_step, obj, Table(obj.friction), pusher, meshcat=meshcat
+    )
+    context = diagram.CreateDefaultContext()
+    plant_context = plant.GetMyMutableContextFromRoot(context)
+    place_object(plant, plant_context, obj)
+    iiwa = plant.GetBodyByName("iiwa_link_0").model_instance()
+    plant.SetPositions(plant_context, iiwa, q_hover)
+    diagram.ForcedPublish(context)
+
+
+def show_ghost(
+    meshcat: Meshcat,
+    obj: Object,
+    X_WG: RigidTransform,
+    prefix: str,
+    color: tuple[float, float, float],
+) -> None:
+    """Draw a translucent ghost of the block at `X_WG` under `prefix`."""
+    r, g, b = color
     for i, (part, center) in enumerate(zip(obj.parts, obj.body_part_centers())):
         sx, sy = part[:2]
-        path = f"goal/{i}"
+        path = f"{prefix}/{i}"
         meshcat.SetObject(path, Box(sx, sy, obj.height), Rgba(r, g, b, 0.35))
         meshcat.SetTransform(path, X_WG @ RigidTransform(center))
+
+
+def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
+    """Draw a translucent ghost of the block at its goal pose."""
+    show_ghost(meshcat, obj, obj.x_wg(), "goal", obj.color)
+
+
+def show_prediction(meshcat: Meshcat, obj: Object, pose: np.ndarray) -> None:
+    """Draw a translucent ghost of the block at planar `pose` (x, y, yaw),
+    where the MPC predicts its chosen push leaves it."""
+    x, y, yaw = pose
+    X_WP = RigidTransform(RotationMatrix.MakeZRotation(yaw), np.array([x, y, 0.0]))
+    show_ghost(meshcat, obj, X_WP, "prediction", PREDICTION_COLOR)
 
 
 def show_push_sites(

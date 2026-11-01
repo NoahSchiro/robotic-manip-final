@@ -6,11 +6,13 @@ import time
 import numpy as np
 from pydrake.all import Simulator
 
-from src.action import Action
+from src.action import Action, push_library
 from src.dynamics import ParallelPushModel
+from src.episode import MAX_PUSHES, run_episode
 from src.estimator import DEFAULT_NU, GridBayesFilter
 from src.geometry import SurfaceNormal
 from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
+from src.mpc import MpcController, clear_sites, goal_error
 from src.object import Object, Rod, Table
 from src.observation import record_random_push
 from src.params import Eta, GridSpec, make_grid
@@ -74,10 +76,32 @@ def parse_args() -> argparse.Namespace:
         "--pushes", type=int, default=5, help="pushes to run with --estimate"
     )
     parser.add_argument(
+        "--mpc",
+        action="store_true",
+        help="push the object to its goal with MPC, estimating eta along the way",
+    )
+    parser.add_argument(
+        "--probe-pushes",
+        type=int,
+        default=0,
+        help="random probe pushes before MPC with --mpc (0: no probing)",
+    )
+    parser.add_argument(
+        "--max-pushes",
+        type=int,
+        default=MAX_PUSHES,
+        help="push budget per --mpc episode, probes included",
+    )
+    parser.add_argument(
+        "--plan-with-true-eta",
+        action="store_true",
+        help="with --mpc, plan with the true eta and skip estimation",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=None,
-        help="prediction processes for --estimate (default: all CPUs)",
+        help="prediction processes for --estimate/--mpc (default: all CPUs)",
     )
     parser.add_argument(
         "--model-time-step",
@@ -109,6 +133,10 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--push-density must be positive")
     if args.pushes < 1:
         raise SystemExit("--pushes must be at least 1")
+    if args.probe_pushes < 0:
+        raise SystemExit("--probe-pushes must be nonnegative")
+    if args.max_pushes < 1:
+        raise SystemExit("--max-pushes must be at least 1")
     if args.nu < 0.0:
         raise SystemExit("--nu must be nonnegative")
     args.push_density *= 100  # count/cm -> count/m
@@ -176,6 +204,67 @@ def run_estimation(
             obj.pose = (float(x), float(y), float(yaw))
 
 
+def run_mpc(
+    args: argparse.Namespace,
+    sim: Sim,
+    rng: np.random.Generator,
+    obj: Object,
+    pusher: Pusher,
+) -> None:
+    """Run one placement episode: optional random probing, then MPC pushes
+    toward the goal, with the grid Bayes filter updated after every push
+    (unless planning with the true eta)."""
+    eta_true = Eta(args.mu, args.rod_x, args.rod_y)
+    push_sites = obj.surface_normals(args.push_density)
+    actions = push_library(clear_sites(obj, push_sites, pusher))
+    position_error, yaw_error = goal_error(obj)
+    print(
+        f"placing the object, true eta {eta_true}: start "
+        f"{np.array2string(np.array(obj.pose), precision=3)}, goal "
+        f"{np.array2string(np.array(obj.goal), precision=3)} "
+        f"({position_error * 100:.1f} cm, {np.rad2deg(yaw_error):.1f} deg away); "
+        f"{len(actions)} candidate pushes"
+    )
+
+    with ParallelPushModel(
+        args.workers, time_step=args.model_time_step, rod_mass=args.rod_mass
+    ) as model:
+        controller = MpcController(model, actions)
+        belief = None
+        if not args.plan_with_true_eta:
+            grid = make_grid(GridSpec(), obj.parts)
+            belief = GridBayesFilter(grid, model, nu=args.nu or None)
+        result = run_episode(
+            rng,
+            obj,
+            pusher,
+            controller,
+            belief,
+            push_sites,
+            args.time_step,
+            args.settle_time,
+            probe_pushes=args.probe_pushes,
+            max_pushes=args.max_pushes,
+            known_eta=eta_true if args.plan_with_true_eta else None,
+            meshcat=sim.meshcat,
+            realtime_rate=0.0 if sim.headless else 1.0,
+        )
+    print(
+        f"{'success' if result.success else 'failure'} ({result.stop_reason}) "
+        f"after {result.probe_pushes} probe + {result.mpc_pushes} MPC pushes: "
+        f"goal error {result.position_error * 100:.1f} cm, "
+        f"{np.rad2deg(result.yaw_error):.1f} deg; {result.sim_time:.1f} s "
+        f"simulated, planning {result.planning_time:.0f} s, estimation "
+        f"{result.estimation_time:.0f} s"
+    )
+    if belief is not None:
+        d_mu, d_bx, d_by = belief.estimation_error(eta_true)
+        print(
+            f"final MAP error mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, "
+            f"{d_by * 100:+.2f}) cm"
+        )
+
+
 def main(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
     rng = np.random.default_rng(seed=args.seed)
@@ -187,8 +276,9 @@ def main(args: argparse.Namespace) -> None:
     )
     pusher = Pusher()
 
-    if args.estimate:
-        run_estimation(args, sim, rng, obj, pusher)
+    if args.estimate or args.mpc:
+        run = run_mpc if args.mpc else run_estimation
+        run(args, sim, rng, obj, pusher)
         if not sim.headless:
             input("Press Enter to quit.")
         return
