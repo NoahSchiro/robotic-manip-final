@@ -58,6 +58,22 @@ def parse_args() -> argparse.Namespace:
         help="rod y in the object body frame (m)",
     )
     parser.add_argument(
+        "--start",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "YAW"),
+        default=None,
+        help="object start pose (m, m, deg), instead of the seed's random one",
+    )
+    parser.add_argument(
+        "--goal",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "YAW"),
+        default=None,
+        help="object goal pose (m, m, deg), instead of the seed's random one",
+    )
+    parser.add_argument(
         "--estimate",
         action="store_true",
         help="run random pushes and estimate (mu, rod x, rod y) after each",
@@ -242,6 +258,12 @@ def main(args: argparse.Namespace) -> None:
         rod=Rod(x=args.rod_x, y=args.rod_y, mass=args.rod_mass),
         friction=args.mu,
     )
+    if args.start is not None:
+        x, y, yaw = args.start
+        obj.pose = (x, y, float(np.deg2rad(yaw)))
+    if args.goal is not None:
+        x, y, yaw = args.goal
+        obj.goal = (x, y, float(np.deg2rad(yaw)))
     pusher = Pusher()
 
     if args.mpc:
