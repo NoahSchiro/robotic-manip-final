@@ -6,10 +6,9 @@ import time
 import numpy as np
 from pydrake.all import Simulator
 
-from src import ASSET_DIR
 from src.action import Action
 from src.dynamics import ParallelPushModel
-from src.estimator import DEFAULT_NU, GridBayesFilter, load_R
+from src.estimator import DEFAULT_NU, GridBayesFilter
 from src.geometry import SurfaceNormal
 from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
 from src.object import Object, Rod, Table
@@ -137,18 +136,15 @@ def run_estimation(
     eta_true = Eta(args.mu, args.rod_x, args.rod_y)
     push_sites = obj.surface_normals(args.push_density)
     grid = make_grid(GridSpec(), obj.parts)
-    r_path = ASSET_DIR / "R.npy"
-    R = load_R(r_path)
     print(
         f"estimating eta = (mu, rod x, rod y), true {eta_true}, over "
-        f"{len(grid)} hypotheses; R "
-        f"{'from ' + str(r_path) if r_path.exists() else 'uncalibrated default'}"
+        f"{len(grid)} hypotheses"
     )
 
     with ParallelPushModel(
         args.workers, time_step=args.model_time_step, rod_mass=args.rod_mass
     ) as model:
-        belief = GridBayesFilter(grid, model, R, nu=args.nu or None)
+        belief = GridBayesFilter(grid, model, nu=args.nu or None)
         print(f"push 0: entropy {belief.entropy():.3f}")
         for k in range(1, args.pushes + 1):
             if sim.meshcat is not None:

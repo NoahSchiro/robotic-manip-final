@@ -30,15 +30,17 @@ plant time step.
 Drake has no Windows wheels, so on Windows run everything under WSL.
 
 ```sh
-# Calibrate the prediction-error covariance R (writes assets/R.npy, ~2 min)
-uv run python -m scripts.calibrate_R --samples 48
 # Random pushes with a Bayes update after each (true eta from --mu/--rod-x/--rod-y)
 uv run python main.py --headless --estimate --pushes 5
 ```
 
 The default grid is 9 values each of mu, rod x and rod y, keeping only rod
 positions inside the T (405 hypotheses); change it via `params.GridSpec`.
-Without `assets/R.npy` the estimator falls back to an uncalibrated diagonal R.
+The prediction-error covariance R is calibrated and stored in the code as
+`estimator.CALIBRATED_R`, so no setup is needed.  After changing the
+prediction model, the measurement, or the grid, rerun
+`uv run python -m scripts.calibrate_R` (~2 min) and paste the constant it
+prints into `src/estimator.py`.
 The likelihood is a Student-t (`--nu 3` by default), which keeps one badly
 mispredicted push from eliminating the right hypothesis; `--nu 0` uses the
 proposal's Gaussian instead.

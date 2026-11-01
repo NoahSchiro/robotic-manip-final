@@ -28,7 +28,6 @@ wait (no push) yields no observation, so it makes no update.
 """
 
 from collections.abc import Sequence
-from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -37,23 +36,25 @@ from .dynamics import DynamicsModel
 from .observation import PushObservation, planar_error
 from .params import Eta
 
-# Fallback prediction-error standard deviations for (x, y, yaw, vx, vy, wz),
-# in m, rad, m/s, rad/s, for use before calibrate_R.py has run.
-DEFAULT_R_STD = np.array([1e-3, 1e-3, 1e-2, 2e-3, 2e-3, 2e-2])
+# Prediction-error covariance R of the measurement (x, y, yaw, vx, vy, wz),
+# in m, rad, m/s, rad/s.  It describes the prediction model's errors, so
+# rerun scripts/calibrate_R.py and paste its output here after changing the
+# prediction model, the measurement, or the grid.
+# Calibrated by scripts/calibrate_R.py: 48 truth pushes, seed 0,
+# truth timestep 0.0001, model timestep 0.002, settle time 0.1 s.
+CALIBRATED_R = np.array(
+    [
+        [2.278e-07, -7.229e-08, 1.755e-06, 5.373e-07, -1.048e-07, 4.540e-06],
+        [-7.229e-08, 2.519e-07, -2.344e-06, -4.940e-07, 4.773e-07, -2.719e-06],
+        [1.755e-06, -2.344e-06, 1.299e-04, 6.646e-06, -1.864e-06, 2.958e-04],
+        [5.373e-07, -4.940e-07, 6.646e-06, 6.955e-06, 6.318e-07, -4.723e-06],
+        [-1.048e-07, 4.773e-07, -1.864e-06, 6.318e-07, 2.253e-06, -1.957e-06],
+        [4.540e-06, -2.719e-06, 2.958e-04, -4.723e-06, -1.957e-06, 9.148e-04],
+    ]
+)
 
 # Student-t degrees of freedom: heavy tails, chosen by the offline replay.
 DEFAULT_NU = 3.0
-
-
-def default_R() -> np.ndarray:
-    """Get the uncalibrated diagonal prediction-error covariance."""
-    return np.diag(DEFAULT_R_STD**2)
-
-
-def load_R(path: Path) -> np.ndarray:
-    """Load a calibrated covariance, falling back to default_R() when
-    `path` doesn't exist."""
-    return np.load(path) if path.exists() else default_R()
 
 
 class GridBayesFilter:
@@ -63,11 +64,12 @@ class GridBayesFilter:
         self,
         grid: Sequence[Eta],
         model: DynamicsModel,
-        R: np.ndarray,
+        R: np.ndarray = CALIBRATED_R,
         nu: float | None = DEFAULT_NU,
     ) -> None:
-        """Start uniform over `grid`.  `nu` is the Student-t likelihood's
-        degrees of freedom; None uses the Gaussian likelihood instead."""
+        """Start uniform over `grid`.  `R` defaults to the calibrated
+        covariance; `nu` is the Student-t likelihood's degrees of freedom,
+        and None uses the Gaussian likelihood instead."""
         if not grid:
             raise ValueError("the hypothesis grid is empty")
         if nu is not None and nu <= 0.0:

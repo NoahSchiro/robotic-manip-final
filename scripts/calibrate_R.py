@@ -6,7 +6,9 @@ hypothesis, so R covers both the prediction model's mismatch and the
 grid's discretization.  R is the errors' second moment about zero (the
 likelihood assumes zero-mean errors) plus a diagonal floor.
 
-Run from the repo root:
+R lives in the code as estimator.CALIBRATED_R.  Rerun this after changing
+the prediction model, the measurement, or the grid, then paste the
+constant it prints into src/estimator.py.  From the repo root:
 
     uv run python -m scripts.calibrate_R --samples 48
 """
@@ -14,21 +16,18 @@ Run from the repo root:
 import argparse
 import time
 from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
 
 import numpy as np
 
-from src import ASSET_DIR
 from src.dynamics import DrakePushModel
-from src.estimator import DEFAULT_R_STD
 from src.iiwa import Pusher
 from src.object import Object, Rod
 from src.observation import planar_error, record_random_push
 from src.params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
 
-# Floor on each error's standard deviation, as a fraction of the defaults:
-# keeps R invertible where the samples barely vary (e.g. at-rest velocity).
-FLOOR_FRACTION = 0.1
+# Floor on each error's standard deviation (x, y, yaw, vx, vy, wz), in m,
+# rad, m/s, rad/s: keeps R invertible where the samples barely vary.
+FLOOR_STD = np.array([1e-4, 1e-4, 1e-3, 2e-4, 2e-4, 2e-3])
 LABELS = ("x", "y", "yaw", "vx", "vy", "wz")
 
 # Each worker process's own prediction model, built once by _init_worker.
@@ -77,6 +76,21 @@ def calibration_sample(
     return planar_error(measured, nearest), planar_error(measured, true)
 
 
+def format_constant(R: np.ndarray, samples: int, args: argparse.Namespace) -> str:
+    """Render R as the CALIBRATED_R source block for src/estimator.py.  Four
+    significant figures is well inside the estimate's sampling error."""
+    rows = "\n".join(
+        "        [" + ", ".join(f"{v:.3e}" for v in row) + "]," for row in R
+    )
+    return (
+        f"# Calibrated by scripts/calibrate_R.py: {samples} truth pushes, seed "
+        f"{args.seed},\n"
+        f"# truth timestep {args.time_step:g}, model timestep "
+        f"{args.model_time_step:g}, settle time {args.settle_time:g} s.\n"
+        f"CALIBRATED_R = np.array(\n    [\n{rows}\n    ]\n)"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--samples", type=int, default=48, help="truth pushes")
@@ -102,9 +116,6 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.1,
         help="measurement delay after each push segment ends (s)",
-    )
-    parser.add_argument(
-        "--out", default=str(ASSET_DIR / "R.npy"), help="where to save R"
     )
     args = parser.parse_args()
     args.push_density *= 100  # count/cm -> count/m
@@ -147,15 +158,17 @@ def main(args: argparse.Namespace) -> None:
             + "  ".join(f"{label}={v:.2g}" for label, v in zip(LABELS, rms))
         )
 
-    floor = np.diag((FLOOR_FRACTION * DEFAULT_R_STD) ** 2)
-    R = nearest.T @ nearest / len(nearest) + floor
-    np.linalg.cholesky(R)  # positive-definite, or this raises
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    np.save(out, R)
+    R = nearest.T @ nearest / len(nearest) + np.diag(FLOOR_STD**2)
     print(
-        f"saved R to {out}; std devs: "
+        "R std devs: "
         + "  ".join(f"{label}={v:.2g}" for label, v in zip(LABELS, np.sqrt(np.diag(R))))
+    )
+    # The rounded constant is what the estimator will use, so check it.
+    R = np.vectorize(lambda v: float(f"{v:.3e}"))(R)
+    np.linalg.cholesky(R)  # positive-definite, or this raises
+    print(
+        "\nPaste into src/estimator.py, replacing CALIBRATED_R:\n\n"
+        + format_constant(R, len(results), args)
     )
 
 
