@@ -106,7 +106,7 @@ def add_iiwa_and_pusher(pusher: Pusher, plant: MultibodyPlant, parser: Parser) -
     parser.AddModelsFromUrl(
         "package://drake_models/iiwa_description/urdf/iiwa14_primitive_collision.urdf"
     )
-    parser.AddModelsFromUrl(pusher.write_sdf().as_uri())
+    parser.AddModelsFromString(pusher.sdf(), "sdf")
     # Add stick
     plant.WeldFrames(
         plant.GetFrameByName("iiwa_link_7"),
@@ -207,6 +207,13 @@ def push_maneuver(
         (over, MOVE_TIME),  # raise
         (hover, MOVE_TIME),  # return to the hover
     ]
+
+
+def maneuver_time(obj: Object, action: Action) -> float:
+    """Get the push trajectory's length for `action`: push_maneuver's
+    segments plus the final hold, as make_push_trajectory plans it."""
+    maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
+    return sum(duration for _pose, duration in maneuver) + HOLD_TIME
 
 
 def make_push_trajectory(
