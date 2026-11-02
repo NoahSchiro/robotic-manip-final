@@ -13,12 +13,18 @@ from src.cli import (
     push_model_config,
     truth_sim_config,
 )
-from src.dynamics import ParallelPushModel
-from src.episode import MAX_PUSHES, run_episode
+from src.dynamics import ParallelPushModel, Pose
+from src.episode import EpisodeResult, PushRunner, run_episode
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.geometry import SurfaceNormal
 from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
-from src.mpc import MpcController, clear_sites, goal_error
+from src.mpc import (
+    GoalTolerance,
+    MpcController,
+    PoseCostWeights,
+    clear_sites,
+    goal_error,
+)
 from src.object import Object, Rod, Table
 from src.observation import PushObservation
 from src.params import Eta, GridSpec, make_grid
@@ -95,13 +101,51 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-pushes",
         type=int,
-        default=MAX_PUSHES,
+        default=20,
         help="push budget per --mpc episode, probes included",
     )
     parser.add_argument(
         "--plan-with-true-eta",
         action="store_true",
         help="with --mpc, plan with the true eta and skip estimation",
+    )
+    # 0.07 is half the T's 14 cm extent, so with --yaw-weight 1 a 7 cm position
+    # error costs as much as a 1 rad yaw error.
+    parser.add_argument(
+        "--cost-length",
+        type=float,
+        default=0.07,
+        help="MPC pose cost's length scale l (m)",
+    )
+    parser.add_argument(
+        "--yaw-weight",
+        type=float,
+        default=1.0,
+        help="MPC pose cost's yaw weight lambda_phi (1/rad^2)",
+    )
+    parser.add_argument(
+        "--time-weight",
+        type=float,
+        default=0.005,
+        help="MPC action cost per second of maneuver time",
+    )
+    parser.add_argument(
+        "--position-tolerance",
+        type=float,
+        default=0.01,
+        help="an episode succeeds within this of the goal position (m)",
+    )
+    parser.add_argument(
+        "--yaw-tolerance",
+        type=float,
+        default=10.0,
+        help="an episode succeeds within this of the goal yaw (deg)",
+    )
+    parser.add_argument(
+        "--site-clearance",
+        type=float,
+        default=1e-3,
+        help="gap the lowered stick must leave to the block at an MPC site (m)",
     )
     # 3 has heavy tails: chosen by an offline replay (see src/estimator.py).
     parser.add_argument(
@@ -121,10 +165,27 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--probe-pushes must be nonnegative")
     if args.max_pushes < 1:
         raise SystemExit("--max-pushes must be at least 1")
+    if args.cost_length <= 0.0:
+        raise SystemExit("--cost-length must be positive")
+    if args.yaw_weight < 0.0:
+        raise SystemExit("--yaw-weight must be nonnegative")
+    if args.time_weight < 0.0:
+        raise SystemExit("--time-weight must be nonnegative")
+    if args.position_tolerance <= 0.0:
+        raise SystemExit("--position-tolerance must be positive")
+    if args.yaw_tolerance <= 0.0:
+        raise SystemExit("--yaw-tolerance must be positive")
+    if args.site_clearance < 0.0:
+        raise SystemExit("--site-clearance must be nonnegative")
     if args.nu < 0.0:
         raise SystemExit("--nu must be nonnegative")
 
     return args
+
+
+def pose_from_degrees(x: float, y: float, yaw_degrees: float) -> Pose:
+    """Get a planar pose (x, y, yaw) with the yaw converted to radians."""
+    return x, y, float(np.deg2rad(yaw_degrees))
 
 
 def demo_action(obj: Object, push_sites: list[SurfaceNormal]) -> Action:
@@ -191,49 +252,21 @@ def run_estimation(
         obj.pose = obs.final_pose()
 
 
-def run_mpc(
-    args: argparse.Namespace,
-    sim: Sim,
-    rng: np.random.Generator,
-    obj: Object,
-    pusher: Pusher,
-) -> None:
-    """Run one placement episode: optional random probing, then MPC pushes
-    toward the goal, with the grid Bayes filter updated after every push
-    (unless planning with the true eta)."""
-    eta_true = Eta(args.mu, args.rod_x, args.rod_y)
-    push_sites = obj.surface_normals(args.push_density)
-    actions = push_library(clear_sites(obj, push_sites, pusher))
-    position_error, yaw_error = goal_error(obj)
-    print(
+def format_placement_start(eta_true: Eta, obj: Object, candidates: int) -> str:
+    """Render what a placement episode starts from."""
+    position_error, yaw_error = goal_error(obj.pose, obj.goal)
+    return (
         f"placing the object, true eta {eta_true}: start "
         f"{np.array2string(np.array(obj.pose), precision=3)}, goal "
         f"{np.array2string(np.array(obj.goal), precision=3)} "
         f"({position_error * 100:.1f} cm, {np.rad2deg(yaw_error):.1f} deg away); "
-        f"{len(actions)} candidate pushes"
+        f"{candidates} candidate pushes"
     )
 
-    with ParallelPushModel(args.workers, push_model_config(args)) as model:
-        controller = MpcController(model, actions)
-        belief = None
-        if not args.plan_with_true_eta:
-            grid = make_grid(GridSpec(), obj.parts)
-            belief = GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None)
-        result = run_episode(
-            rng,
-            obj,
-            pusher,
-            controller,
-            belief,
-            push_sites,
-            truth_sim_config(args),
-            probe_pushes=args.probe_pushes,
-            max_pushes=args.max_pushes,
-            known_eta=eta_true if args.plan_with_true_eta else None,
-            meshcat=sim.meshcat,
-            realtime_rate=0.0 if sim.headless else 1.0,
-        )
-    print(
+
+def format_episode_result(result: EpisodeResult) -> str:
+    """Render how a placement episode ended."""
+    return (
         f"{'success' if result.success else 'failure'} ({result.stop_reason}) "
         f"after {result.probe_pushes} probe + {result.mpc_pushes} MPC pushes: "
         f"goal error {result.position_error * 100:.1f} cm, "
@@ -241,12 +274,14 @@ def run_mpc(
         f"simulated, planning {result.planning_time:.0f} s, estimation "
         f"{result.estimation_time:.0f} s"
     )
-    if belief is not None:
-        d_mu, d_bx, d_by = belief.estimation_error(eta_true)
-        print(
-            f"final MAP error mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, "
-            f"{d_by * 100:+.2f}) cm"
-        )
+
+
+def format_map_error(belief: GridBayesFilter, eta_true: Eta) -> str:
+    """Render `belief`'s final MAP error against `eta_true`."""
+    d_mu, d_bx, d_by = belief.estimation_error(eta_true)
+    return (
+        f"final MAP error mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, {d_by * 100:+.2f}) cm"
+    )
 
 
 def main(args: argparse.Namespace) -> None:
@@ -259,15 +294,57 @@ def main(args: argparse.Namespace) -> None:
         friction=args.mu,
     )
     if args.start is not None:
-        x, y, yaw = args.start
-        obj.pose = (x, y, float(np.deg2rad(yaw)))
+        obj.pose = pose_from_degrees(*args.start)
     if args.goal is not None:
-        x, y, yaw = args.goal
-        obj.goal = (x, y, float(np.deg2rad(yaw)))
+        obj.goal = pose_from_degrees(*args.goal)
     pusher = Pusher()
 
     if args.mpc:
-        run_mpc(args, sim, rng, obj, pusher)
+        eta_true = Eta(args.mu, args.rod_x, args.rod_y)
+        push_sites = obj.surface_normals(args.push_density)
+        actions = push_library(
+            clear_sites(obj.parts, push_sites, pusher.radius, args.site_clearance)
+        )
+        print(format_placement_start(eta_true, obj, len(actions)))
+        with ParallelPushModel(args.workers, push_model_config(args)) as model:
+            belief = (
+                None
+                if args.plan_with_true_eta
+                else GridBayesFilter(
+                    make_grid(GridSpec(), obj.parts),
+                    model,
+                    CALIBRATED_R,
+                    args.nu or None,
+                )
+            )
+            result = run_episode(
+                rng=rng,
+                obj=obj,
+                runner=PushRunner(
+                    pusher=pusher,
+                    truth=truth_sim_config(args),
+                    meshcat=sim.meshcat,
+                    realtime_rate=0.0 if sim.headless else 1.0,
+                ),
+                controller=MpcController(
+                    model,
+                    actions,
+                    PoseCostWeights(args.cost_length, args.yaw_weight),
+                    args.time_weight,
+                ),
+                belief=belief,
+                plan_eta=belief.map_eta if belief is not None else lambda: eta_true,
+                probe_sites=push_sites,
+                probe_pushes=args.probe_pushes,
+                max_pushes=args.max_pushes,
+                tolerance=GoalTolerance(
+                    position=args.position_tolerance,
+                    yaw=float(np.deg2rad(args.yaw_tolerance)),
+                ),
+            )
+        print(format_episode_result(result))
+        if belief is not None:
+            print(format_map_error(belief, eta_true))
         if not sim.headless:
             input("Press Enter to quit.")
         return

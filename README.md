@@ -68,9 +68,11 @@ and 0.75 m, so set wider layouts along y.
 
 Before each push, the MPC predicts where every candidate push would
 leave the block under the MAP eta and picks the cheapest push the arm can
-reach.  The cost is the proposal's pose cost plus a small time cost.  The
-candidates are the push library minus the inner-corner sites, where the
-lowered stick would land on the block.  An episode succeeds within 1 cm
-and 10 degrees of the goal.  It stops after 20 pushes (`--max-pushes`,
-probes included) or when no push is predicted to help.  Each MPC
+reach.  The cost is the proposal's pose cost plus a small time cost
+(`--cost-length`, `--yaw-weight`, `--time-weight`).  The candidates are the
+push library minus the inner-corner sites, where the lowered stick would
+land on the block (`--site-clearance`).  An episode succeeds within 1 cm
+and 10 degrees of the goal (`--position-tolerance`, `--yaw-tolerance`).  It
+stops after 20 pushes (`--max-pushes`, probes included) or when no push is
+predicted to help.  Each MPC
 decision takes about 35 to 50 s on 12 cores, plus the estimator update.

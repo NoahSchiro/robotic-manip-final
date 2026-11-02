@@ -8,23 +8,26 @@ push budget, so probing has to earn back the pushes it spends.
 """
 
 import time
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from typing import Literal
 
 import numpy as np
+from pydrake.all import PiecewisePolynomial
 from pydrake.geometry import Meshcat
 
+from .action import Action
 from .estimator import GridBayesFilter
 from .geometry import SurfaceNormal
 from .iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory, maneuver_time
-from .mpc import MpcController, at_goal, goal_error
+from .mpc import Candidate, GoalTolerance, MpcController, at_goal, goal_error
 from .object import Object
 from .observation import PushObservation
 from .params import Eta
 from .recording import TruthSimConfig, record_push, record_random_push
 from .scene import show_object_goal, show_prediction, show_scene
 
-# Pushes per episode, probing included.
-MAX_PUSHES = 20
+StopReason = Literal["at goal", "push budget", "stuck", "unreachable"]
 
 
 @dataclass(frozen=True)
@@ -32,7 +35,7 @@ class EpisodeResult:
     """How an episode ended."""
 
     success: bool
-    stop_reason: str  # "at goal", "push budget", "stuck", or "unreachable"
+    stop_reason: StopReason
     probe_pushes: int
     mpc_pushes: int
     position_error: float  # m, final distance to the goal
@@ -42,144 +45,232 @@ class EpisodeResult:
     estimation_time: float  # s of wall time in estimator updates
 
 
-def run_episode(
+@dataclass(frozen=True)
+class PushRunner:
+    """How an episode's pushes run in the truth sim."""
+
+    pusher: Pusher
+    truth: TruthSimConfig
+    meshcat: Meshcat | None
+    realtime_rate: float
+
+
+@dataclass(frozen=True)
+class Tally:
+    """What an episode has spent so far."""
+
+    pushes: int = 0
+    probes: int = 0
+    sim_time: float = 0.0  # s of push trajectories
+    planning_time: float = 0.0  # s of wall time
+    estimation_time: float = 0.0  # s of wall time
+
+
+def push_line(number: int, label: str, obs: PushObservation, extra: str) -> str:
+    """Render what push `number` was, ending with `extra`."""
+    return (
+        f"push {number} ({label}): v={obs.action.velocity:.2f} m/s for "
+        f"{obs.action.time:.1f} s{extra}"
+    )
+
+
+def belief_line(belief: GridBayesFilter, update_seconds: float) -> str:
+    """Render what `belief` now holds."""
+    mu, bx, by = belief.map_eta().as_array()
+    return (
+        f"  update {update_seconds:.1f} s, MAP mu={mu:.2f} "
+        f"b=({bx * 100:+.1f}, {by * 100:+.1f}) cm, max p "
+        f"{belief.probs.max():.2f}"
+    )
+
+
+def goal_line(position_error: float, yaw_error: float) -> str:
+    """Render how far the object is from its goal."""
+    return (
+        f"  goal error {position_error * 100:.1f} cm, {np.rad2deg(yaw_error):.1f} deg"
+    )
+
+
+def apply_push(
+    obs: PushObservation,
+    label: str,
+    extra: str,
+    obj: Object,
+    belief: GridBayesFilter | None,
+    tally: Tally,
+) -> Tally:
+    """Update `belief` from an executed push, moving `obj` to where it left the
+    object, printing the outcome, returning `tally` with the push counted."""
+    number = tally.pushes + 1
+    lines = [push_line(number, label, obs, extra)]
+    update_seconds = 0.0
+    if belief is not None:
+        started = time.time()
+        belief.update(obs)
+        update_seconds = time.time() - started
+        lines.append(belief_line(belief, update_seconds))
+    sim_time = maneuver_time(obj, obs.action)
+    obj.pose = obs.final_pose()
+    lines.append(goal_line(*goal_error(obj.pose, obj.goal)))
+    print("\n".join(lines))
+    return replace(
+        tally,
+        pushes=number,
+        sim_time=tally.sim_time + sim_time,
+        estimation_time=tally.estimation_time + update_seconds,
+    )
+
+
+def run_probes(
     rng: np.random.Generator,
     obj: Object,
-    pusher: Pusher,
-    controller: MpcController,
+    runner: PushRunner,
     belief: GridBayesFilter | None,
     probe_sites: list[SurfaceNormal],
-    truth: TruthSimConfig,
-    probe_pushes: int = 0,
-    max_pushes: int = MAX_PUSHES,
-    known_eta: Eta | None = None,
-    meshcat: Meshcat | None = None,
-    realtime_rate: float = 0.0,
-) -> EpisodeResult:
-    """Push `obj` from its current pose toward its goal in the truth sim,
-    moving `obj.pose` along.  The first `probe_pushes` are random draws
-    from `probe_sites`; the rest come from `controller`, planning with
-    `known_eta` if given, else with `belief`'s MAP.  `belief` (None skips
-    estimation) is updated after every push."""
-    if belief is None and known_eta is None:
-        raise ValueError("planning needs a belief or a known eta")
-    ik_plant = build_iiwa_pusher_plant(pusher)
-    pushes = probes = 0
-    sim_time = planning_time = estimation_time = 0.0
-
-    def finish(obs: PushObservation, label: str, extra: str) -> None:
-        """Account for an executed push, update the belief, and move the
-        object to where the push left it."""
-        nonlocal pushes, sim_time, estimation_time
-        pushes += 1
-        sim_time += maneuver_time(obj, obs.action)
-        line = (
-            f"push {pushes} ({label}): v={obs.action.velocity:.2f} m/s for "
-            f"{obs.action.time:.1f} s{extra}"
-        )
-        if belief is not None:
-            started = time.time()
-            belief.update(obs)
-            estimation_time += time.time() - started
-            mu, bx, by = belief.map_eta().as_array()
-            line += (
-                f"\n  update {time.time() - started:.1f} s, MAP mu={mu:.2f} "
-                f"b=({bx * 100:+.1f}, {by * 100:+.1f}) cm, max p "
-                f"{belief.probs.max():.2f}"
-            )
-        obj.pose = obs.final_pose()
-        position_error, yaw_error = goal_error(obj)
-        print(
-            f"{line}\n  goal error {position_error * 100:.1f} cm, "
-            f"{np.rad2deg(yaw_error):.1f} deg"
-        )
-
-    if meshcat is not None:
-        show_scene(meshcat, obj, pusher, truth.time_step)
-        show_object_goal(meshcat, obj)
-
-    for _ in range(min(probe_pushes, max_pushes)):
-        if meshcat is not None:
-            show_object_goal(meshcat, obj)
+    count: int,
+) -> Tally:
+    """Run up to `count` random pushes from `probe_sites`, stopping early when
+    none is reachable."""
+    tally = Tally()
+    for _ in range(count):
+        if runner.meshcat is not None:
+            show_object_goal(runner.meshcat, obj)
         try:
             obs = record_random_push(
                 rng,
                 obj,
-                pusher,
+                runner.pusher,
                 probe_sites,
-                truth,
-                meshcat=meshcat,
-                realtime_rate=realtime_rate,
+                runner.truth,
+                meshcat=runner.meshcat,
+                realtime_rate=runner.realtime_rate,
             )
         except RuntimeError:
             print("no reachable probe push; starting placement")
             break
-        probes += 1
-        finish(obs, "probe", "")
+        tally = apply_push(
+            obs, "probe", "", obj, belief, replace(tally, probes=tally.probes + 1)
+        )
+    return tally
 
+
+def first_reachable_improvement(
+    candidates: Sequence[Candidate],
+    cost_now: float,
+    plan_push: Callable[[Action], PiecewisePolynomial],
+) -> tuple[Candidate, PiecewisePolynomial] | None:
+    """Get the first of the cheapest-first `candidates` that beats `cost_now`
+    and that `plan_push` can plan, with its plan, or None without one.
+    `plan_push` raises RuntimeError for a push out of the arm's reach."""
+    for candidate in candidates:
+        if candidate.cost >= cost_now:
+            return None
+        try:
+            return candidate, plan_push(candidate.action)
+        except RuntimeError:
+            continue  # out of the arm's reach; try the next best
+    return None
+
+
+def no_push_reason(candidates: Sequence[Candidate], cost_now: float) -> StopReason:
+    """Get why no push was chosen from the cheapest-first `candidates`."""
+    return "stuck" if candidates[0].cost >= cost_now else "unreachable"
+
+
+def run_placement(
+    obj: Object,
+    runner: PushRunner,
+    controller: MpcController,
+    belief: GridBayesFilter | None,
+    plan_eta: Callable[[], Eta],
+    max_pushes: int,
+    tolerance: GoalTolerance,
+    tally: Tally,
+) -> tuple[StopReason, Tally]:
+    """Push `obj` toward its goal with the MPC, replanning after every push,
+    returning why it stopped with `tally` brought up to date."""
+    ik_plant = build_iiwa_pusher_plant(runner.pusher)
     while True:
-        if at_goal(obj):
-            stop_reason = "at goal"
-            break
-        if pushes >= max_pushes:
-            stop_reason = "push budget"
-            break
-        if known_eta is not None:
-            eta = known_eta
-        else:
-            assert belief is not None
-            eta = belief.map_eta()
+        if at_goal(obj.pose, obj.goal, tolerance):
+            return "at goal", tally
+        if tally.pushes >= max_pushes:
+            return "push budget", tally
         print(
-            f"planning push {pushes + 1} over {len(controller.actions)} candidates...",
+            f"planning push {tally.pushes + 1} over {len(controller.actions)} "
+            "candidates...",
             flush=True,
         )
         started = time.time()
-        candidates = controller.plan(obj, eta)
+        candidates = controller.plan(obj, plan_eta())
         plan_time = time.time() - started
-        planning_time += plan_time
+        tally = replace(tally, planning_time=tally.planning_time + plan_time)
         cost_now = controller.cost(obj)
-        # Best first: the first improving push the arm can reach.
-        chosen = None
-        for candidate in candidates:
-            if candidate.cost >= cost_now:
-                break
-            try:
-                q_traj = make_push_trajectory(ik_plant, pusher, obj, candidate.action)
-            except RuntimeError:
-                continue  # out of the arm's reach; try the next best
-            chosen = candidate
-            break
-        if chosen is None:
-            stop_reason = "stuck" if candidates[0].cost >= cost_now else "unreachable"
-            break
-        if meshcat is not None:
-            show_object_goal(meshcat, obj)
-            show_prediction(meshcat, obj, chosen.predicted)
+        choice = first_reachable_improvement(
+            candidates,
+            cost_now,
+            lambda action: make_push_trajectory(ik_plant, runner.pusher, obj, action),
+        )
+        if choice is None:
+            return no_push_reason(candidates, cost_now), tally
+        chosen, q_traj = choice
+        if runner.meshcat is not None:
+            show_object_goal(runner.meshcat, obj)
+            show_prediction(runner.meshcat, obj, chosen.predicted)
         obs = record_push(
             obj,
-            pusher,
+            runner.pusher,
             chosen.action,
             q_traj,
-            truth,
-            meshcat=meshcat,
-            realtime_rate=realtime_rate,
+            runner.truth,
+            meshcat=runner.meshcat,
+            realtime_rate=runner.realtime_rate,
         )
-        finish(
+        tally = apply_push(
             obs,
             "mpc",
             f", plan {plan_time:.1f} s, cost {cost_now:.3f} -> predicted "
             f"{chosen.cost:.3f}",
+            obj,
+            belief,
+            tally,
         )
 
-    position_error, yaw_error = goal_error(obj)
+
+def run_episode(
+    rng: np.random.Generator,
+    obj: Object,
+    runner: PushRunner,
+    controller: MpcController,
+    belief: GridBayesFilter | None,
+    plan_eta: Callable[[], Eta],
+    probe_sites: list[SurfaceNormal],
+    probe_pushes: int,
+    max_pushes: int,
+    tolerance: GoalTolerance,
+) -> EpisodeResult:
+    """Push `obj` from its current pose toward its goal in the truth sim,
+    moving `obj.pose` along.  The first `probe_pushes` are random draws from
+    `probe_sites`; the rest come from `controller`, which asks `plan_eta` for
+    its eta before each plan.  `belief` (None skips estimation) is updated
+    after every push."""
+    if runner.meshcat is not None:
+        show_scene(runner.meshcat, obj, runner.pusher, runner.truth.time_step)
+        show_object_goal(runner.meshcat, obj)
+    probed = run_probes(
+        rng, obj, runner, belief, probe_sites, min(probe_pushes, max_pushes)
+    )
+    stop_reason, tally = run_placement(
+        obj, runner, controller, belief, plan_eta, max_pushes, tolerance, probed
+    )
+    position_error, yaw_error = goal_error(obj.pose, obj.goal)
     return EpisodeResult(
         success=stop_reason == "at goal",
         stop_reason=stop_reason,
-        probe_pushes=probes,
-        mpc_pushes=pushes - probes,
+        probe_pushes=tally.probes,
+        mpc_pushes=tally.pushes - tally.probes,
         position_error=position_error,
         yaw_error=yaw_error,
-        sim_time=sim_time,
-        planning_time=planning_time,
-        estimation_time=estimation_time,
+        sim_time=tally.sim_time,
+        planning_time=tally.planning_time,
+        estimation_time=tally.estimation_time,
     )

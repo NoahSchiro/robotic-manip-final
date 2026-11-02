@@ -76,12 +76,12 @@ class PlanningModel(Protocol):
         ...
 
 
-def nominal_tip_path(obj: Object, action: Action) -> tuple[PiecewisePolynomial, float]:
+def nominal_tip_path(obj: Object, action: Action) -> PiecewisePolynomial:
     """Get the tip's commanded path for `action` from `obj`'s current pose,
     as push_maneuver lays it out: from the standoff point, push at the
     commanded speed, back off the same way, and rise clear of the block,
     each leg straight and at constant speed.  Times start at 0 at the
-    standoff, like a push window's.  Also returns the path's end time.
+    standoff, like a push window's.
 
     The rise matters: backing off along the push line can strike a block
     the push has rotated, and the stick drags it until it clears the top.
@@ -98,7 +98,7 @@ def nominal_tip_path(obj: Object, action: Action) -> tuple[PiecewisePolynomial, 
             over.translation(),
         ]
     )
-    return PiecewisePolynomial.FirstOrderHold(times, positions.tolist()), times[-1]
+    return PiecewisePolynomial.FirstOrderHold(times, positions.tolist())
 
 
 @dataclass(frozen=True)
@@ -298,10 +298,10 @@ class DrakePushModel(DynamicsModel, PlanningModel):
         start = ObjectState(pose=obj.x_wo(), velocity=SpatialVelocity.Zero())
         predictions = np.empty((len(actions), 3))
         for i, action in enumerate(actions):
-            path, end_time = nominal_tip_path(obj, action)
+            path = nominal_tip_path(obj, action)
             self.source.UpdateTrajectory(path)
             (final,) = self._simulate(
-                start, path.value(0.0).ravel(), np.zeros(3), [end_time]
+                start, path.value(0.0).ravel(), np.zeros(3), [path.end_time()]
             )
             predictions[i] = final[:3]
         return predictions

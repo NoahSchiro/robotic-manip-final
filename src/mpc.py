@@ -22,68 +22,71 @@ from dataclasses import dataclass
 import numpy as np
 
 from .action import Action
-from .dynamics import PlanningModel
-from .geometry import SurfaceNormal, distance_to_footprint
-from .iiwa import STANDOFF, Pusher, maneuver_time
+from .dynamics import PlanningModel, Pose
+from .geometry import SurfaceNormal, SurfacePart, distance_to_footprint
+from .iiwa import STANDOFF, maneuver_time
 from .object import Object
 from .observation import wrap_angle
 from .params import Eta
 
-# Pose cost: l is half the T's 14 cm extent, so a 7 cm position error
-# costs as much as a 1 rad yaw error.
-LENGTH = 0.07  # l (m)
-YAW_WEIGHT = 1.0  # lambda_phi (1/rad^2)
-# Action cost per second of maneuver time.
-TIME_WEIGHT = 0.005
-# Success: within these of the goal.
-POSITION_TOLERANCE = 0.01  # m
-YAW_TOLERANCE = float(np.deg2rad(10.0))  # rad
-# Gap the lowered stick must leave to the block at a candidate site (m).
-SITE_CLEARANCE = 1e-3
+
+@dataclass(frozen=True)
+class PoseCostWeights:
+    """The pose cost V(q)'s scales: `length` l (m) and `yaw_weight` lambda_phi
+    (1/rad^2)."""
+
+    length: float
+    yaw_weight: float
+
+
+@dataclass(frozen=True)
+class GoalTolerance:
+    """How close to the goal counts as placed."""
+
+    position: float  # m
+    yaw: float  # rad
 
 
 def pose_cost(
-    poses: np.ndarray,
-    goal: Sequence[float],
-    length: float = LENGTH,
-    yaw_weight: float = YAW_WEIGHT,
+    poses: np.ndarray, goal: Sequence[float], weights: PoseCostWeights
 ) -> np.ndarray:
     """Get V(q) for planar poses (..., 3) of (x, y, yaw) against `goal`."""
     poses = np.asarray(poses, dtype=float)
     offset = poses[..., :2] - np.asarray(goal[:2])
     yaw_error = wrap_angle(poses[..., 2] - goal[2])
-    return np.asarray((offset**2).sum(axis=-1) / length**2 + yaw_weight * yaw_error**2)
+    return np.asarray(
+        (offset**2).sum(axis=-1) / weights.length**2 + weights.yaw_weight * yaw_error**2
+    )
 
 
-def goal_error(obj: Object) -> tuple[float, float]:
-    """Get `obj`'s position error (m) and absolute yaw error (rad) to its
-    goal."""
-    x, y, yaw = obj.pose
-    gx, gy, gyaw = obj.goal
+def goal_error(pose: Pose, goal: Pose) -> tuple[float, float]:
+    """Get `pose`'s position error (m) and absolute yaw error (rad) to `goal`."""
+    x, y, yaw = pose
+    gx, gy, gyaw = goal
     return float(np.hypot(x - gx, y - gy)), float(abs(wrap_angle(yaw - gyaw)))
 
 
-def at_goal(obj: Object) -> bool:
-    """Check whether `obj` is within the success tolerances of its goal."""
-    position_error, yaw_error = goal_error(obj)
-    return position_error < POSITION_TOLERANCE and yaw_error < YAW_TOLERANCE
+def at_goal(pose: Pose, goal: Pose, tolerance: GoalTolerance) -> bool:
+    """Check whether `pose` is within `tolerance` of `goal`."""
+    position_error, yaw_error = goal_error(pose, goal)
+    return position_error < tolerance.position and yaw_error < tolerance.yaw
 
 
 def clear_sites(
-    obj: Object,
+    parts: list[SurfacePart],
     sites: list[SurfaceNormal],
-    pusher: Pusher,
-    clearance: float = SITE_CLEARANCE,
+    stick_radius: float,
+    clearance: float,
 ) -> list[SurfaceNormal]:
-    """Keep the sites where the stick, lowered to its standoff point,
-    clears the block by `clearance`."""
+    """Keep the sites where a stick of `stick_radius`, lowered to its standoff
+    point, clears the `parts`' footprint by `clearance`."""
     return [
         site
         for site in sites
         if distance_to_footprint(
-            obj.parts, *(site.position[:2] - STANDOFF * site.normal[:2])
+            parts, *(site.position[:2] - STANDOFF * site.normal[:2])
         )
-        > pusher.radius + clearance
+        > stick_radius + clearance
     ]
 
 
@@ -96,41 +99,55 @@ class Candidate:
     cost: float  # pose cost of `predicted` plus the action cost
 
 
+def rank_pushes(
+    actions: Sequence[Action],
+    predicted: np.ndarray,
+    maneuver_times: np.ndarray,
+    goal: Sequence[float],
+    pose_weights: PoseCostWeights,
+    time_weight: float,
+) -> list[Candidate]:
+    """Score each of `actions` by its predicted pose cost plus its maneuver
+    time's action cost, cheapest first."""
+    costs = pose_cost(predicted, goal, pose_weights) + time_weight * maneuver_times
+    return [
+        Candidate(actions[i], predicted[i], float(costs[i]))
+        for i in np.argsort(costs, kind="stable")
+    ]
+
+
 class MpcController:
-    """Ranks candidate pushes by predicted cost under a given eta."""
+    """Ranks candidate pushes by predicted cost under a given eta.
+
+    Raises ValueError when `actions` is empty.
+    """
 
     def __init__(
         self,
         model: PlanningModel,
         actions: Sequence[Action],
-        length: float = LENGTH,
-        yaw_weight: float = YAW_WEIGHT,
-        time_weight: float = TIME_WEIGHT,
+        pose_weights: PoseCostWeights,
+        time_weight: float,
     ) -> None:
         if not actions:
             raise ValueError("no candidate pushes")
         self.model = model
         self.actions = list(actions)
-        self.length = length
-        self.yaw_weight = yaw_weight
+        self.pose_weights = pose_weights
         self.time_weight = time_weight
 
     def cost(self, obj: Object) -> float:
         """Get the pose cost of `obj` where it is now, pushing nothing."""
-        return float(
-            pose_cost(np.array(obj.pose), obj.goal, self.length, self.yaw_weight)
-        )
+        return float(pose_cost(np.array(obj.pose), obj.goal, self.pose_weights))
 
     def plan(self, obj: Object, eta: Eta) -> list[Candidate]:
         """Score every candidate push from `obj`'s current pose toward its
         goal under `eta`, cheapest first."""
-        predicted = self.model.predict_pushes(eta, obj.pose, self.actions)
-        times = np.array([maneuver_time(obj, action) for action in self.actions])
-        costs = (
-            pose_cost(predicted, obj.goal, self.length, self.yaw_weight)
-            + self.time_weight * times
+        return rank_pushes(
+            self.actions,
+            self.model.predict_pushes(eta, obj.pose, self.actions),
+            np.array([maneuver_time(obj, action) for action in self.actions]),
+            obj.goal,
+            self.pose_weights,
+            self.time_weight,
         )
-        return [
-            Candidate(self.actions[i], predicted[i], float(costs[i]))
-            for i in np.argsort(costs, kind="stable")
-        ]
