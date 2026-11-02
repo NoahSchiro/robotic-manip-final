@@ -5,13 +5,13 @@ DrakePushModel replays the measured tip path in a small plant: the table,
 the object, and a lone stick tip on x/y/z prismatic joints that Drake's
 built-in actuator PD drives along the path (no arm, IK, or arm PD).  One
 plant serves every hypothesis: each prediction swaps eta's inertia and
-friction into the context.  ParallelPushModel fans hypotheses out over
-worker processes, each holding its own DrakePushModel.
+friction into the context.  ParallelPushModel fans the hypotheses for one
+push out over worker processes, each chunk on its own DrakePushModel.
 """
 
-import os
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol, Self
 
@@ -30,6 +30,7 @@ from pydrake.all import (
     PiecewisePolynomial,
     PrismaticJoint,
     ProximityProperties,
+    RigidBody,
     RigidTransform,
     RoleAssign,
     RotationalInertia,
@@ -39,9 +40,9 @@ from pydrake.all import (
 )
 
 from .iiwa import Pusher
-from .object import Table, add_object, add_table
+from .object import Object, Table, add_object, add_table
 from .observation import ObjectState, PushObservation, measurement
-from .params import ROD_MASS, Eta
+from .params import Eta
 
 
 class DynamicsModel(Protocol):
@@ -54,26 +55,112 @@ class DynamicsModel(Protocol):
         ...
 
 
-class DrakePushModel:
+@dataclass(frozen=True)
+class PushModelConfig:
+    """How DrakePushModel simulates: plant timestep (s), the known rod mass
+    (kg), and the PD gains driving the tip along its path."""
+
+    time_step: float
+    rod_mass: float
+    tip_kp: float = 1e4
+    tip_kd: float = 200.0
+
+
+def _add_tip_body(
+    plant: MultibodyPlant, pusher: Pusher, kp: float, kd: float
+) -> tuple[ModelInstanceIndex, RigidBody]:
+    """Add the stick on PD-actuated world x/y/z prismatic joints, its frame at
+    the tip with the stick rising along +z, matching the truth stick's
+    tool-down pose."""
+    tip = plant.AddModelInstance("tip")
+    # The tip's PD holds z directly, so gravity would only add sag.
+    plant.set_gravity_enabled(tip, False)
+    carriage_x = plant.AddRigidBody(
+        "carriage_x", tip, SpatialInertia.SolidSphereWithMass(0.01, 0.005)
+    )
+    carriage_y = plant.AddRigidBody(
+        "carriage_y", tip, SpatialInertia.SolidSphereWithMass(0.01, 0.005)
+    )
+    stick = plant.AddRigidBody(
+        pusher.body,
+        tip,
+        SpatialInertia.SolidCylinderWithMassAboutEnd(
+            pusher.mass, pusher.radius, pusher.length, np.array([0.0, 0.0, 1.0])
+        ),
+    )
+    chain = [
+        (plant.world_frame(), carriage_x.body_frame(), [1.0, 0.0, 0.0]),
+        (carriage_x.body_frame(), carriage_y.body_frame(), [0.0, 1.0, 0.0]),
+        (carriage_y.body_frame(), stick.body_frame(), [0.0, 0.0, 1.0]),
+    ]
+    for i, (parent, child, axis) in enumerate(chain):
+        joint = plant.AddJoint(
+            PrismaticJoint(f"tip_{'xyz'[i]}", parent, child, np.array(axis))
+        )
+        actuator = plant.AddJointActuator(joint.name(), joint)
+        actuator.set_controller_gains(PdControllerGains(p=kp, d=kd))
+    return tip, stick
+
+
+def _add_tip_collision(plant: MultibodyPlant, pusher: Pusher, stick: RigidBody) -> None:
+    """Register `stick`'s compliant hydroelastic collision cylinder."""
+    props = ProximityProperties()
+    AddContactMaterial(
+        friction=CoulombFriction(pusher.friction, pusher.friction),
+        properties=props,
+    )
+    AddCompliantHydroelasticProperties(
+        resolution_hint=0.005,
+        hydroelastic_modulus=pusher.hydroelastic_modulus,
+        properties=props,
+    )
+    plant.RegisterCollisionGeometry(
+        stick,
+        RigidTransform(np.array([0.0, 0.0, pusher.length / 2])),
+        Cylinder(pusher.radius, pusher.length),
+        "collision",
+        props,
+    )
+
+
+def _spatial_inertia(obj: Object) -> SpatialInertia:
+    """Get `obj`'s spatial inertia about its body frame."""
+    _, inertia = obj.compound_inertia()
+    return SpatialInertia.MakeFromCentralInertia(
+        obj.total_mass,
+        obj.com_in_body_frame(),
+        RotationalInertia(
+            inertia[0, 0],
+            inertia[1, 1],
+            inertia[2, 2],
+            inertia[0, 1],
+            inertia[0, 2],
+            inertia[1, 2],
+        ),
+    )
+
+
+def _hypothesis_object(eta: Eta, rod_mass: float) -> Object:
+    """Build `eta`'s object for its physical properties only."""
+    # Object draws a random pose and goal on construction; predictions set the
+    # state explicitly, so the draws never matter and any seed will do.
+    return eta.to_object(np.random.default_rng(0), rod_mass)
+
+
+class DrakePushModel(DynamicsModel):
     """Short-horizon Drake prediction: replay the measured tip path against
     the object under a hypothesized eta, from the measured start state."""
 
-    def __init__(
-        self,
-        time_step: float = 2e-3,
-        tip_kp: float = 1e4,
-        tip_kd: float = 200.0,
-        rod_mass: float = ROD_MASS,
-    ) -> None:
-        self.rod_mass = rod_mass
-        # The object's own pose is irrelevant: predict() sets its state.
-        self.rng = np.random.default_rng(0)
-        self.pusher = Pusher()
-        obj = Eta(mu=0.5, bx=0.0, by=0.0).to_object(self.rng, rod_mass)
+    def __init__(self, config: PushModelConfig) -> None:
+        self.rod_mass = config.rod_mass
+        obj = _hypothesis_object(Eta(mu=0.5, bx=0.0, by=0.0), config.rod_mass)
         table = Table()
+        pusher = Pusher()
 
         builder = DiagramBuilder()
-        plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
+        plant, scene_graph = AddMultibodyPlantSceneGraph(
+            builder, time_step=config.time_step
+        )
         parser = Parser(plant)
         add_table(table, plant, parser)
         add_object(obj, parser)
@@ -83,7 +170,8 @@ class DrakePushModel:
         table_body = plant.GetBodyByName(
             table.body_box, plant.GetModelInstanceByName(table.name)
         )
-        tip_instance = self._add_tip(plant, tip_kp, tip_kd)
+        tip_instance, stick = _add_tip_body(plant, pusher, config.tip_kp, config.tip_kd)
+        _add_tip_collision(plant, pusher, stick)
         plant.Finalize()
 
         # Placeholder path; predict() swaps in each observation's.
@@ -111,78 +199,11 @@ class DrakePushModel:
         ]
         self.simulator = Simulator(self.diagram, self.context)
 
-    def _add_tip(
-        self, plant: MultibodyPlant, kp: float, kd: float
-    ) -> ModelInstanceIndex:
-        """Add the stick on PD-actuated world x/y/z prismatic joints, its
-        frame at the tip with the stick rising along +z, matching the truth
-        stick's tool-down pose."""
-        pusher = self.pusher
-        tip = plant.AddModelInstance("tip")
-        # The tip's PD holds z directly, so gravity would only add sag.
-        plant.set_gravity_enabled(tip, False)
-        carriage_x = plant.AddRigidBody(
-            "carriage_x", tip, SpatialInertia.SolidSphereWithMass(0.01, 0.005)
-        )
-        carriage_y = plant.AddRigidBody(
-            "carriage_y", tip, SpatialInertia.SolidSphereWithMass(0.01, 0.005)
-        )
-        stick = plant.AddRigidBody(
-            pusher.body,
-            tip,
-            SpatialInertia.SolidCylinderWithMassAboutEnd(
-                pusher.mass, pusher.radius, pusher.length, np.array([0.0, 0.0, 1.0])
-            ),
-        )
-        chain = [
-            (plant.world_frame(), carriage_x.body_frame(), [1.0, 0.0, 0.0]),
-            (carriage_x.body_frame(), carriage_y.body_frame(), [0.0, 1.0, 0.0]),
-            (carriage_y.body_frame(), stick.body_frame(), [0.0, 0.0, 1.0]),
-        ]
-        for i, (parent, child, axis) in enumerate(chain):
-            joint = plant.AddJoint(
-                PrismaticJoint(f"tip_{'xyz'[i]}", parent, child, np.array(axis))
-            )
-            actuator = plant.AddJointActuator(joint.name(), joint)
-            actuator.set_controller_gains(PdControllerGains(p=kp, d=kd))
-
-        props = ProximityProperties()
-        AddContactMaterial(
-            friction=CoulombFriction(pusher.friction, pusher.friction),
-            properties=props,
-        )
-        AddCompliantHydroelasticProperties(
-            resolution_hint=0.005,
-            hydroelastic_modulus=pusher.hydroelastic_modulus,
-            properties=props,
-        )
-        plant.RegisterCollisionGeometry(
-            stick,
-            RigidTransform(np.array([0.0, 0.0, pusher.length / 2])),
-            Cylinder(pusher.radius, pusher.length),
-            "collision",
-            props,
-        )
-        return tip
-
     def set_eta(self, eta: Eta) -> None:
         """Swap `eta`'s inertia and friction into the context."""
-        obj = eta.to_object(self.rng, self.rod_mass)
-        _, inertia = obj.compound_inertia()
         self.object_body.SetSpatialInertiaInBodyFrame(
             self.plant_context,
-            SpatialInertia.MakeFromCentralInertia(
-                obj.total_mass,
-                obj.com_in_body_frame(),
-                RotationalInertia(
-                    inertia[0, 0],
-                    inertia[1, 1],
-                    inertia[2, 2],
-                    inertia[0, 1],
-                    inertia[0, 2],
-                    inertia[1, 2],
-                ),
-            ),
+            _spatial_inertia(_hypothesis_object(eta, self.rod_mass)),
         )
         inspector = self.scene_graph.model_inspector()
         for geometry in self.friction_geometries:
@@ -210,25 +231,38 @@ class DrakePushModel:
         predictions = np.empty((len(etas), 6))
         for i, eta in enumerate(etas):
             self.set_eta(eta)
-            self.context.SetTime(0.0)
-            self.plant.SetPositions(
-                self.plant_context, self.tip_instance, obs.tip_positions[:, 0]
+            push_end, end = self._simulate(
+                obs.start,
+                obs.tip_positions[:, 0],
+                obs.tip_velocities[:, 0],
+                [obs.push_end_time, obs.duration],
             )
-            self.plant.SetVelocities(
-                self.plant_context, self.tip_instance, obs.tip_velocities[:, 0]
-            )
-            self.plant.SetFreeBodyPose(
-                self.plant_context, self.object_body, obs.start.pose
-            )
-            self.plant.SetFreeBodySpatialVelocity(
-                self.plant_context, self.object_body, obs.start.velocity
-            )
-            self.simulator.Initialize()
-            self.simulator.AdvanceTo(obs.push_end_time)
-            push_end = self._object_planar()
-            self.simulator.AdvanceTo(obs.duration)
-            predictions[i] = measurement(push_end, self._object_planar())
+            predictions[i] = measurement(push_end, end)
         return predictions
+
+    def _simulate(
+        self,
+        start: ObjectState,
+        tip_position: np.ndarray,
+        tip_velocity: np.ndarray,
+        times: Sequence[float],
+    ) -> list[np.ndarray]:
+        """Run the current tip path from time 0, with the object at `start`
+        and the tip at `tip_position` moving at `tip_velocity`, reading the
+        object's planar state at each of the increasing `times`."""
+        self.context.SetTime(0.0)
+        self.plant.SetPositions(self.plant_context, self.tip_instance, tip_position)
+        self.plant.SetVelocities(self.plant_context, self.tip_instance, tip_velocity)
+        self.plant.SetFreeBodyPose(self.plant_context, self.object_body, start.pose)
+        self.plant.SetFreeBodySpatialVelocity(
+            self.plant_context, self.object_body, start.velocity
+        )
+        self.simulator.Initialize()
+        states = []
+        for t in times:
+            self.simulator.AdvanceTo(t)
+            states.append(self._object_planar())
+        return states
 
     def _object_planar(self) -> np.ndarray:
         """Read the object's current planar state."""
@@ -240,42 +274,24 @@ class DrakePushModel:
         ).planar()
 
 
-# Each worker process's own model, built once by _init_worker.
-_worker_model: DrakePushModel | None = None
+class ParallelPushModel(DynamicsModel):
+    """DrakePushModel's predictions for one push split across `workers`
+    processes: the hypotheses run in parallel, never the pushes themselves.
+    Use as a context manager, or call close()."""
 
+    def __init__(self, workers: int, config: PushModelConfig) -> None:
+        self.workers = workers
+        self.config = config
+        self.pool = ProcessPoolExecutor(workers)
 
-def _init_worker(
-    time_step: float, tip_kp: float, tip_kd: float, rod_mass: float
-) -> None:
-    """Build this worker process's prediction model."""
-    global _worker_model
-    _worker_model = DrakePushModel(time_step, tip_kp, tip_kd, rod_mass)
-
-
-def _predict_chunk(etas: list[Eta], obs: PushObservation) -> np.ndarray:
-    """Predict one chunk of hypotheses on this worker's model."""
-    assert _worker_model is not None, "worker was not initialized"
-    return _worker_model.predict(etas, obs)
-
-
-class ParallelPushModel:
-    """DrakePushModel's predictions split across `workers` processes (all
-    CPUs by default).  Use as a context manager, or call close()."""
-
-    def __init__(
-        self,
-        workers: int | None = None,
-        time_step: float = 2e-3,
-        tip_kp: float = 1e4,
-        tip_kd: float = 200.0,
-        rod_mass: float = ROD_MASS,
-    ) -> None:
-        self.workers = workers if workers is not None else os.cpu_count() or 1
-        self.pool = ProcessPoolExecutor(
-            self.workers,
-            initializer=_init_worker,
-            initargs=(time_step, tip_kp, tip_kd, rod_mass),
-        )
+    @staticmethod
+    def _predict_chunk(
+        config: PushModelConfig, etas: list[Eta], obs: PushObservation
+    ) -> np.ndarray:
+        """Predict one chunk of hypotheses, running in a worker process."""
+        # A model per chunk keeps workers stateless: building one takes tens of
+        # milliseconds, against seconds simulating the chunk.
+        return DrakePushModel(config).predict(etas, obs)
 
     def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
         """Predict the push's measurement under each of `etas`."""
@@ -284,7 +300,10 @@ class ParallelPushModel:
             for chunk in np.array_split(np.arange(len(etas)), self.workers)
             if chunk.size
         ]
-        futures = [self.pool.submit(_predict_chunk, chunk, obs) for chunk in chunks]
+        futures = [
+            self.pool.submit(self._predict_chunk, self.config, chunk, obs)
+            for chunk in chunks
+        ]
         return np.concatenate([f.result() for f in futures])
 
     def close(self) -> None:

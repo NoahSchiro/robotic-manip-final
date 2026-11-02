@@ -14,9 +14,6 @@ import numpy as np
 from .geometry import SurfacePart, contains_disk, footprint_center
 from .object import Object, Rod
 
-# Known rod mass (kg), matching main.py's --rod-mass default.
-ROD_MASS = 0.2
-
 
 @dataclass(frozen=True)
 class Eta:
@@ -31,11 +28,11 @@ class Eta:
         """Get (mu, bx, by) as a vector."""
         return np.array([self.mu, self.bx, self.by])
 
-    def rod(self, mass: float = ROD_MASS) -> Rod:
+    def rod(self, mass: float) -> Rod:
         """Get the rod this hypothesis places."""
         return Rod(x=self.bx, y=self.by, mass=mass)
 
-    def to_object(self, rng: np.random.Generator, rod_mass: float = ROD_MASS) -> Object:
+    def to_object(self, rng: np.random.Generator, rod_mass: float) -> Object:
         """Build the object this hypothesis describes."""
         return Object(rng, rod=self.rod(rod_mass), friction=self.mu)
 

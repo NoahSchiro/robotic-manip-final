@@ -20,6 +20,7 @@ from pydrake.all import (
     RigidTransform,
     StartMeshcat,
     TrajectorySource,
+    VectorLogSink,
 )
 from pydrake.geometry import Meshcat, Rgba
 
@@ -28,8 +29,7 @@ from src.iiwa import Q_HOME, Pusher, add_iiwa_and_pusher
 from src.object import Object, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
 
-# Name of the plant-state logger build_diagram adds when asked to log.
-STATE_LOGGER = "state_logger"
+_STATE_LOGGER = "state_logger"
 
 
 class Sim:
@@ -65,7 +65,7 @@ def build_diagram(
     """Assemble the scene (arm with stick, table, block) plus the arm controller.
 
     With `log_period`, the plant state is also logged at that period, in a
-    logger named STATE_LOGGER (see observation.py)."""
+    logger state_logger finds."""
     builder = DiagramBuilder()
     plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
     parser = Parser(plant)
@@ -98,12 +98,22 @@ def build_diagram(
 
     if log_period is not None:
         logger = LogVectorOutput(plant.get_state_output_port(), builder, log_period)
-        logger.set_name(STATE_LOGGER)
+        logger.set_name(_STATE_LOGGER)
 
     if meshcat is not None:
         MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
 
     return builder.Build(), plant
+
+
+def state_logger(diagram: Diagram) -> VectorLogSink:
+    """Get the plant-state logger of a diagram built with `log_period`.
+
+    Raises RuntimeError when `diagram` was built without one.
+    """
+    logger = diagram.GetSubsystemByName(_STATE_LOGGER)
+    assert isinstance(logger, VectorLogSink)
+    return logger
 
 
 def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidBody:

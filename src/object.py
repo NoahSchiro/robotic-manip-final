@@ -286,8 +286,6 @@ class Object(BoxComposite):
 
 def add_object(obj: Object, parser: Parser) -> None:
     """Add the block into `plant` as a free body."""
-    # Parsed from the string, not a file under assets/: parallel runs with
-    # different objects would race on the one shared path.
     parser.AddModelsFromString(obj.sdf(), "sdf")
 
 

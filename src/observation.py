@@ -1,6 +1,5 @@
 """What one push produces for the estimator: the object's state before and
-after, plus the pusher tip's measured path in between, recorded from the
-truth sim.
+after, plus the pusher tip's measured path in between.
 
 The push window opens when the tip has lowered to its standoff point
 (before contact) and closes `settle_time` after the push segment ends.
@@ -18,32 +17,9 @@ the schemes compared.
 from dataclasses import dataclass
 
 import numpy as np
-from pydrake.all import (
-    Context,
-    Diagram,
-    MultibodyPlant,
-    RigidTransform,
-    RollPitchYaw,
-    Simulator,
-    SpatialVelocity,
-    VectorLogSink,
-)
-from pydrake.geometry import Meshcat
+from pydrake.all import RigidTransform, RollPitchYaw, SpatialVelocity
 
-from .action import Action, sample_action
-from .geometry import SurfaceNormal
-from .iiwa import (
-    Pusher,
-    build_iiwa_pusher_plant,
-    hover_tip_pose,
-    make_push_trajectory,
-    push_maneuver,
-)
-from .object import Object, Table
-from .scene import STATE_LOGGER, build_diagram, place_object
-
-# Plant-state logging period for recorded pushes (s).
-LOG_PERIOD = 1e-3
+from .action import Action
 
 
 @dataclass(frozen=True)
@@ -71,7 +47,7 @@ def measurement(push_end: np.ndarray, end: np.ndarray) -> np.ndarray:
 @dataclass(frozen=True)
 class PushObservation:
     """One executed push: the object's state at the window's start, at the
-    push segment's end, and at the window's end, and the tip's world-frame
+    push segment's end, and at the window's end, plus the tip's world-frame
     path over the window, times starting at 0."""
 
     action: Action
@@ -93,6 +69,11 @@ class PushObservation:
         velocity at the push segment's end."""
         return measurement(self.push_end.planar(), self.end.planar())
 
+    def end_pose(self) -> tuple[float, float, float]:
+        """Get the object's planar pose (x, y, yaw) at the window's end."""
+        x, y, yaw = self.end.planar()[:3]
+        return float(x), float(y), float(yaw)
+
 
 def wrap_angle(angle: np.ndarray | float) -> np.ndarray:
     """Wrap angles into [-pi, pi)."""
@@ -104,135 +85,3 @@ def planar_error(measured: np.ndarray, predicted: np.ndarray) -> np.ndarray:
     e = np.asarray(measured - predicted, dtype=float)
     e[..., 2] = wrap_angle(e[..., 2])
     return e
-
-
-def push_window(
-    obj: Object, action: Action, settle_time: float
-) -> tuple[float, float, float]:
-    """Get the push window's (start, push end, end) on the push trajectory's
-    clock: from the tip parked at its standoff point, through the push
-    segment's end, to `settle_time` after it."""
-    durations = [d for _pose, d in push_maneuver(obj, action, hover_tip_pose(obj))]
-    # Segments 0-1 move over and lower to the standoff; segment 2 pushes.
-    start = durations[0] + durations[1]
-    push_end = start + durations[2]
-    return start, push_end, push_end + settle_time
-
-
-def read_object_state(
-    plant: MultibodyPlant, plant_context: Context, obj: Object
-) -> ObjectState:
-    """Read the object's free-body state from `plant_context`."""
-    body = plant.GetBodyByName(obj.body_box, plant.GetModelInstanceByName(obj.name))
-    return ObjectState(
-        pose=plant.EvalBodyPoseInWorld(plant_context, body),
-        velocity=plant.EvalBodySpatialVelocityInWorld(plant_context, body),
-    )
-
-
-def read_tip(
-    plant: MultibodyPlant, plant_context: Context, pusher: Pusher
-) -> tuple[np.ndarray, np.ndarray]:
-    """Read the stick tip's world position and translational velocity."""
-    stick = plant.GetBodyByName(pusher.body, plant.GetModelInstanceByName(pusher.name))
-    X_WS = plant.EvalBodyPoseInWorld(plant_context, stick)
-    V_WS = plant.EvalBodySpatialVelocityInWorld(plant_context, stick)
-    p_ST_W = X_WS.rotation() @ pusher.tip_point
-    return X_WS @ pusher.tip_point, V_WS.Shift(p_ST_W).translational()
-
-
-def observe_push(
-    diagram: Diagram,
-    plant: MultibodyPlant,
-    context: Context,
-    obj: Object,
-    pusher: Pusher,
-    action: Action,
-    settle_time: float = 0.1,
-    realtime_rate: float = 0.0,
-) -> PushObservation:
-    """Run the truth sim through `action`'s push window and record it.
-
-    `diagram` must come from build_diagram with logging on, with its
-    reference trajectory planned for `action`.  The sim stops at the
-    window's end, leaving `context` there.
-    """
-    plant_context = plant.GetMyContextFromRoot(context)
-    t_start, t_push_end, t_end = push_window(obj, action, settle_time)
-
-    simulator = Simulator(diagram, context)
-    simulator.set_target_realtime_rate(realtime_rate)
-    simulator.AdvanceTo(t_start)
-    start = read_object_state(plant, plant_context, obj)
-    tip_start = read_tip(plant, plant_context, pusher)
-    simulator.AdvanceTo(t_push_end)
-    push_end = read_object_state(plant, plant_context, obj)
-    simulator.AdvanceTo(t_end)
-    end = read_object_state(plant, plant_context, obj)
-    tip_end = read_tip(plant, plant_context, pusher)
-
-    # Logged samples strictly inside the window, rebuilt into tip kinematics
-    # on a scratch context; the exact endpoints come from the live context.
-    logger = diagram.GetSubsystemByName(STATE_LOGGER)
-    assert isinstance(logger, VectorLogSink)
-    log = logger.FindLog(context)
-    times, states = log.sample_times(), log.data()
-    # A margin keeps logged samples from nearly duplicating the endpoints,
-    # which would make the replayed spline's breaks degenerate.
-    margin = 1e-6
-    inside = (times > t_start + margin) & (times < t_end - margin)
-    scratch = plant.CreateDefaultContext()
-    tips = [tip_start]
-    for x in states[:, inside].T:
-        plant.SetPositionsAndVelocities(scratch, x)
-        tips.append(read_tip(plant, scratch, pusher))
-    tips.append(tip_end)
-
-    return PushObservation(
-        action=action,
-        start=start,
-        push_end=push_end,
-        end=end,
-        push_end_time=t_push_end - t_start,
-        tip_times=np.concatenate([[0.0], times[inside] - t_start, [t_end - t_start]]),
-        tip_positions=np.column_stack([p for p, _v in tips]),
-        tip_velocities=np.column_stack([v for _p, v in tips]),
-    )
-
-
-def record_random_push(
-    rng: np.random.Generator,
-    obj: Object,
-    pusher: Pusher,
-    sites: list[SurfaceNormal],
-    time_step: float,
-    settle_time: float = 0.1,
-    meshcat: Meshcat | None = None,
-    realtime_rate: float = 0.0,
-    max_tries: int = 20,
-) -> PushObservation:
-    """Draw a random library push the arm can reach, run it in the truth
-    sim from `obj`'s current pose, and record it.  The table shares the
-    object's friction, as in main.py."""
-    ik_plant = build_iiwa_pusher_plant(pusher)
-    for _ in range(max_tries):
-        action = sample_action(rng, sites)
-        try:
-            q_traj = make_push_trajectory(ik_plant, pusher, obj, action)
-        except RuntimeError:
-            continue  # this contact is out of the arm's reach; draw again
-        diagram, plant = build_diagram(
-            time_step,
-            obj,
-            Table(obj.friction),
-            pusher,
-            meshcat=meshcat,
-            q_ref=q_traj,
-            log_period=LOG_PERIOD,
-        )
-        context = diagram.CreateDefaultContext()
-        place_object(plant, plant.GetMyMutableContextFromRoot(context), obj)
-        return observe_push(
-            diagram, plant, context, obj, pusher, action, settle_time, realtime_rate
-        )
-    raise RuntimeError(f"no reachable push in {max_tries} draws")

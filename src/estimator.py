@@ -9,7 +9,7 @@ where e_(t,i) is the measured minus predicted measurement (x, y, yaw at
 the push window's end; vx, vy, wz at the push segment's end; see
 observation.py), yaw wrapped, and q = e^T R^-1 e.
 
-The likelihood is a multivariate Student-t by default,
+The likelihood is a multivariate Student-t,
 
     P(D_t | eta_i) ~ (1 + q / nu)^(-(nu + 6) / 2),
 
@@ -53,8 +53,31 @@ CALIBRATED_R = np.array(
     ]
 )
 
-# Student-t degrees of freedom: heavy tails, chosen by the offline replay.
-DEFAULT_NU = 3.0
+
+def squared_mahalanobis(errors: np.ndarray, R_inv: np.ndarray) -> np.ndarray:
+    """Get q = e^T R^-1 e for each row of the (N, d) `errors`."""
+    return cast(np.ndarray, np.einsum("ni,ij,nj->n", errors, R_inv, errors))
+
+
+def gaussian_log_likelihood(q: np.ndarray) -> np.ndarray:
+    """Get the Gaussian log-likelihood of squared distances `q`, up to a
+    constant."""
+    return -0.5 * q
+
+
+def student_t_log_likelihood(q: np.ndarray, nu: float, dim: int) -> np.ndarray:
+    """Get the `dim`-dimensional Student-t log-likelihood of squared distances
+    `q`, up to a constant."""
+    return -0.5 * (nu + dim) * np.log1p(q / nu)
+
+
+def normalized_log_probs(log_weights: np.ndarray) -> np.ndarray:
+    """Scale unnormalized `log_weights` so their probabilities sum to 1."""
+    # Shifting by the max before exponentiating keeps the sum from underflowing.
+    peak = log_weights.max()
+    return cast(
+        np.ndarray, log_weights - (peak + np.log(np.exp(log_weights - peak).sum()))
+    )
 
 
 class GridBayesFilter:
@@ -64,12 +87,16 @@ class GridBayesFilter:
         self,
         grid: Sequence[Eta],
         model: DynamicsModel,
-        R: np.ndarray = CALIBRATED_R,
-        nu: float | None = DEFAULT_NU,
+        R: np.ndarray,
+        nu: float | None,
     ) -> None:
-        """Start uniform over `grid`.  `R` defaults to the calibrated
-        covariance; `nu` is the Student-t likelihood's degrees of freedom,
-        and None uses the Gaussian likelihood instead."""
+        """Start uniform over `grid`.  `R` is the prediction-error covariance;
+        `nu` is the Student-t likelihood's degrees of freedom, and None uses
+        the Gaussian likelihood instead.
+
+        Raises ValueError when `grid` is empty, `nu` is not positive or `R` is
+        not 6x6, and LinAlgError when `R` is not positive-definite.
+        """
         if not grid:
             raise ValueError("the hypothesis grid is empty")
         if nu is not None and nu <= 0.0:
@@ -83,8 +110,6 @@ class GridBayesFilter:
         self.nu = nu
         self.R_inv = np.linalg.inv(R)
         self.log_probs = np.full(len(self.grid), -np.log(len(self.grid)))
-        # The latest update's per-hypothesis errors, for diagnostics.
-        self.last_errors: np.ndarray | None = None
 
     @property
     def probs(self) -> np.ndarray:
@@ -95,17 +120,13 @@ class GridBayesFilter:
         """Reweight every hypothesis by its likelihood of `obs`."""
         predicted = self.model.predict(self.grid, obs)
         errors = planar_error(obs.measured(), predicted)
-        q = np.einsum("ni,ij,nj->n", errors, self.R_inv, errors)
-        if self.nu is None:
-            log_likelihood = -0.5 * q
-        else:
-            dim = errors.shape[1]
-            log_likelihood = -0.5 * (self.nu + dim) * np.log1p(q / self.nu)
-        log_probs = self.log_probs + log_likelihood
-        # Log-sum-exp normalization: shift by the max before exponentiating.
-        peak = log_probs.max()
-        self.log_probs = log_probs - (peak + np.log(np.exp(log_probs - peak).sum()))
-        self.last_errors = errors
+        q = squared_mahalanobis(errors, self.R_inv)
+        log_likelihood = (
+            gaussian_log_likelihood(q)
+            if self.nu is None
+            else student_t_log_likelihood(q, self.nu, errors.shape[1])
+        )
+        self.log_probs = normalized_log_probs(self.log_probs + log_likelihood)
 
     def map_eta(self) -> Eta:
         """Get the maximum-probability hypothesis (what MPC plans with)."""

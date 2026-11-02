@@ -18,9 +18,11 @@ The subsystems live in `src/`
 - `object.py` (the T-shaped block and table)
 - `pdcontroller.py` (gains and controller)
 - `params.py` (unknown parameters eta = (mu, rod x, rod y) and the hypothesis grid)
-- `observation.py` (recording a push from the truth sim: object start/end state, tip path)
+- `observation.py` (what a push produces: object start/end state, tip path, measurement math)
+- `recording.py` (running a push in the truth sim and recording it)
 - `dynamics.py` (Drake prediction model replaying a recorded tip path, plus a process-parallel wrapper)
 - `estimator.py` (grid Bayes filter: MAP, mean, entropy)
+- `cli.py` (the command-line options `main.py` and `scripts/calibrate_R.py` share)
 
 `main.py` assembles the scene, sets the per-run block pose, and holds the
 plant time step.

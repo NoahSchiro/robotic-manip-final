@@ -16,67 +16,94 @@ constant it prints into src/estimator.py.  From the repo root:
 import argparse
 import time
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 
-from src.dynamics import DrakePushModel
+from src.cli import (
+    add_shared_options,
+    finish_shared_options,
+    push_model_config,
+    truth_sim_config,
+)
+from src.dynamics import DrakePushModel, PushModelConfig
+from src.geometry import SurfacePart
 from src.iiwa import Pusher
 from src.object import Object, Rod
-from src.observation import planar_error, record_random_push
+from src.observation import planar_error
 from src.params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
+from src.recording import TruthSimConfig, record_random_push
 
 # Floor on each error's standard deviation (x, y, yaw, vx, vy, wz), in m,
 # rad, m/s, rad/s: keeps R invertible where the samples barely vary.
 FLOOR_STD = np.array([1e-4, 1e-4, 1e-3, 2e-4, 2e-4, 2e-3])
 LABELS = ("x", "y", "yaw", "vx", "vy", "wz")
 
-# Each worker process's own prediction model, built once by _init_worker.
-_model: DrakePushModel | None = None
 
+@dataclass(frozen=True)
+class SampleSetup:
+    """What every calibration sample shares."""
 
-def _init_worker(model_time_step: float) -> None:
-    """Build this worker process's prediction model."""
-    global _model
-    _model = DrakePushModel(time_step=model_time_step)
-
-
-def _parts() -> list[tuple[float, float, float, float]]:
-    """Get the object's footprint parts (the same for every eta)."""
-    return Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.2)).parts
+    grid: list[Eta]
+    spec: GridSpec
+    parts: list[SurfacePart]
+    rod_mass: float
+    push_density: float
+    truth: TruthSimConfig
+    model: PushModelConfig
 
 
 def calibration_sample(
-    seed: int,
-    grid: list[Eta],
-    spec: GridSpec,
-    time_step: float,
-    push_density: float,
-    settle_time: float,
+    seed: int, setup: SampleSetup
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Run one truth push at off-grid parameters, returning its prediction
     errors under the nearest grid hypothesis and under the true parameters
     (or None when no push was reachable)."""
-    assert _model is not None, "worker was not initialized"
     rng = np.random.default_rng(seed)
-    eta_true = sample_eta(rng, spec, _parts())
-    obj = eta_true.to_object(rng)
+    eta_true = sample_eta(rng, setup.spec, setup.parts)
+    obj = eta_true.to_object(rng, setup.rod_mass)
     try:
         obs = record_random_push(
-            rng,
-            obj,
-            Pusher(),
-            obj.surface_normals(push_density),
-            time_step,
-            settle_time,
+            rng, obj, Pusher(), obj.surface_normals(setup.push_density), setup.truth
         )
     except RuntimeError:
         return None
-    nearest, true = _model.predict([nearest_hypothesis(grid, eta_true), eta_true], obs)
+    nearest, true = DrakePushModel(setup.model).predict(
+        [nearest_hypothesis(setup.grid, eta_true), eta_true], obs
+    )
     measured = obs.measured()
     return planar_error(measured, nearest), planar_error(measured, true)
 
 
-def format_constant(R: np.ndarray, samples: int, args: argparse.Namespace) -> str:
+def second_moment_R(errors: np.ndarray, floor_std: np.ndarray) -> np.ndarray:
+    """Get the (N, 6) `errors`' second moment about zero plus a diagonal floor."""
+    return cast(np.ndarray, errors.T @ errors / len(errors) + np.diag(floor_std**2))
+
+
+def rounded_R(R: np.ndarray) -> np.ndarray:
+    """Round `R` to the four significant figures format_constant prints.
+
+    Raises LinAlgError when the rounded R is not positive-definite.
+    """
+    # The rounded constant is what the estimator will use, so check that one.
+    rounded = cast(np.ndarray, np.vectorize(lambda v: float(f"{v:.3e}"))(R))
+    np.linalg.cholesky(rounded)
+    return rounded
+
+
+def labeled(values: np.ndarray) -> str:
+    """Render one value per measurement component."""
+    return "  ".join(f"{label}={v:.2g}" for label, v in zip(LABELS, values))
+
+
+def format_constant(
+    R: np.ndarray,
+    samples: int,
+    seed: int,
+    truth: TruthSimConfig,
+    model: PushModelConfig,
+) -> str:
     """Render R as the CALIBRATED_R source block for src/estimator.py.  Four
     significant figures is well inside the estimate's sampling error."""
     rows = "\n".join(
@@ -84,64 +111,42 @@ def format_constant(R: np.ndarray, samples: int, args: argparse.Namespace) -> st
     )
     return (
         f"# Calibrated by scripts/calibrate_R.py: {samples} truth pushes, seed "
-        f"{args.seed},\n"
-        f"# truth timestep {args.time_step:g}, model timestep "
-        f"{args.model_time_step:g}, settle time {args.settle_time:g} s.\n"
+        f"{seed},\n"
+        f"# truth timestep {truth.time_step:g}, model timestep "
+        f"{model.time_step:g}, settle time {truth.settle_time:g} s.\n"
         f"CALIBRATED_R = np.array(\n    [\n{rows}\n    ]\n)"
     )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    add_shared_options(parser)
     parser.add_argument("--samples", type=int, default=48, help="truth pushes")
-    parser.add_argument("--workers", type=int, default=None, help="processes")
     parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
-    parser.add_argument(
-        "--time-step", type=float, default=1e-4, help="truth sim timestep"
-    )
-    parser.add_argument(
-        "--model-time-step",
-        type=float,
-        default=2e-3,
-        help="prediction model timestep",
-    )
-    parser.add_argument(
-        "--push-density",
-        type=float,
-        default=2.0,
-        help="push-contact density: surface normals per cm of object outline",
-    )
-    parser.add_argument(
-        "--settle-time",
-        type=float,
-        default=0.1,
-        help="measurement delay after each push segment ends (s)",
-    )
     args = parser.parse_args()
-    args.push_density *= 100  # count/cm -> count/m
+    finish_shared_options(args)
     return args
 
 
 def main(args: argparse.Namespace) -> None:
     spec = GridSpec()
-    grid = make_grid(spec, _parts())
+    # Only the footprint is needed, and it's the same for every eta.
+    parts = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, args.rod_mass)).parts
+    truth = truth_sim_config(args)
+    model = push_model_config(args)
+    setup = SampleSetup(
+        grid=make_grid(spec, parts),
+        spec=spec,
+        parts=parts,
+        rod_mass=args.rod_mass,
+        push_density=args.push_density,
+        truth=truth,
+        model=model,
+    )
     seeds = np.random.default_rng(args.seed).integers(2**32, size=args.samples)
     started = time.time()
-    with ProcessPoolExecutor(
-        args.workers, initializer=_init_worker, initargs=(args.model_time_step,)
-    ) as pool:
-        futures = [
-            pool.submit(
-                calibration_sample,
-                int(seed),
-                grid,
-                spec,
-                args.time_step,
-                args.push_density,
-                args.settle_time,
-            )
-            for seed in seeds
-        ]
+    with ProcessPoolExecutor(args.workers) as pool:
+        futures = [pool.submit(calibration_sample, int(s), setup) for s in seeds]
         results = [r for r in (f.result() for f in futures) if r is not None]
     if not results:
         raise SystemExit("no sample found a reachable push")
@@ -149,26 +154,17 @@ def main(args: argparse.Namespace) -> None:
     true = np.array([e for _, e in results])
     print(
         f"{len(results)}/{args.samples} samples in {time.time() - started:.0f} s "
-        f"({len(grid)} hypotheses)"
+        f"({len(setup.grid)} hypotheses)"
     )
     for name, errors in (("nearest grid", nearest), ("true eta", true)):
         rms = np.sqrt((errors**2).mean(axis=0))
-        print(
-            f"rms error, {name:>12}: "
-            + "  ".join(f"{label}={v:.2g}" for label, v in zip(LABELS, rms))
-        )
+        print(f"rms error, {name:>12}: {labeled(rms)}")
 
-    R = nearest.T @ nearest / len(nearest) + np.diag(FLOOR_STD**2)
-    print(
-        "R std devs: "
-        + "  ".join(f"{label}={v:.2g}" for label, v in zip(LABELS, np.sqrt(np.diag(R))))
-    )
-    # The rounded constant is what the estimator will use, so check it.
-    R = np.vectorize(lambda v: float(f"{v:.3e}"))(R)
-    np.linalg.cholesky(R)  # positive-definite, or this raises
+    R = second_moment_R(nearest, FLOOR_STD)
+    print(f"R std devs: {labeled(np.sqrt(np.diag(R)))}")
     print(
         "\nPaste into src/estimator.py, replacing CALIBRATED_R:\n\n"
-        + format_constant(R, len(results), args)
+        + format_constant(rounded_R(R), len(results), args.seed, truth, model)
     )
 
 
