@@ -18,7 +18,13 @@ from src.cli import (
 from src.dynamics import ParallelPushModel
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.geometry import SurfaceNormal
-from src.iiwa import Q_HOME, Pusher, build_iiwa_pusher_plant, make_push_trajectory
+from src.iiwa import (
+    Q_HOME,
+    Pusher,
+    build_iiwa_pusher_plant,
+    clear_sites,
+    make_push_trajectory,
+)
 from src.object import Object, Rod, Table
 from src.observation import PushObservation
 from src.params import Eta, GridSpec, make_grid
@@ -192,7 +198,12 @@ def simulate(args: argparse.Namespace) -> None:
                 meshcat=sim.meshcat,
                 rng=rng,
                 obj=obj,
-                push_sites=obj.surface_normals(args.push_density),
+                push_sites=clear_sites(
+                    obj.parts,
+                    obj.surface_normals(args.push_density),
+                    pusher.radius,
+                    args.site_clearance,
+                ),
             )
         if not sim.headless:
             input("Press Enter to quit.")
@@ -258,6 +269,7 @@ def main(args: argparse.Namespace) -> None:
             setup=make_sample_setup(
                 rod_mass=args.rod_mass,
                 push_density=args.push_density,
+                site_clearance=args.site_clearance,
                 truth=truth_sim_config(args),
                 model=push_model_config(args),
             ),

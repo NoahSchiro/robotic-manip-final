@@ -38,7 +38,9 @@ uv run python main.py simulate --headless --estimate --pushes 5
 ```
 
 The pushes run one after another in one continuous simulation: nothing resets
-between them, and the sim's clock stops while the filter updates.
+between them, and the sim's clock stops while the filter updates.  They draw
+from the push library minus the sites where the lowered stick would land on
+the block (`--site-clearance`), at the T's inner corners.
 
 The default grid is 9 values each of mu, rod x and rod y, keeping only rod
 positions inside the T (405 hypotheses); change it via `params.GridSpec`.

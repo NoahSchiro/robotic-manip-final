@@ -32,6 +32,12 @@ def add_shared_options(parser: argparse.ArgumentParser) -> None:
         help="push-contact density: surface normals per cm of object outline",
     )
     parser.add_argument(
+        "--site-clearance",
+        type=float,
+        default=1e-3,
+        help="gap the lowered stick must leave to the block at a push site (m)",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=os.cpu_count() or 1,
@@ -69,6 +75,8 @@ def finish_shared_options(args: argparse.Namespace) -> None:
         raise SystemExit("--rod-mass must be positive")
     if args.push_density <= 0.0:
         raise SystemExit("--push-density must be positive")
+    if args.site_clearance < 0.0:
+        raise SystemExit("--site-clearance must be nonnegative")
     if args.workers < 1:
         raise SystemExit("--workers must be at least 1")
     if args.log_period <= 0.0:

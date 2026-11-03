@@ -22,7 +22,7 @@ import numpy as np
 
 from .dynamics import DrakePushModel, PushModelConfig
 from .geometry import SurfacePart
-from .iiwa import Pusher
+from .iiwa import Pusher, clear_sites
 from .object import Object, Rod
 from .observation import planar_error
 from .params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
@@ -43,6 +43,7 @@ class SampleSetup:
     parts: list[SurfacePart]
     rod_mass: float
     push_density: float
+    site_clearance: float
     truth: TruthSimConfig
     model: PushModelConfig
 
@@ -50,6 +51,7 @@ class SampleSetup:
 def make_sample_setup(
     rod_mass: float,
     push_density: float,
+    site_clearance: float,
     truth: TruthSimConfig,
     model: PushModelConfig,
 ) -> SampleSetup:
@@ -63,6 +65,7 @@ def make_sample_setup(
         parts=parts,
         rod_mass=rod_mass,
         push_density=push_density,
+        site_clearance=site_clearance,
         truth=truth,
         model=model,
     )
@@ -77,10 +80,15 @@ def calibration_sample(
     rng = np.random.default_rng(seed)
     eta_true = sample_eta(rng, setup.spec, setup.parts)
     obj = eta_true.to_object(rng, setup.rod_mass)
+    pusher = Pusher()
+    sites = clear_sites(
+        obj.parts,
+        obj.surface_normals(setup.push_density),
+        pusher.radius,
+        setup.site_clearance,
+    )
     try:
-        obs = TruthSim(obj, Pusher(), setup.truth).record_random_push(
-            rng, obj, obj.surface_normals(setup.push_density)
-        )
+        obs = TruthSim(obj, pusher, setup.truth).record_random_push(rng, obj, sites)
     except NoReachablePush:
         return None
     nearest, true = DrakePushModel(setup.model).predict(
@@ -115,6 +123,7 @@ def format_constant(
     R: np.ndarray,
     samples: int,
     seed: int,
+    site_clearance: float,
     truth: TruthSimConfig,
     model: PushModelConfig,
 ) -> str:
@@ -126,7 +135,8 @@ def format_constant(
     return (
         f"# Calibrated by main.py calibrate: {samples} truth pushes, seed {seed},\n"
         f"# truth timestep {truth.time_step:g}, model timestep "
-        f"{model.time_step:g}, settle time {truth.settle_time:g} s.\n"
+        f"{model.time_step:g}, settle time {truth.settle_time:g} s,\n"
+        f"# site clearance {site_clearance:g} m.\n"
         f"CALIBRATED_R = np.array(\n    [\n{rows}\n    ]\n)"
     )
 
@@ -158,5 +168,12 @@ def calibrate(samples: int, seed: int, workers: int, setup: SampleSetup) -> None
     print(f"R std devs: {labeled(np.sqrt(np.diag(R)))}")
     print(
         "\nPaste into src/estimator.py, replacing CALIBRATED_R:\n\n"
-        + format_constant(rounded_R(R), len(results), seed, setup.truth, setup.model)
+        + format_constant(
+            rounded_R(R),
+            len(results),
+            seed,
+            setup.site_clearance,
+            setup.truth,
+            setup.model,
+        )
     )

@@ -17,6 +17,7 @@ from pydrake.all import (
 
 from . import ASSET_DIR
 from .action import Action
+from .geometry import SurfaceNormal, SurfacePart, distance_to_footprint
 from .object import Object
 
 # Home position for the iiwa
@@ -177,6 +178,26 @@ def hover_tip_pose(obj: Object) -> RigidTransform:
     return RigidTransform(
         R_down, np.array([x_block, y_block, obj.height + hover_clearance])
     )
+
+
+def clear_sites(
+    parts: list[SurfacePart],
+    sites: list[SurfaceNormal],
+    stick_radius: float,
+    clearance: float,
+) -> list[SurfaceNormal]:
+    """Keep the sites where a stick of `stick_radius`, lowered to its standoff
+    point, clears the `parts`' footprint by `clearance`."""
+    # At the T's inner corners the standoff sits within a stick radius of the
+    # other part, so the stick would come down on top of the block.
+    return [
+        site
+        for site in sites
+        if distance_to_footprint(
+            parts, *(site.position[:2] - STANDOFF * site.normal[:2])
+        )
+        > stick_radius + clearance
+    ]
 
 
 def push_maneuver(
