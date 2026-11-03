@@ -22,7 +22,6 @@ from pydrake.geometry import Meshcat
 from .action import Action, sample_action
 from .geometry import SurfaceNormal
 from .iiwa import (
-    MOVE_TIME,
     Q_HOME,
     Pusher,
     build_iiwa_pusher_plant,
@@ -32,6 +31,7 @@ from .iiwa import (
     make_push_trajectory,
     push_maneuver,
     solve_tip_ik,
+    transit_time,
 )
 from .object import Object, Table
 from .observation import ObjectState, PushObservation
@@ -179,8 +179,13 @@ class TruthSim:
         """Run `action`, planned as `q_traj` by plan_push, leaving the arm parked
         at the trajectory's end and the sim's clock stopped there."""
         now = self.context.get_time()
-        commanded = chain_from_parked(self.q_parked, q_traj, now)
-        window = push_window(obj, action, self.settle_time, now + MOVE_TIME)
+        transit = transit_time(
+            self.q_parked,
+            q_traj.value(0.0).ravel(),
+            self.ik_plant.GetVelocityUpperLimits(),
+        )
+        commanded = chain_from_parked(self.q_parked, q_traj, now, transit)
+        window = push_window(obj, action, self.settle_time, now + transit)
         self.reference.UpdateTrajectory(commanded)
         # Wall time since the last push isn't the sim falling behind: left
         # counted, the pacer would race through it instead of tracking real time.

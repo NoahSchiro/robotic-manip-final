@@ -28,6 +28,9 @@ The subsystems live in `src/`
 `main.py` assembles the scene, sets the per-run block pose, and holds the
 plant time step.
 
+`uv run pytest` runs the tests.  They cover the math and geometry without
+running a simulation, so they take seconds; they can't catch physics problems.
+
 ## Parameter estimation
 
 Drake has no Windows wheels, so on Windows run everything under WSL.

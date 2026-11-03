@@ -220,13 +220,26 @@ def push_maneuver(
         tool_down, contact + action.velocity * action.time * normal
     )
     push_time = (STANDOFF + action.velocity * action.time) / action.velocity
+    # Back off only far enough to release the contact: the push has usually
+    # turned the block, so retracing it all can drag the T's other part along.
+    backed_off = RigidTransform(tool_down, push_end.translation() - STANDOFF * normal)
+    raised = RigidTransform(
+        tool_down,
+        np.array(
+            [
+                backed_off.translation()[0],
+                backed_off.translation()[1],
+                hover.translation()[2],
+            ]
+        ),
+    )
 
     return [
         (over, MOVE_TIME),  # move over the standoff point
         (lowered, MOVE_TIME),  # lower to the contact height
         (push_end, push_time),  # push at the commanded speed and contact time
-        (lowered, push_time),  # back off the way it came
-        (over, MOVE_TIME),  # raise
+        (backed_off, STANDOFF / action.velocity),  # back off at the same speed
+        (raised, MOVE_TIME),  # raise
         (hover, MOVE_TIME),  # return to the hover
     ]
 
@@ -263,15 +276,28 @@ def hold_trajectory(q: np.ndarray) -> PiecewisePolynomial:
     )
 
 
+def transit_time(
+    q_from: np.ndarray, q_to: np.ndarray, velocity_limits: np.ndarray
+) -> float:
+    """Get how long the arm takes between postures: MOVE_TIME, or longer when
+    that would run a joint past `velocity_limits`."""
+    # The IK can land on a far-off arm shape for a nearby tip pose, a move
+    # MOVE_TIME can't cover at any speed the arm is rated for.
+    return max(MOVE_TIME, float((np.abs(q_to - q_from) / velocity_limits).max()))
+
+
 def chain_from_parked(
-    q_parked: np.ndarray, q_traj: PiecewisePolynomial, start_time: float
+    q_parked: np.ndarray,
+    q_traj: PiecewisePolynomial,
+    start_time: float,
+    transit: float,
 ) -> PiecewisePolynomial:
     """Put `q_traj`, planned from time 0, on a running sim's clock: from
     `start_time` the arm moves from `q_parked` to `q_traj`'s start over
-    MOVE_TIME, then follows `q_traj`."""
+    `transit` seconds, then follows `q_traj`."""
     q_start = q_traj.value(0.0).ravel()
     chained = PiecewisePolynomial.FirstOrderHold(
-        [start_time, start_time + MOVE_TIME],
+        [start_time, start_time + transit],
         np.column_stack([q_parked, q_start]).tolist(),
     )
     shifted = copy(q_traj)
