@@ -33,7 +33,7 @@ from src.iiwa import Pusher
 from src.object import Object, Rod
 from src.observation import planar_error
 from src.params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
-from src.recording import TruthSimConfig, record_random_push
+from src.recording import NoReachablePush, TruthSim, TruthSimConfig
 
 # Floor on each error's standard deviation (x, y, yaw, vx, vy, wz), in m,
 # rad, m/s, rad/s: keeps R invertible where the samples barely vary.
@@ -64,10 +64,10 @@ def calibration_sample(
     eta_true = sample_eta(rng, setup.spec, setup.parts)
     obj = eta_true.to_object(rng, setup.rod_mass)
     try:
-        obs = record_random_push(
-            rng, obj, Pusher(), obj.surface_normals(setup.push_density), setup.truth
+        obs = TruthSim(obj, Pusher(), setup.truth).record_random_push(
+            rng, obj, obj.surface_normals(setup.push_density)
         )
-    except RuntimeError:
+    except NoReachablePush:
         return None
     nearest, true = DrakePushModel(setup.model).predict(
         [nearest_hypothesis(setup.grid, eta_true), eta_true], obs

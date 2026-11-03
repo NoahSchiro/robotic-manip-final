@@ -30,6 +30,7 @@ from src.object import Object, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
 
 _STATE_LOGGER = "state_logger"
+_ARM_REFERENCE = "arm_reference"
 
 
 class Sim:
@@ -64,8 +65,9 @@ def build_diagram(
 ) -> tuple[Diagram, MultibodyPlant]:
     """Assemble the scene (arm with stick, table, block) plus the arm controller.
 
-    With `log_period`, the plant state is also logged at that period, in a
-    logger state_logger finds."""
+    With `q_ref`, the arm follows it from a source arm_reference finds.  With
+    `log_period`, the plant state is also logged at that period, in a logger
+    state_logger finds."""
     builder = DiagramBuilder()
     plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
     parser = Parser(plant)
@@ -93,6 +95,7 @@ def build_diagram(
         reference = builder.AddSystem(
             TrajectorySource(q_ref, output_derivative_order=1)
         )
+        reference.set_name(_ARM_REFERENCE)
     builder.Connect(reference.get_output_port(), controller.get_input_port(1))
     builder.Connect(controller.get_output_port(), plant.get_actuation_input_port())
 
@@ -114,6 +117,16 @@ def state_logger(diagram: Diagram) -> VectorLogSink:
     logger = diagram.GetSubsystemByName(_STATE_LOGGER)
     assert isinstance(logger, VectorLogSink)
     return logger
+
+
+def arm_reference(diagram: Diagram) -> TrajectorySource:
+    """Get the arm's reference source of a diagram built with `q_ref`.
+
+    Raises RuntimeError when `diagram` was built without one.
+    """
+    reference = diagram.GetSubsystemByName(_ARM_REFERENCE)
+    assert isinstance(reference, TrajectorySource)
+    return reference
 
 
 def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidBody:

@@ -5,6 +5,7 @@ import time
 
 import numpy as np
 from pydrake.all import Simulator
+from pydrake.geometry import Meshcat
 
 from src.action import Action
 from src.cli import (
@@ -16,11 +17,11 @@ from src.cli import (
 from src.dynamics import ParallelPushModel
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.geometry import SurfaceNormal
-from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
+from src.iiwa import Q_HOME, Pusher, build_iiwa_pusher_plant, make_push_trajectory
 from src.object import Object, Rod, Table
 from src.observation import PushObservation
 from src.params import Eta, GridSpec, make_grid
-from src.recording import TruthSimConfig, record_random_push
+from src.recording import NoReachablePush, TruthSim
 from src.scene import (
     Sim,
     build_diagram,
@@ -114,37 +115,34 @@ def run_estimation(
     belief: GridBayesFilter,
     eta_true: Eta,
     pushes: int,
-    truth: TruthSimConfig,
-    sim: Sim,
+    truth_sim: TruthSim,
+    meshcat: Meshcat | None,
     rng: np.random.Generator,
     obj: Object,
-    pusher: Pusher,
     push_sites: list[SurfaceNormal],
 ) -> None:
-    """Update `belief` after each of `pushes` random library pushes, moving
-    `obj` to where each push leaves it so the next starts from there."""
+    """Update `belief` after each of `pushes` random library pushes, run one
+    after another in `truth_sim`, moving `obj` to where each push leaves it."""
     print(
         f"estimating eta = (mu, rod x, rod y), true {eta_true}, over "
         f"{len(belief.grid)} hypotheses"
     )
     print(f"push 0: entropy {belief.entropy():.3f}")
     for k in range(1, pushes + 1):
-        if sim.meshcat is not None:
-            show_object_goal(sim.meshcat, obj)
-            show_push_sites(sim.meshcat, obj, push_sites)
-        obs = record_random_push(
-            rng,
-            obj,
-            pusher,
-            push_sites,
-            truth,
-            meshcat=sim.meshcat,
-            realtime_rate=0.0 if sim.headless else 1.0,
-        )
+        if meshcat is not None:
+            show_object_goal(meshcat, obj)
+            show_push_sites(meshcat, obj, push_sites)
+        try:
+            obs = truth_sim.record_random_push(rng, obj, push_sites)
+        except NoReachablePush as unreachable:
+            # Random pushes can walk the block out of reach; the belief so far
+            # is still good.
+            print(f"stopped after {k - 1} pushes: {unreachable}")
+            return
         started = time.time()
         belief.update(obs)
         print(format_push_report(k, obs, time.time() - started, belief, eta_true))
-        obj.pose = obs.end_pose()
+        obj.pose = obs.final_pose()
 
 
 def main(args: argparse.Namespace) -> None:
@@ -165,11 +163,16 @@ def main(args: argparse.Namespace) -> None:
                 belief=GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None),
                 eta_true=Eta(args.mu, args.rod_x, args.rod_y),
                 pushes=args.pushes,
-                truth=truth_sim_config(args),
-                sim=sim,
+                truth_sim=TruthSim(
+                    obj,
+                    pusher,
+                    truth_sim_config(args),
+                    meshcat=sim.meshcat,
+                    realtime_rate=0.0 if sim.headless else 1.0,
+                ),
+                meshcat=sim.meshcat,
                 rng=rng,
                 obj=obj,
-                pusher=pusher,
                 push_sites=obj.surface_normals(args.push_density),
             )
         if not sim.headless:
@@ -178,7 +181,9 @@ def main(args: argparse.Namespace) -> None:
 
     push_sites = obj.surface_normals(args.push_density)
     action = demo_action(obj, push_sites)
-    q_traj = make_push_trajectory(build_iiwa_pusher_plant(pusher), pusher, obj, action)
+    q_traj = make_push_trajectory(
+        build_iiwa_pusher_plant(pusher), pusher, obj, action, Q_HOME
+    )
     diagram, plant = build_diagram(
         args.time_step, obj, Table(args.mu), pusher, meshcat=sim.meshcat, q_ref=q_traj
     )

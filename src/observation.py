@@ -1,5 +1,6 @@
 """What one push produces for the estimator: the object's state before and
-after, plus the pusher tip's measured path in between.
+after, plus the pusher tip's measured path in between.  Also where the push
+leaves the object, for chaining pushes.
 
 The push window opens when the tip has lowered to its standoff point
 (before contact) and closes `settle_time` after the push segment ends.
@@ -48,12 +49,15 @@ def measurement(push_end: np.ndarray, end: np.ndarray) -> np.ndarray:
 class PushObservation:
     """One executed push: the object's state at the window's start, at the
     push segment's end, and at the window's end, plus the tip's world-frame
-    path over the window, times starting at 0."""
+    path over the window, times starting at 0.  `final` is the object's
+    state at the push trajectory's end, the arm parked back at its hover:
+    where the push leaves it."""
 
     action: Action
     start: ObjectState
     push_end: ObjectState
     end: ObjectState
+    final: ObjectState
     push_end_time: float  # s, from the window's start
     tip_times: np.ndarray  # (n,) s, from the window's start
     tip_positions: np.ndarray  # (3, n) world frame
@@ -69,9 +73,9 @@ class PushObservation:
         velocity at the push segment's end."""
         return measurement(self.push_end.planar(), self.end.planar())
 
-    def end_pose(self) -> tuple[float, float, float]:
-        """Get the object's planar pose (x, y, yaw) at the window's end."""
-        x, y, yaw = self.end.planar()[:3]
+    def final_pose(self) -> tuple[float, float, float]:
+        """Get the object's planar pose (x, y, yaw) where the push leaves it."""
+        x, y, yaw = self.final.planar()[:3]
         return float(x), float(y), float(yaw)
 
 

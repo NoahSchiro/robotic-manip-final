@@ -1,6 +1,7 @@
 """The KUKA iiwa14 plus the stick pusher welded to its flange, with the IK
 and trajectory machinery that moves the stick around the block."""
 
+from copy import copy
 from pathlib import Path
 
 import numpy as np
@@ -210,14 +211,19 @@ def push_maneuver(
 
 
 def make_push_trajectory(
-    ik_plant: MultibodyPlant, pusher: Pusher, obj: Object, action: Action
+    ik_plant: MultibodyPlant,
+    pusher: Pusher,
+    obj: Object,
+    action: Action,
+    q_seed: np.ndarray,
 ) -> PiecewisePolynomial:
     """Plan the joint-space trajectory that starts parked at the block's hover
-    pose, executes `push_maneuver` for `action`, and parks there for HOLD_TIME."""
+    pose, executes `push_maneuver` for `action`, and parks there for HOLD_TIME.
+    The IK starts from `q_seed`, so the arm stays close to that posture."""
     hover = hover_tip_pose(obj)
     maneuver = push_maneuver(obj, action, hover)
 
-    q_samples = [solve_tip_ik(ik_plant, pusher, hover, Q_HOME)]
+    q_samples = [solve_tip_ik(ik_plant, pusher, hover, q_seed)]
     for pose, _duration in maneuver:
         q_samples.append(solve_tip_ik(ik_plant, pusher, pose, q_samples[-1]))
 
@@ -227,3 +233,27 @@ def make_push_trajectory(
     return PiecewisePolynomial.FirstOrderHold(
         [float(t) for t in breaks], samples.tolist()
     )
+
+
+def hold_trajectory(q: np.ndarray) -> PiecewisePolynomial:
+    """Get the trajectory that holds the arm still at `q`."""
+    return PiecewisePolynomial.FirstOrderHold(
+        [0.0, 1.0], np.column_stack([q, q]).tolist()
+    )
+
+
+def chain_from_parked(
+    q_parked: np.ndarray, q_traj: PiecewisePolynomial, start_time: float
+) -> PiecewisePolynomial:
+    """Put `q_traj`, planned from time 0, on a running sim's clock: from
+    `start_time` the arm moves from `q_parked` to `q_traj`'s start over
+    MOVE_TIME, then follows `q_traj`."""
+    q_start = q_traj.value(0.0).ravel()
+    chained = PiecewisePolynomial.FirstOrderHold(
+        [start_time, start_time + MOVE_TIME],
+        np.column_stack([q_parked, q_start]).tolist(),
+    )
+    shifted = copy(q_traj)
+    shifted.shiftRight(chained.end_time())
+    chained.ConcatenateInTime(shifted)
+    return chained

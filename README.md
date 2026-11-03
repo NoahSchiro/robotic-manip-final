@@ -19,7 +19,7 @@ The subsystems live in `src/`
 - `pdcontroller.py` (gains and controller)
 - `params.py` (unknown parameters eta = (mu, rod x, rod y) and the hypothesis grid)
 - `observation.py` (what a push produces: object start/end state, tip path, measurement math)
-- `recording.py` (running a push in the truth sim and recording it)
+- `recording.py` (the truth sim, one continuous simulation: running pushes and recording them)
 - `dynamics.py` (Drake prediction model replaying a recorded tip path, plus a process-parallel wrapper)
 - `estimator.py` (grid Bayes filter: MAP, mean, entropy)
 - `cli.py` (the command-line options `main.py` and `scripts/calibrate_R.py` share)
@@ -35,6 +35,9 @@ Drake has no Windows wheels, so on Windows run everything under WSL.
 # Random pushes with a Bayes update after each (true eta from --mu/--rod-x/--rod-y)
 uv run python main.py --headless --estimate --pushes 5
 ```
+
+The pushes run one after another in one continuous simulation: nothing resets
+between them, and the sim's clock stops while the filter updates.
 
 The default grid is 9 values each of mu, rod x and rod y, keeping only rod
 positions inside the T (405 hypotheses); change it via `params.GridSpec`.
