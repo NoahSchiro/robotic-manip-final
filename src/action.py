@@ -5,6 +5,8 @@ Selects a surface normal, a speed and time it can contact the object.
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from .geometry import SurfaceNormal
 
 
@@ -25,3 +27,18 @@ class Action:
             raise ValueError(f"velocity must be positive, got {self.velocity}")
         if self.time <= 0.0:
             raise ValueError(f"time must be positive, got {self.time}")
+
+
+def sample_action(
+    rng: np.random.Generator,
+    sites: list[SurfaceNormal],
+    speeds: tuple[float, ...] = (0.05, 0.1),
+    times: tuple[float, ...] = (0.2, 0.4),
+) -> Action:
+    """Draw a push uniformly from the library: a contact site, a commanded
+    speed, and a contact time."""
+    return Action(
+        contact=sites[rng.integers(len(sites))],
+        velocity=float(rng.choice(speeds)),
+        time=float(rng.choice(times)),
+    )
