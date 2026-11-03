@@ -18,10 +18,12 @@ exp(-q / 2) (nu=None).  Under a Gaussian, a single badly mispredicted push
 costs the correct hypothesis hundreds of nats and a wrong one takes over
 with near certainty; the t's log-penalty grows only logarithmically in q,
 so no single push can eliminate a hypothesis.  Measuring velocity at the
-push segment's end removed the outliers seen so far, so the t is a safety
-net: in an offline replay of 19 held-out trials it still took MAPs within
-one grid step of the truth from 89% to 100% and confidently wrong final
-beliefs from 5% to 0%.
+push segment's end removed most outliers, though rare ones remain, so the t
+is a safety net: in an offline replay of 19 held-out trials it beat the
+Gaussian on MAPs within one grid step of the truth (100% against 89%) and on
+confidently wrong final beliefs (0% against 5%), a margin of one or two
+trials.  Live runs since end within one grid step in 17 or 18 of 19, with up
+to one confidently wrong.
 
 Probabilities are kept as logs so long push sequences don't underflow.  A
 wait (no push) yields no observation, so it makes no update.

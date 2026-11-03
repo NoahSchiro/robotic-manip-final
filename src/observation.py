@@ -12,7 +12,7 @@ the stick still pushes steadily: by the window's end the arm is reversing,
 and its PD lag makes the stick tap the block, so a velocity read then lands
 mid-collision and is noise.  In an offline replay of 19 held-out trials,
 this split removed every prediction outlier and gave the best estimates of
-the schemes compared.
+the schemes compared; rare outliers have turned up in live runs since.
 """
 
 from dataclasses import dataclass
