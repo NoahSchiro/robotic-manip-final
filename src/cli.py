@@ -1,7 +1,7 @@
-"""The command-line options every estimation entry point shares.
+"""The command-line options main.py's subcommands share.
 
-The defaults live only here: main.py must run with the settings R was
-calibrated under, so the two entry points must never disagree.
+The defaults live only here: simulate must run with the settings R was
+calibrated under, so the two subcommands must never disagree.
 """
 
 import argparse

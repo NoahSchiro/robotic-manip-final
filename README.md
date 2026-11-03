@@ -3,11 +3,11 @@
 ## Running the simulation
 
 ```sh
-uv run python main.py
-HEADLESS=1 uv run python main.py
+uv run python main.py simulate
+uv run python main.py simulate --headless
 ```
 
-There is a number of options. Run `uv run main.py --help` to see them.
+There is a number of options. Run `uv run main.py simulate --help` to see them.
 
 `main.py` builds a KUKA iiwa14 welded to a table, with a T-shaped block
 resting on the table in front of it and a stick pusher welded to the
@@ -22,7 +22,8 @@ The subsystems live in `src/`
 - `recording.py` (the truth sim, one continuous simulation: running pushes and recording them)
 - `dynamics.py` (Drake prediction model replaying a recorded tip path, plus a process-parallel wrapper)
 - `estimator.py` (grid Bayes filter: MAP, mean, entropy)
-- `cli.py` (the command-line options `main.py` and `scripts/calibrate_R.py` share)
+- `calibration.py` (measuring the prediction-error covariance R)
+- `cli.py` (the command-line options `main.py`'s subcommands share)
 
 `main.py` assembles the scene, sets the per-run block pose, and holds the
 plant time step.
@@ -33,7 +34,7 @@ Drake has no Windows wheels, so on Windows run everything under WSL.
 
 ```sh
 # Random pushes with a Bayes update after each (true eta from --mu/--rod-x/--rod-y)
-uv run python main.py --headless --estimate --pushes 5
+uv run python main.py simulate --headless --estimate --pushes 5
 ```
 
 The pushes run one after another in one continuous simulation: nothing resets
@@ -44,7 +45,7 @@ positions inside the T (405 hypotheses); change it via `params.GridSpec`.
 The prediction-error covariance R is calibrated and stored in the code as
 `estimator.CALIBRATED_R`, so no setup is needed.  After changing the
 prediction model, the measurement, or the grid, rerun
-`uv run python -m scripts.calibrate_R` (~2 min) and paste the constant it
+`uv run python main.py calibrate` (~4 min) and paste the constant it
 prints into `src/estimator.py`.
 The likelihood is a Student-t (`--nu 3` by default), which keeps one badly
 mispredicted push from eliminating the right hypothesis; `--nu 0` uses the

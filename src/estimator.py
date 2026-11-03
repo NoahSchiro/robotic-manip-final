@@ -38,9 +38,9 @@ from .params import Eta
 
 # Prediction-error covariance R of the measurement (x, y, yaw, vx, vy, wz),
 # in m, rad, m/s, rad/s.  It describes the prediction model's errors, so
-# rerun scripts/calibrate_R.py and paste its output here after changing the
+# rerun main.py calibrate and paste its output here after changing the
 # prediction model, the measurement, or the grid.
-# Calibrated by scripts/calibrate_R.py: 48 truth pushes, seed 0,
+# Calibrated by main.py calibrate: 48 truth pushes, seed 0,
 # truth timestep 0.0001, model timestep 0.002, settle time 0.1 s.
 CALIBRATED_R = np.array(
     [

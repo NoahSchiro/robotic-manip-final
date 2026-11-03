@@ -8,6 +8,7 @@ from pydrake.all import Simulator
 from pydrake.geometry import Meshcat
 
 from src.action import Action
+from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
     finish_shared_options,
@@ -32,40 +33,57 @@ from src.scene import (
 
 
 def parse_args() -> argparse.Namespace:
+    shared = argparse.ArgumentParser(add_help=False)
+    add_shared_options(shared)
+
     parser = argparse.ArgumentParser()
-    add_shared_options(parser)
-    parser.add_argument(
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    calibrate_parser = commands.add_parser(
+        "calibrate",
+        parents=[shared],
+        help="calibrate the estimator's prediction-error covariance R",
+    )
+    calibrate_parser.add_argument(
+        "--samples", type=int, default=48, help="truth pushes"
+    )
+    calibrate_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+
+    simulate_parser = commands.add_parser(
+        "simulate", parents=[shared], help="run the arm and block simulation"
+    )
+    simulate_parser.add_argument(
         "--headless", action="store_true", help="Run without visualization"
     )
-    parser.add_argument("--seed", type=int, default=538, help="PRNG seed")
-    parser.add_argument(
+    simulate_parser.add_argument("--seed", type=int, default=538, help="PRNG seed")
+    simulate_parser.add_argument(
         "--mu",
         type=float,
         default=0.3,
         help="object-table friction coefficient (nonnegative)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--rod-x",
         type=float,
         default=0.05,
         help="rod x in the object body frame (m)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--rod-y",
         type=float,
         default=0,
         help="rod y in the object body frame (m)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--estimate",
         action="store_true",
         help="run random pushes and estimate (mu, rod x, rod y) after each",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--pushes", type=int, default=5, help="pushes to run with --estimate"
     )
     # 3 has heavy tails: chosen by an offline replay (see src/estimator.py).
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--nu",
         type=float,
         default=3.0,
@@ -74,12 +92,13 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
 
     finish_shared_options(args)
-    if args.mu < 0.0:
-        raise SystemExit("--mu must be nonnegative")
-    if args.pushes < 1:
-        raise SystemExit("--pushes must be at least 1")
-    if args.nu < 0.0:
-        raise SystemExit("--nu must be nonnegative")
+    if args.command == "simulate":
+        if args.mu < 0.0:
+            raise SystemExit("--mu must be nonnegative")
+        if args.pushes < 1:
+            raise SystemExit("--pushes must be at least 1")
+        if args.nu < 0.0:
+            raise SystemExit("--nu must be nonnegative")
 
     return args
 
@@ -145,7 +164,7 @@ def run_estimation(
         obj.pose = obs.final_pose()
 
 
-def main(args: argparse.Namespace) -> None:
+def simulate(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
     rng = np.random.default_rng(seed=args.seed)
 
@@ -228,6 +247,23 @@ def main(args: argparse.Namespace) -> None:
     # Keep meshcat open until user wants to quit
     if not sim.headless:
         input("Press Enter to quit.")
+
+
+def main(args: argparse.Namespace) -> None:
+    if args.command == "calibrate":
+        calibrate(
+            samples=args.samples,
+            seed=args.seed,
+            workers=args.workers,
+            setup=make_sample_setup(
+                rod_mass=args.rod_mass,
+                push_density=args.push_density,
+                truth=truth_sim_config(args),
+                model=push_model_config(args),
+            ),
+        )
+    else:
+        simulate(args)
 
 
 if __name__ == "__main__":
