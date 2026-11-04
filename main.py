@@ -40,13 +40,16 @@ from src.scene import (
     show_push_sites,
 )
 from src.surrogate_data import (
+    LAG_MAX,
     SAMPLE_PERIOD,
+    SCALE_JITTER,
     check_finite,
     coverage_summary,
     generate_surrogate_data,
     make_surrogate_setup,
     mark_validation_split,
 )
+from src.train_surrogate import train_ensemble
 from src.trials import make_record_setup, record_trials
 
 
@@ -66,6 +69,18 @@ def parse_args() -> argparse.Namespace:
         "--samples", type=int, default=48, help="truth pushes"
     )
     calibrate_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+    calibrate_parser.add_argument(
+        "--predictor",
+        choices=("drake", "surrogate"),
+        default="drake",
+        help="prediction model the calibration measures errors of",
+    )
+    calibrate_parser.add_argument(
+        "--ensemble",
+        type=Path,
+        default=Path("data/surrogate_ensemble.npz"),
+        help="trained surrogate ensemble (--predictor surrogate)",
+    )
 
     record_parser = commands.add_parser(
         "record-trials",
@@ -101,6 +116,18 @@ def parse_args() -> argparse.Namespace:
         default=Path("data/replay_report.json"),
         help="report output path",
     )
+    replay_parser.add_argument(
+        "--predictor",
+        choices=("drake", "surrogate"),
+        default="drake",
+        help="prediction model the filter uses",
+    )
+    replay_parser.add_argument(
+        "--ensemble",
+        type=Path,
+        default=Path("data/surrogate_ensemble.npz"),
+        help="trained surrogate ensemble (--predictor surrogate)",
+    )
 
     surrogate_parser = commands.add_parser(
         "gen-surrogate-data",
@@ -116,6 +143,32 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/surrogate_dataset.npz"),
         help="dataset output path",
+    )
+
+    train_parser = commands.add_parser(
+        "train-surrogate",
+        parents=[shared],
+        help="train the surrogate's MLP ensemble on the generated dataset",
+    )
+    train_parser.add_argument("--members", type=int, default=5, help="ensemble members")
+    train_parser.add_argument(
+        "--epochs", type=int, default=400, help="training epochs per member"
+    )
+    train_parser.add_argument(
+        "--patience", type=int, default=40, help="early-stopping patience"
+    )
+    train_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+    train_parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=Path("data/surrogate_dataset.npz"),
+        help="training dataset from gen-surrogate-data",
+    )
+    train_parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path("data/surrogate_ensemble.npz"),
+        help="ensemble output path",
     )
 
     simulate_parser = commands.add_parser(
@@ -172,6 +225,10 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--trials and --pushes must be at least 1")
     if args.command == "gen-surrogate-data" and args.samples < 1:
         raise SystemExit("--samples must be at least 1")
+    if args.command == "train-surrogate" and (
+        args.members < 1 or args.epochs < 1 or args.patience < 1
+    ):
+        raise SystemExit("--members, --epochs and --patience must be at least 1")
 
     return args
 
@@ -387,9 +444,26 @@ def generate_surrogate_data_command(args: argparse.Namespace) -> None:
             "model_time_step": push_model_config(args).time_step,
             "settle_time": args.settle_time,
             "sample_period": SAMPLE_PERIOD,
+            "lag_max": LAG_MAX,
+            "scale_jitter": SCALE_JITTER,
         },
     )
     print(f"wrote {args.samples} samples to {args.out}")
+
+
+def train_surrogate_command(args: argparse.Namespace) -> None:
+    """Train the surrogate's ensemble and report its validation errors
+    against the estimator's tolerated prediction error."""
+    print(
+        train_ensemble(
+            dataset_path=args.dataset,
+            out_path=args.out,
+            members=args.members,
+            epochs=args.epochs,
+            patience=args.patience,
+            seed=args.seed,
+        )
+    )
 
 
 def main(args: argparse.Namespace) -> None:
@@ -404,6 +478,8 @@ def main(args: argparse.Namespace) -> None:
                 site_clearance=args.site_clearance,
                 truth=truth_sim_config(args),
                 model=push_model_config(args),
+                predictor=args.predictor,
+                ensemble_path=args.ensemble,
             ),
         )
     elif args.command == "record-trials":
@@ -413,9 +489,13 @@ def main(args: argparse.Namespace) -> None:
             trials_path=args.trials_file,
             workers=args.workers,
             report_path=args.report,
+            predictor=args.predictor,
+            ensemble_path=args.ensemble,
         )
     elif args.command == "gen-surrogate-data":
         generate_surrogate_data_command(args)
+    elif args.command == "train-surrogate":
+        train_surrogate_command(args)
     else:
         simulate(args)
 

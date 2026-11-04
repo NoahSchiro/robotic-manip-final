@@ -42,9 +42,14 @@ from .params import Eta
 # in m, rad, m/s, rad/s.  It describes the prediction model's errors, so
 # rerun main.py calibrate and paste its output here after changing the
 # prediction model, the measurement, or the grid.
-# Calibrated by main.py calibrate: 48 truth pushes, seed 0,
-# truth timestep 0.0001, model timestep 0.002, settle time 0.1 s,
-# site clearance 0.001 m.
+# Prediction-error covariances of the measurement (x, y, yaw, vx, vy, wz),
+# in m, rad, m/s, rad/s — one per prediction model, each calibrated by
+# main.py calibrate (48 truth pushes, seed 0, truth timestep 0.0001,
+# settle time 0.1 s, site clearance 0.001 m).  Rerun the matching command
+# after changing the prediction model, the measurement, or the grid.
+#
+# CALIBRATED_R covers the Drake plant replays of measured tip paths — the
+# paper-numbers world.
 CALIBRATED_R = np.array(
     [
         [2.999e-07, -3.691e-08, 2.328e-06, 7.134e-07, 5.013e-09, 5.954e-06],
@@ -53,6 +58,23 @@ CALIBRATED_R = np.array(
         [7.134e-07, -4.476e-07, 8.639e-06, 7.403e-06, 7.517e-07, 2.695e-06],
         [5.013e-09, 2.605e-07, 1.434e-06, 7.517e-07, 2.046e-06, 3.655e-07],
         [5.954e-06, -1.320e-06, 2.670e-04, 2.695e-06, 3.655e-07, 9.172e-04],
+    ]
+)
+
+# CALIBRATED_R_SURROGATE covers the trained surrogate predicting from
+# measured tip paths.  Its errors carry the arm's force- and
+# gravity-dependent tracking deviation from the commanded path, which the
+# constructed training paths do not reproduce — the env's estimator noise
+# is scaled to this world so the policy trains against deployment-honest
+# belief degradation.
+CALIBRATED_R_SURROGATE = np.array(
+    [
+        [1.793e-05, -1.746e-06, -6.084e-05, 5.719e-05, 6.613e-06, -2.307e-04],
+        [-1.746e-06, 1.779e-05, -1.802e-05, 4.135e-07, 4.969e-05, -1.008e-04],
+        [-6.084e-05, -1.802e-05, 1.420e-03, -1.602e-04, -1.345e-04, 4.566e-03],
+        [5.719e-05, 4.135e-07, -1.602e-04, 2.633e-04, 2.257e-05, -5.431e-04],
+        [6.613e-06, 4.969e-05, -1.345e-04, 2.257e-05, 2.029e-04, -6.295e-04],
+        [-2.307e-04, -1.008e-04, 4.566e-03, -5.431e-04, -6.295e-04, 2.453e-02],
     ]
 )
 

@@ -1,0 +1,15 @@
+member 0: best weighted val MSE 0.039822
+member 1: best weighted val MSE 0.040316
+member 2: best weighted val MSE 0.038421
+member 3: best weighted val MSE 0.040669
+member 4: best weighted val MSE 0.040255
+ensemble of 5 members saved to data/surrogate_ensemble.npz
+component   surrogate RMSE   tolerated (sqrt diag R)   ratio
+x             2.770e-04           2.554e-03           0.11
+y             6.993e-04           2.888e-03           0.24
+yaw           3.674e-03           2.972e-02           0.12
+vx            1.582e-03           1.022e-02           0.15
+vy            2.478e-03           1.182e-02           0.21
+wz            2.791e-02           1.199e-01           0.23
+worst ratio 0.24 — PASS (gate 0.5)
+member spread (std over members, start frame): 1.15e-04  1.27e-04  1.77e-03  4.64e-04  5.42e-04  8.14e-03

@@ -21,9 +21,10 @@ from pathlib import Path
 import numpy as np
 
 from .dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
-from .estimator import CALIBRATED_R, GridBayesFilter
+from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE, GridBayesFilter
 from .object import Object, Rod
 from .params import Eta, GridSpec, grid_spans, grid_step, make_grid
+from .surrogate import SurrogatePredictor, load_ensemble
 from .trials import TrialData, load_dataset
 
 # A final belief this peaked with a wrong MAP counts as confidently wrong.
@@ -105,7 +106,7 @@ class ReplayReport:
     dropped_empty_trials: int
     mean_pushes: float
     hypotheses: int
-    metadata: dict[str, float | int]
+    metadata: dict[str, float | int | str]
     likelihoods: dict[str, LikelihoodReport]
 
 
@@ -127,12 +128,15 @@ def filter_step(belief: GridBayesFilter) -> StepRecord:
 
 
 def replay_trial(
-    trial: TrialData, grid: list[Eta], model: DynamicsModel
+    trial: TrialData,
+    grid: list[Eta],
+    model: DynamicsModel,
+    r_matrix: np.ndarray,
 ) -> TrialTracks:
     """Replay one trial's pushes through one filter per likelihood, sharing
     each push's single prediction pass between them."""
     filters = {
-        name: GridBayesFilter(grid, model, CALIBRATED_R, nu)
+        name: GridBayesFilter(grid, model, r_matrix, nu)
         for name, nu in LIKELIHOODS.items()
     }
     steps = {name: [filter_step(belief)] for name, belief in filters.items()}
@@ -211,7 +215,7 @@ def likelihood_report(
 def build_report(
     tracks: Sequence[TrialTracks],
     grid: list[Eta],
-    metadata: dict[str, float | int],
+    metadata: dict[str, float | int | str],
     dropped_empty: int,
 ) -> ReplayReport:
     """Aggregate replayed tracks into the report."""
@@ -259,9 +263,16 @@ def format_report(report: ReplayReport) -> str:
     return "\n".join(lines)
 
 
-def run_replay(trials_path: Path, workers: int, report_path: Path) -> None:
+def run_replay(
+    trials_path: Path,
+    workers: int,
+    report_path: Path,
+    predictor: str = "drake",
+    ensemble_path: Path | None = None,
+) -> None:
     """Replay the recorded trials and write the report JSON next to a
-    printed summary."""
+    printed summary.  `predictor` picks the filter's prediction model: the
+    Drake plant, or the trained surrogate."""
     trials, metadata = load_dataset(trials_path)
     scored = [trial for trial in trials if trial.observations]
     rod_mass = float(metadata["rod_mass"])
@@ -270,15 +281,24 @@ def run_replay(trials_path: Path, workers: int, report_path: Path) -> None:
     )
     print(
         f"replaying {len(scored)}/{len(trials)} trials over {len(grid)} "
-        f"hypotheses on {workers} workers"
+        f"hypotheses with the {predictor} predictor"
     )
-    model_config = PushModelConfig(
-        time_step=float(metadata["model_time_step"]), rod_mass=rod_mass
-    )
-    with ParallelPushModel(workers, model_config) as model:
-        tracks = [replay_trial(trial, grid, model) for trial in scored]
+    r_matrix = CALIBRATED_R_SURROGATE if predictor == "surrogate" else CALIBRATED_R
+    if predictor == "surrogate":
+        assert ensemble_path is not None
+        model: DynamicsModel = SurrogatePredictor(load_ensemble(ensemble_path))
+        tracks = [replay_trial(trial, grid, model, r_matrix) for trial in scored]
+    else:
+        model_config = PushModelConfig(
+            time_step=float(metadata["model_time_step"]), rod_mass=rod_mass
+        )
+        with ParallelPushModel(workers, model_config) as model:
+            tracks = [replay_trial(trial, grid, model, r_matrix) for trial in scored]
     report = build_report(
-        tracks, grid, metadata, dropped_empty=len(trials) - len(scored)
+        tracks,
+        grid,
+        {**metadata, "predictor": predictor},
+        dropped_empty=len(trials) - len(scored),
     )
     print(format_report(report))
     report_path.parent.mkdir(parents=True, exist_ok=True)

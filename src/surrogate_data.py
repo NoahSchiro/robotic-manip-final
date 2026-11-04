@@ -9,6 +9,8 @@ Dataset schema (one .npz):
   the object's body frame
 - site_index: (N,) index into the setup's clear sites
 - speed, time: (N,) commanded push speed (m/s) and contact time (s)
+- tip_path: (N, 3, PATH_SAMPLES) executed tip positions at uniform window
+  times, world frame — the surrogate's path conditioning
 - displacement: (N, 3) window-end pose offset (x, y, yaw) in the start
   frame
 - push_end_velocity: (N, 3) block planar velocity at the push segment's
@@ -34,10 +36,13 @@ from .iiwa import STANDOFF, Pusher, clear_sites
 from .object import Object, Rod
 from .observation import ObjectState, wrap_angle
 from .params import GridSpec, sample_eta
+from .surrogate import PATH_SAMPLES
 
 VAL_EVERY = 10  # every 10th sample per cell becomes validation
 SAMPLE_PERIOD = 0.01  # s, nominal tip path sampling period
 MU_DECADES = 10  # validation cells along the friction range
+LAG_MAX = 0.05  # s, upper bound of the executed path's standoff hold
+SCALE_JITTER = 0.05  # executed push speed scale, uniform in [1 - this, 1 + this]
 
 
 @dataclass(frozen=True)
@@ -96,20 +101,24 @@ def make_surrogate_setup(
 
 
 def nominal_tip_path(
-    pose: RigidTransform, action: Action, settle_time: float
+    pose: RigidTransform,
+    action: Action,
+    settle_time: float,
+    lag: float = 0.0,
+    scale: float = 1.0,
 ) -> TipPath:
-    """Construct the commanded tip path for `action`: from the window's
-    start (tip parked at the standoff point) it pushes at constant commanded
-    speed to the push segment's end, backs off one standoff, and the window
-    closes `settle_time` after the push segment — matching the recorded
-    windows, whose tip is still backing off at their end."""
+    """Construct the executed tip path for `action`: the commanded maneuver
+    (push at constant speed from the standoff point through the contact,
+    back off one standoff, window closes `settle_time` after the push
+    segment) run at speed `scale`, with the whole response delayed by `lag`
+    — the arm-lag family the PD-tracked executed paths live in."""
     contact = pose @ action.contact.position
     normal = pose.rotation() @ action.contact.normal
+    speed = action.velocity * scale
     approach = contact - STANDOFF * normal
-    push_end = contact + action.velocity * action.time * normal
-    backed_off = push_end - STANDOFF * normal
-    push_end_time = (STANDOFF + action.velocity * action.time) / action.velocity
-    back_off_end = push_end_time + STANDOFF / action.velocity
+    push_end = contact + speed * action.time * normal
+    push_end_time = (STANDOFF + speed * action.time) / speed
+    back_off_end = push_end_time + STANDOFF / speed
     window_end = push_end_time + settle_time
 
     # Drop any arange sample within half a period of the window's end:
@@ -118,24 +127,27 @@ def nominal_tip_path(
     times = np.arange(0.0, window_end, SAMPLE_PERIOD)
     times = times[times < window_end - SAMPLE_PERIOD / 2]
     times = np.append(times, window_end)
-    pushing = times <= push_end_time
-    backing_off = (times > push_end_time) & (times < back_off_end)
+    # The executed response runs `lag` behind the commanded clock and holds
+    # at the standoff until it starts.
+    shifted = np.maximum(times - lag, 0.0)
+    pushing = (times >= lag) & (shifted <= push_end_time)
+    backing_off = (shifted > push_end_time) & (shifted < back_off_end)
     positions = np.where(
         pushing,
-        approach[:, None] + action.velocity * times[None, :] * normal[:, None],
+        approach[:, None] + speed * shifted[None, :] * normal[:, None],
         np.where(
             backing_off,
             push_end[:, None]
-            - action.velocity * (times[None, :] - push_end_time) * normal[:, None],
-            np.repeat(backed_off[:, None], len(times), axis=1),
+            - speed * (shifted[None, :] - push_end_time) * normal[:, None],
+            np.repeat(approach[:, None], len(times), axis=1),
         ),
     )
     velocities = np.where(
         pushing,
-        action.velocity * normal[:, None],
+        speed * normal[:, None],
         np.where(
             backing_off,
-            -action.velocity * normal[:, None],
+            -speed * normal[:, None],
             np.zeros((3, len(times))),
         ),
     )
@@ -165,8 +177,10 @@ def surrogate_sample(
     # discrete solver rejects; the truth sim's states always carry ~1e-10
     # of numerical dust, so match that here.
     start_velocity = SpatialVelocity(np.zeros(3), rng.uniform(-1e-9, 1e-9, size=3))
+    lag = float(rng.uniform(0.0, LAG_MAX))
+    scale = float(rng.uniform(1.0 - SCALE_JITTER, 1.0 + SCALE_JITTER))
 
-    path = nominal_tip_path(obj.x_wo(), action, setup.settle_time)
+    path = nominal_tip_path(obj.x_wo(), action, setup.settle_time, lag, scale)
     model.set_eta(eta)
     push_end, window_end = model.predict_path(
         ObjectState(pose=obj.x_wo(), velocity=start_velocity),
@@ -201,10 +215,21 @@ def surrogate_sample(
         "site_index": np.array(site_index, dtype=int),
         "speed": np.array(action.velocity),
         "time": np.array(action.time),
+        "tip_path": path_downsample(path.tip_times, path.tip_positions),
         "displacement": displacement,
         "push_end_velocity": push_velocity,
         "window_end_velocity": end_velocity,
     }
+
+
+def path_downsample(tip_times: np.ndarray, tip_positions: np.ndarray) -> np.ndarray:
+    """Resample the (3, n) tip path at PATH_SAMPLES uniform window times —
+    the conditioning block the surrogate sees (and the predictor rebuilds
+    from a measured path the same way)."""
+    samples = np.linspace(0.0, float(tip_times[-1]), PATH_SAMPLES)
+    return np.vstack(
+        [np.interp(samples, tip_times, tip_positions[row]) for row in range(3)]
+    )
 
 
 def surrogate_samples(
