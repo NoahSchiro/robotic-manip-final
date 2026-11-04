@@ -121,8 +121,15 @@ class GridBayesFilter:
 
     def update(self, obs: PushObservation) -> None:
         """Reweight every hypothesis by its likelihood of `obs`."""
-        predicted = self.model.predict(self.grid, obs)
-        errors = planar_error(obs.measured(), predicted)
+        self.update_from_predictions(obs.measured(), self.model.predict(self.grid, obs))
+
+    def update_from_predictions(
+        self, measured: np.ndarray, predicted: np.ndarray
+    ) -> None:
+        """Reweight every hypothesis by the likelihood of `measured` against
+        each row of the (N, 6) `predicted`.  Split from update() so an offline
+        replay can score several likelihoods against one prediction pass."""
+        errors = planar_error(measured, predicted)
         q = squared_mahalanobis(errors, self.R_inv)
         log_likelihood = (
             gaussian_log_likelihood(q)

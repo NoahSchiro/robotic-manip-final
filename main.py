@@ -2,6 +2,7 @@
 
 import argparse
 import time
+from pathlib import Path
 
 import numpy as np
 from pydrake.all import Simulator
@@ -29,6 +30,7 @@ from src.object import Object, Rod, Table
 from src.observation import PushObservation
 from src.params import Eta, GridSpec, make_grid
 from src.recording import NoReachablePush, TruthSim
+from src.replay import run_replay
 from src.scene import (
     Sim,
     build_diagram,
@@ -36,6 +38,7 @@ from src.scene import (
     show_object_goal,
     show_push_sites,
 )
+from src.trials import make_record_setup, record_trials, save_dataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +57,41 @@ def parse_args() -> argparse.Namespace:
         "--samples", type=int, default=48, help="truth pushes"
     )
     calibrate_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+
+    record_parser = commands.add_parser(
+        "record-trials",
+        parents=[shared],
+        help="record random-push trials for the estimator's offline replay",
+    )
+    record_parser.add_argument(
+        "--trials", type=int, default=19, help="trials to record"
+    )
+    record_parser.add_argument("--pushes", type=int, default=5, help="pushes per trial")
+    record_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+    record_parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path("data/replay_trials.npz"),
+        help="dataset output path",
+    )
+
+    replay_parser = commands.add_parser(
+        "replay",
+        parents=[shared],
+        help="score the estimator against recorded trials",
+    )
+    replay_parser.add_argument(
+        "--trials-file",
+        type=Path,
+        default=Path("data/replay_trials.npz"),
+        help="recorded trial dataset",
+    )
+    replay_parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path("data/replay_report.json"),
+        help="report output path",
+    )
 
     simulate_parser = commands.add_parser(
         "simulate", parents=[shared], help="run the arm and block simulation"
@@ -105,6 +143,8 @@ def parse_args() -> argparse.Namespace:
             raise SystemExit("--pushes must be at least 1")
         if args.nu < 0.0:
             raise SystemExit("--nu must be nonnegative")
+    if args.command == "record-trials" and (args.trials < 1 or args.pushes < 1):
+        raise SystemExit("--trials and --pushes must be at least 1")
 
     return args
 
@@ -260,6 +300,38 @@ def simulate(args: argparse.Namespace) -> None:
         input("Press Enter to quit.")
 
 
+def record_trials_command(args: argparse.Namespace) -> None:
+    """Record the offline replay's dataset, storing the settings it ran
+    under so a replay can rebuild the same setup."""
+    setup = make_record_setup(
+        rod_mass=args.rod_mass,
+        push_density=args.push_density,
+        site_clearance=args.site_clearance,
+        pushes=args.pushes,
+        truth=truth_sim_config(args),
+    )
+    dataset = record_trials(
+        setup, trials=args.trials, seed=args.seed, workers=args.workers
+    )
+    save_dataset(
+        args.out,
+        dataset,
+        metadata={
+            "seed": args.seed,
+            "trials": args.trials,
+            "pushes": args.pushes,
+            "rod_mass": args.rod_mass,
+            "push_density": args.push_density,
+            "site_clearance": args.site_clearance,
+            "truth_time_step": args.time_step,
+            "settle_time": args.settle_time,
+            "log_period": args.log_period,
+            "model_time_step": push_model_config(args).time_step,
+        },
+    )
+    print(f"wrote {args.trials} trials to {args.out}")
+
+
 def main(args: argparse.Namespace) -> None:
     if args.command == "calibrate":
         calibrate(
@@ -273,6 +345,14 @@ def main(args: argparse.Namespace) -> None:
                 truth=truth_sim_config(args),
                 model=push_model_config(args),
             ),
+        )
+    elif args.command == "record-trials":
+        record_trials_command(args)
+    elif args.command == "replay":
+        run_replay(
+            trials_path=args.trials_file,
+            workers=args.workers,
+            report_path=args.report,
         )
     else:
         simulate(args)
