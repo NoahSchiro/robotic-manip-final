@@ -39,10 +39,8 @@ from src.scene import (
     show_object_goal,
     show_push_sites,
 )
+from src.surrogate import LAG_MAX, SAMPLE_PERIOD, SCALE_JITTER
 from src.surrogate_data import (
-    LAG_MAX,
-    SAMPLE_PERIOD,
-    SCALE_JITTER,
     check_finite,
     coverage_summary,
     generate_surrogate_data,

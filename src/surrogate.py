@@ -6,7 +6,7 @@ The ensemble is trained on `gen-surrogate-data`'s dataset (Drake-predicted
 outcomes of sampled pushes) and saved as one .npz of weights and
 standardization statistics, so inference needs only numpy.
 
-Input columns (65), in order:
+Input columns (49), in order:
     eta (mu, bx, by) — the hypothesis
     start pose (x, y, yaw) — world
     start velocity (vx, vy, wz) — world
@@ -29,7 +29,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from pydrake.all import RigidTransform
 
+from .action import Action
+from .iiwa import STANDOFF
 from .observation import PushObservation, wrap_angle
 from .params import Eta
 
@@ -55,7 +58,7 @@ class SurrogateEnsemble:
     members: tuple[MLPWeights, ...]
 
     def predict(self, x: np.ndarray, member: int | None = None) -> np.ndarray:
-        """Predict standardized-to-raw outputs for the (N, 17) inputs `x`:
+        """Predict standardized-to-raw outputs for the (N, 49) inputs `x`:
         the members' mean, or one member's output."""
         standardized = (x - self.input_mean) / self.input_std
         if member is None:
@@ -66,8 +69,94 @@ class SurrogateEnsemble:
         return np.asarray(raw * self.output_std + self.output_mean)
 
 
+SAMPLE_PERIOD = 0.01  # s, nominal tip path sampling period
+LAG_MAX = 0.05  # s, upper bound of the executed path's standoff hold
+SCALE_JITTER = 0.05  # executed push speed scale, uniform in [1 - this, 1 + this]
+
+
+@dataclass(frozen=True)
+class TipPath:
+    """A constructed push's executed tip path and its window times (s)."""
+
+    tip_times: np.ndarray  # (n,) from 0 to window_end
+    tip_positions: np.ndarray  # (3, n) world
+    tip_velocities: np.ndarray  # (3, n) world
+    push_end_time: float
+    window_end: float
+
+
+def nominal_tip_path(
+    pose: RigidTransform,
+    action: Action,
+    settle_time: float,
+    lag: float = 0.0,
+    scale: float = 1.0,
+) -> TipPath:
+    """Construct the executed tip path for `action`: the commanded maneuver
+    (push at constant speed from the standoff point through the contact,
+    back off one standoff, window closes `settle_time` after the push
+    segment) run at speed `scale`, with the whole response delayed by `lag`
+    — the arm-lag family the PD-tracked executed paths live in."""
+    contact = pose @ action.contact.position
+    normal = pose.rotation() @ action.contact.normal
+    speed = action.velocity * scale
+    approach = contact - STANDOFF * normal
+    push_end = contact + speed * action.time * normal
+    push_end_time = (STANDOFF + speed * action.time) / speed
+    back_off_end = push_end_time + STANDOFF / speed
+    window_end = push_end_time + settle_time
+
+    # Drop any arange sample within half a period of the window's end:
+    # with floating-point steps it can land on or past it, and the appended
+    # window_end would then duplicate it.
+    times = np.arange(0.0, window_end, SAMPLE_PERIOD)
+    times = times[times < window_end - SAMPLE_PERIOD / 2]
+    times = np.append(times, window_end)
+    # The executed response runs `lag` behind the commanded clock and holds
+    # at the standoff until it starts.
+    shifted = np.maximum(times - lag, 0.0)
+    pushing = (times >= lag) & (shifted <= push_end_time)
+    backing_off = (shifted > push_end_time) & (shifted < back_off_end)
+    positions = np.where(
+        pushing,
+        approach[:, None] + speed * shifted[None, :] * normal[:, None],
+        np.where(
+            backing_off,
+            push_end[:, None]
+            - speed * (shifted[None, :] - push_end_time) * normal[:, None],
+            np.repeat(approach[:, None], len(times), axis=1),
+        ),
+    )
+    velocities = np.where(
+        pushing,
+        speed * normal[:, None],
+        np.where(
+            backing_off,
+            -speed * normal[:, None],
+            np.zeros((3, len(times))),
+        ),
+    )
+    return TipPath(
+        tip_times=times,
+        tip_positions=positions,
+        tip_velocities=velocities,
+        push_end_time=push_end_time,
+        window_end=window_end,
+    )
+
+
+def path_downsample(tip_times: np.ndarray, tip_positions: np.ndarray) -> np.ndarray:
+    """Resample the (3, n) tip path at PATH_SAMPLES uniform window times —
+    the conditioning block the surrogate sees (and the predictor rebuilds
+    from a measured path the same way)."""
+    samples = np.linspace(0.0, float(tip_times[-1]), PATH_SAMPLES)
+    return np.vstack(
+        [np.interp(samples, tip_times, tip_positions[row]) for row in range(3)]
+    )
+
+
 def mlp_forward(weights: MLPWeights, x: np.ndarray) -> np.ndarray:
-    """Run the (N, 17) inputs `x` through one member's ReLU MLP."""
+    """Run the (N, 49) inputs `x` through one member's ReLU MLP."""
     activations = x
     last = len(weights) - 1
     for i, (weight, bias) in enumerate(weights):
@@ -145,14 +234,33 @@ class SurrogatePredictor:
         """Predict the push's measurement under each of `etas`."""
         start = obs.start.planar()
         action = obs.action
+        return self.predict_from_parts(
+            etas,
+            start,
+            action.contact.position,
+            action.contact.normal,
+            action.velocity,
+            action.time,
+            measured_path_block(obs),
+        )
+
+    def predict_from_parts(
+        self,
+        etas: Sequence[Eta],
+        start: np.ndarray,
+        contact_position: np.ndarray,
+        contact_normal: np.ndarray,
+        speed: float,
+        time: float,
+        path_block: np.ndarray,
+    ) -> np.ndarray:
+        """Predict the measurement under each of `etas` from plain arrays:
+        the start planar state (6), the body-frame contact point and inward
+        normal, the commanded speed and time, and the downsampled (32,) tip
+        path block.  The environment calls this directly and never builds
+        PushObservation objects."""
         shared = np.concatenate(
-            [
-                start,
-                action.contact.position,
-                action.contact.normal,
-                [action.velocity, action.time],
-                measured_path_block(obs),
-            ]
+            [start, contact_position, contact_normal, [speed, time], path_block]
         )
         eta_rows = np.array([eta.as_array() for eta in etas])
         inputs = np.concatenate([eta_rows, np.tile(shared, (len(etas), 1))], axis=1)
