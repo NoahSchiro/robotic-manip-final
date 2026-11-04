@@ -65,3 +65,9 @@ with `uv run python main.py replay` (minutes), which writes
 `data/replay_report.json`.  Any change to the prediction model is judged by
 re-running `replay` on the same dataset.
 
+## Surrogate training data
+
+`uv run python main.py gen-surrogate-data` generates the surrogate's dataset:
+sampled (eta, start pose, action) tuples replayed through the Drake prediction
+model with constructed nominal tip paths.
+

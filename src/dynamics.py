@@ -66,7 +66,7 @@ class PushModelConfig:
     tip_kd: float = 200.0
 
 
-def _add_tip_body(
+def add_tip_body(
     plant: MultibodyPlant, pusher: Pusher, kp: float, kd: float
 ) -> tuple[ModelInstanceIndex, RigidBody]:
     """Add the stick on PD-actuated world x/y/z prismatic joints, its frame at
@@ -102,7 +102,7 @@ def _add_tip_body(
     return tip, stick
 
 
-def _add_tip_collision(plant: MultibodyPlant, pusher: Pusher, stick: RigidBody) -> None:
+def add_tip_collision(plant: MultibodyPlant, pusher: Pusher, stick: RigidBody) -> None:
     """Register `stick`'s compliant hydroelastic collision cylinder."""
     props = ProximityProperties()
     AddContactMaterial(
@@ -123,7 +123,7 @@ def _add_tip_collision(plant: MultibodyPlant, pusher: Pusher, stick: RigidBody) 
     )
 
 
-def _spatial_inertia(obj: Object) -> SpatialInertia:
+def spatial_inertia(obj: Object) -> SpatialInertia:
     """Get `obj`'s spatial inertia about its body frame."""
     _, inertia = obj.compound_inertia()
     return SpatialInertia.MakeFromCentralInertia(
@@ -140,7 +140,7 @@ def _spatial_inertia(obj: Object) -> SpatialInertia:
     )
 
 
-def _hypothesis_object(eta: Eta, rod_mass: float) -> Object:
+def hypothesis_object(eta: Eta, rod_mass: float) -> Object:
     """Build `eta`'s object for its physical properties only."""
     # Object draws a random pose and goal on construction; predictions set the
     # state explicitly, so the draws never matter and any seed will do.
@@ -153,7 +153,7 @@ class DrakePushModel(DynamicsModel):
 
     def __init__(self, config: PushModelConfig) -> None:
         self.rod_mass = config.rod_mass
-        obj = _hypothesis_object(Eta(mu=0.5, bx=0.0, by=0.0), config.rod_mass)
+        obj = hypothesis_object(Eta(mu=0.5, bx=0.0, by=0.0), config.rod_mass)
         table = Table()
         pusher = Pusher()
 
@@ -170,8 +170,8 @@ class DrakePushModel(DynamicsModel):
         table_body = plant.GetBodyByName(
             table.body_box, plant.GetModelInstanceByName(table.name)
         )
-        tip_instance, stick = _add_tip_body(plant, pusher, config.tip_kp, config.tip_kd)
-        _add_tip_collision(plant, pusher, stick)
+        tip_instance, stick = add_tip_body(plant, pusher, config.tip_kp, config.tip_kd)
+        add_tip_collision(plant, pusher, stick)
         plant.Finalize()
 
         # Placeholder path; predict() swaps in each observation's.
@@ -203,7 +203,7 @@ class DrakePushModel(DynamicsModel):
         """Swap `eta`'s inertia and friction into the context."""
         self.object_body.SetSpatialInertiaInBodyFrame(
             self.plant_context,
-            _spatial_inertia(_hypothesis_object(eta, self.rod_mass)),
+            spatial_inertia(hypothesis_object(eta, self.rod_mass)),
         )
         inspector = self.scene_graph.model_inspector()
         for geometry in self.friction_geometries:
@@ -221,38 +221,44 @@ class DrakePushModel(DynamicsModel):
 
     def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
         """Predict the push's measurement under each of `etas`."""
-        self.source.UpdateTrajectory(
-            PiecewisePolynomial.CubicHermite(
-                [float(t) for t in obs.tip_times],
-                obs.tip_positions.tolist(),
-                obs.tip_velocities.tolist(),
-            )
-        )
         predictions = np.empty((len(etas), 6))
         for i, eta in enumerate(etas):
             self.set_eta(eta)
-            push_end, end = self._simulate(
+            push_end, end = self.predict_path(
                 obs.start,
-                obs.tip_positions[:, 0],
-                obs.tip_velocities[:, 0],
+                obs.tip_times,
+                obs.tip_positions,
+                obs.tip_velocities,
                 [obs.push_end_time, obs.duration],
             )
             predictions[i] = measurement(push_end, end)
         return predictions
 
-    def _simulate(
+    def predict_path(
         self,
         start: ObjectState,
-        tip_position: np.ndarray,
-        tip_velocity: np.ndarray,
+        tip_times: np.ndarray,
+        tip_positions: np.ndarray,
+        tip_velocities: np.ndarray,
         times: Sequence[float],
     ) -> list[np.ndarray]:
-        """Run the current tip path from time 0, with the object at `start`
-        and the tip at `tip_position` moving at `tip_velocity`, reading the
-        object's planar state at each of the increasing `times`."""
+        """Replay a tip path from time 0 with the object at `start`, reading
+        the object's planar state at each of the increasing `times`.  The
+        context's eta (see set_eta) applies."""
+        self.source.UpdateTrajectory(
+            PiecewisePolynomial.CubicHermite(
+                [float(t) for t in tip_times],
+                tip_positions.tolist(),
+                tip_velocities.tolist(),
+            )
+        )
         self.context.SetTime(0.0)
-        self.plant.SetPositions(self.plant_context, self.tip_instance, tip_position)
-        self.plant.SetVelocities(self.plant_context, self.tip_instance, tip_velocity)
+        self.plant.SetPositions(
+            self.plant_context, self.tip_instance, tip_positions[:, 0]
+        )
+        self.plant.SetVelocities(
+            self.plant_context, self.tip_instance, tip_velocities[:, 0]
+        )
         self.plant.SetFreeBodyPose(self.plant_context, self.object_body, start.pose)
         self.plant.SetFreeBodySpatialVelocity(
             self.plant_context, self.object_body, start.velocity
@@ -261,10 +267,10 @@ class DrakePushModel(DynamicsModel):
         states = []
         for t in times:
             self.simulator.AdvanceTo(t)
-            states.append(self._object_planar())
+            states.append(self.object_planar())
         return states
 
-    def _object_planar(self) -> np.ndarray:
+    def object_planar(self) -> np.ndarray:
         """Read the object's current planar state."""
         return ObjectState(
             pose=self.plant.EvalBodyPoseInWorld(self.plant_context, self.object_body),
@@ -285,7 +291,7 @@ class ParallelPushModel(DynamicsModel):
         self.pool = ProcessPoolExecutor(workers)
 
     @staticmethod
-    def _predict_chunk(
+    def predict_chunk(
         config: PushModelConfig, etas: list[Eta], obs: PushObservation
     ) -> np.ndarray:
         """Predict one chunk of hypotheses, running in a worker process."""
@@ -301,7 +307,7 @@ class ParallelPushModel(DynamicsModel):
             if chunk.size
         ]
         futures = [
-            self.pool.submit(self._predict_chunk, self.config, chunk, obs)
+            self.pool.submit(self.predict_chunk, self.config, chunk, obs)
             for chunk in chunks
         ]
         return np.concatenate([f.result() for f in futures])

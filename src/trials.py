@@ -31,6 +31,7 @@ import numpy as np
 from pydrake.all import RigidTransform, SpatialVelocity
 
 from .action import Action
+from .dataset_file import META_PREFIX
 from .geometry import SurfaceNormal, SurfacePart
 from .iiwa import Pusher, clear_sites
 from .object import Object, Rod
@@ -39,7 +40,6 @@ from .params import Eta, GridSpec, sample_eta
 from .recording import NoReachablePush, TruthSim, TruthSimConfig
 
 STATE_NAMES = ("start", "push_end", "end", "final")
-META_PREFIX = "meta_"
 
 
 @dataclass(frozen=True)

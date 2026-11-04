@@ -16,6 +16,7 @@ from src.cli import (
     push_model_config,
     truth_sim_config,
 )
+from src.dataset_file import save_dataset
 from src.dynamics import ParallelPushModel
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.geometry import SurfaceNormal
@@ -38,7 +39,15 @@ from src.scene import (
     show_object_goal,
     show_push_sites,
 )
-from src.trials import make_record_setup, record_trials, save_dataset
+from src.surrogate_data import (
+    SAMPLE_PERIOD,
+    check_finite,
+    coverage_summary,
+    generate_surrogate_data,
+    make_surrogate_setup,
+    mark_validation_split,
+)
+from src.trials import make_record_setup, record_trials
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,6 +102,22 @@ def parse_args() -> argparse.Namespace:
         help="report output path",
     )
 
+    surrogate_parser = commands.add_parser(
+        "gen-surrogate-data",
+        parents=[shared],
+        help="generate the surrogate's training dataset (Drake-predicted pushes)",
+    )
+    surrogate_parser.add_argument(
+        "--samples", type=int, default=300000, help="samples to generate"
+    )
+    surrogate_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+    surrogate_parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path("data/surrogate_dataset.npz"),
+        help="dataset output path",
+    )
+
     simulate_parser = commands.add_parser(
         "simulate", parents=[shared], help="run the arm and block simulation"
     )
@@ -145,6 +170,8 @@ def parse_args() -> argparse.Namespace:
             raise SystemExit("--nu must be nonnegative")
     if args.command == "record-trials" and (args.trials < 1 or args.pushes < 1):
         raise SystemExit("--trials and --pushes must be at least 1")
+    if args.command == "gen-surrogate-data" and args.samples < 1:
+        raise SystemExit("--samples must be at least 1")
 
     return args
 
@@ -332,6 +359,39 @@ def record_trials_command(args: argparse.Namespace) -> None:
     print(f"wrote {args.trials} trials to {args.out}")
 
 
+def generate_surrogate_data_command(args: argparse.Namespace) -> None:
+    """Generate the surrogate's training dataset: sampled (eta, start pose,
+    action) tuples replayed through the Drake prediction model."""
+    setup = make_surrogate_setup(
+        rod_mass=args.rod_mass,
+        push_density=args.push_density,
+        site_clearance=args.site_clearance,
+        settle_time=args.settle_time,
+        model=push_model_config(args),
+    )
+    dataset = generate_surrogate_data(
+        setup, samples=args.samples, seed=args.seed, workers=args.workers
+    )
+    dataset["is_val"] = mark_validation_split(dataset, setup.spec)
+    check_finite(dataset)
+    print(coverage_summary(dataset, setup))
+    save_dataset(
+        args.out,
+        dataset,
+        metadata={
+            "seed": args.seed,
+            "samples": args.samples,
+            "rod_mass": args.rod_mass,
+            "push_density": args.push_density,
+            "site_clearance": args.site_clearance,
+            "model_time_step": push_model_config(args).time_step,
+            "settle_time": args.settle_time,
+            "sample_period": SAMPLE_PERIOD,
+        },
+    )
+    print(f"wrote {args.samples} samples to {args.out}")
+
+
 def main(args: argparse.Namespace) -> None:
     if args.command == "calibrate":
         calibrate(
@@ -354,6 +414,8 @@ def main(args: argparse.Namespace) -> None:
             workers=args.workers,
             report_path=args.report,
         )
+    elif args.command == "gen-surrogate-data":
+        generate_surrogate_data_command(args)
     else:
         simulate(args)
 
