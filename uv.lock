@@ -1032,6 +1032,8 @@ source = { virtual = "." }
 dependencies = [
     { name = "drake" },
     { name = "gymnasium" },
+    { name = "sb3-contrib" },
+    { name = "stable-baselines3" },
     { name = "torch" },
 ]
 
@@ -1046,6 +1048,8 @@ dev = [
 requires-dist = [
     { name = "drake", specifier = ">=1.58.0" },
     { name = "gymnasium", specifier = ">=1.4.0" },
+    { name = "sb3-contrib", specifier = ">=2.9.2" },
+    { name = "stable-baselines3", specifier = ">=2.9.2" },
     { name = "torch", specifier = ">=2.15.0" },
 ]
 
@@ -1082,6 +1086,18 @@ wheels = [
 ]
 
 [[package]]
+name = "sb3-contrib"
+version = "2.9.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "stable-baselines3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/88/f34e2766d1399a2db6cf2c1de42bb01449057765a0acb0fb8e4eaa07dd4f/sb3_contrib-2.9.2.tar.gz", hash = "sha256:20b514afc04de447e284e9e2dec9d368cf6828ecf67f4060262aeba0818a3c3a", size = 90436, upload-time = "2026-10-26T09:51:50.205Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/ce/da48bf9a35c8ff03fadc7cf1c1923fee6062c45680e67bbda98150ca6008/sb3_contrib-2.9.2-py3-none-any.whl", hash = "sha256:1f9306c3ff9e1a72f9ef958987559d41b8c80d375e38865de7685852b6c5af3d", size = 93039, upload-time = "2026-10-26T09:51:48.577Z" },
+]
+
+[[package]]
 name = "setuptools"
 version = "78.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1097,6 +1113,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "stable-baselines3"
+version = "2.9.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "gymnasium" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ab/86/fb86bf20bc2321d14a5a40221119043186efaebe2490e1038d17e4a4783e/stable_baselines3-2.9.2.tar.gz", hash = "sha256:8af267e9513343f481b3f0680b7740ad79a746873db24f18a9fb2edcbd9a2df7", size = 223761, upload-time = "2026-10-26T09:35:30.876Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/c0/d4f648cbfb1efce94ad0dd0db3487e3e8f2bd572f035cfc0fc1b8a070cfe/stable_baselines3-2.9.2-py3-none-any.whl", hash = "sha256:0b7db1789bea31d43b3e9be4f88abf639549b587f2bf2a2461ee9d3d77c68e96", size = 188412, upload-time = "2026-10-26T09:35:28.923Z" },
 ]
 
 [[package]]

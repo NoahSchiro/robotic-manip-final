@@ -8,3 +8,4 @@ __pycache__/
 # surrogate datasets are regenerable from their seed
 data/surrogate_*.npz
 data/generation.log
+data/ppo_*

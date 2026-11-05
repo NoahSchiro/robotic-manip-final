@@ -53,7 +53,9 @@ from .surrogate import (
 N_PROBE_SITES = 32  # the pruned library's site count (MPC keeps all)
 SPEEDS = (0.05, 0.1)
 TIMES = (0.2, 0.4)
-PUSH_DENSITY = 2.0  # sites per m of outline, as in the dataset
+# Sites per meter of outline.  The dataset generator’s --push-density 2.0
+# is per centimeter; converted (x100) it is 200/m.
+PUSH_DENSITY = 200.0
 SITE_CLEARANCE = 0.001  # m, as in the dataset
 SETTLE_TIME = 0.1  # s, matching the dataset's windows
 ROD_MASS = 0.2  # kg, as everywhere
@@ -254,7 +256,6 @@ class ProbingEnv(gymnasium.Env):
             dtype=np.float32,
         )
         self.action_space = spaces.Discrete(config.n_actions)
-        self.rng = np.random.default_rng()
         self._parts = _env_parts()
         self.belief: GridBayesFilter | None = None
         self._true_eta: Eta | None = None
@@ -290,11 +291,12 @@ class ProbingEnv(gymnasium.Env):
     def _observation(self) -> np.ndarray:
         assert self.belief is not None
         probs = self.belief.probs
+        log_probs = np.log(np.maximum(probs, 1e-8))
         return np.asarray(
             np.concatenate(
                 [
                     self._pose,
-                    probs,
+                    log_probs,
                     [self.belief.entropy(), probs.max()],
                     self.belief.map_eta().as_array(),
                     self.belief.mean_eta().as_array(),
@@ -328,15 +330,14 @@ class ProbingEnv(gymnasium.Env):
         self, *, seed: int | None = None, options: dict[str, object] | None = None
     ) -> tuple[np.ndarray, dict[str, object]]:
         super().reset(seed=seed)
-        self.rng = np.random.default_rng(seed)
-        self._true_eta = sample_eta(self.rng, GridSpec(), self._parts)
-        rho = 0.1 * np.sqrt(self.rng.uniform())
-        theta = self.rng.uniform(-np.pi, np.pi)
+        self._true_eta = sample_eta(self.np_random, GridSpec(), self._parts)
+        rho = 0.1 * np.sqrt(self.np_random.uniform())
+        theta = self.np_random.uniform(-np.pi, np.pi)
         self._pose = np.array(
             [
                 WORKSPACE_CENTER[0] + rho * np.cos(theta),
                 WORKSPACE_CENTER[1] + rho * np.sin(theta),
-                self.rng.uniform(-np.pi, np.pi),
+                self.np_random.uniform(-np.pi, np.pi),
             ]
         )
         self._pushes = 0
@@ -380,8 +381,8 @@ class ProbingEnv(gymnasium.Env):
             planar_transform(self._pose),
             body_action,
             SETTLE_TIME,
-            lag=float(self.rng.uniform(0.0, LAG_MAX)),
-            scale=float(self.rng.uniform(1.0 - SCALE_JITTER, 1.0 + SCALE_JITTER)),
+            lag=float(self.np_random.uniform(0.0, LAG_MAX)),
+            scale=float(self.np_random.uniform(1.0 - SCALE_JITTER, 1.0 + SCALE_JITTER)),
         )
         path_block = path_downsample(path.tip_times, path.tip_positions)[:2].reshape(-1)
 
@@ -398,9 +399,9 @@ class ProbingEnv(gymnasium.Env):
             ]
         )
         truth_inputs = np.concatenate([self._true_eta.as_array(), shared])[None, :]
-        member = int(self.rng.integers(len(self.ensemble.members)))
+        member = int(self.np_random.integers(len(self.ensemble.members)))
         truth = self.ensemble.predict(truth_inputs, member=member)[0]
-        noise = self._noise_chol @ self.rng.standard_normal(6)
+        noise = self._noise_chol @ self.np_random.standard_normal(6)
         c, s = np.cos(self._pose[2]), np.sin(self._pose[2])
         to_world = np.array([[c, s], [-s, c]])
         measured = np.concatenate(

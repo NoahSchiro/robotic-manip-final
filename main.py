@@ -18,6 +18,7 @@ from src.cli import (
 )
 from src.dataset_file import save_dataset
 from src.dynamics import ParallelPushModel
+from src.env import make_probing_env_config
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.geometry import SurfaceNormal
 from src.iiwa import (
@@ -47,6 +48,7 @@ from src.surrogate_data import (
     make_surrogate_setup,
     mark_validation_split,
 )
+from src.train_ppo import train_ppo
 from src.train_surrogate import train_ensemble
 from src.trials import make_record_setup, record_trials
 
@@ -169,6 +171,32 @@ def parse_args() -> argparse.Namespace:
         help="ensemble output path",
     )
 
+    ppo_parser = commands.add_parser(
+        "train-ppo",
+        parents=[shared],
+        help="train the probing policy with MaskablePPO in the surrogate world",
+    )
+    ppo_parser.add_argument(
+        "--timesteps", type=int, default=3000000, help="total env steps"
+    )
+    ppo_parser.add_argument("--n-envs", type=int, default=12, help="vector envs")
+    ppo_parser.add_argument(
+        "--eval-every", type=int, default=100000, help="steps between paired evals"
+    )
+    ppo_parser.add_argument(
+        "--eval-episodes", type=int, default=12, help="episodes per paired eval"
+    )
+    ppo_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+    ppo_parser.add_argument(
+        "--ensemble",
+        type=Path,
+        default=Path("data/surrogate_ensemble.npz"),
+        help="trained surrogate ensemble",
+    )
+    ppo_parser.add_argument(
+        "--out", type=Path, default=Path("data/ppo"), help="output directory"
+    )
+
     simulate_parser = commands.add_parser(
         "simulate", parents=[shared], help="run the arm and block simulation"
     )
@@ -227,6 +255,10 @@ def parse_args() -> argparse.Namespace:
         args.members < 1 or args.epochs < 1 or args.patience < 1
     ):
         raise SystemExit("--members, --epochs and --patience must be at least 1")
+    if args.command == "train-ppo" and (
+        args.timesteps < 1 or args.n_envs < 1 or args.eval_episodes < 1
+    ):
+        raise SystemExit("--timesteps, --n-envs and --eval-episodes must be at least 1")
 
     return args
 
@@ -464,6 +496,23 @@ def train_surrogate_command(args: argparse.Namespace) -> None:
     )
 
 
+def train_ppo_command(args: argparse.Namespace) -> None:
+    """Train the probing policy with MaskablePPO and report the paired
+    evaluation against random probing."""
+    config = make_probing_env_config(args.ensemble)
+    print(
+        train_ppo(
+            config=config,
+            out_dir=args.out,
+            timesteps=args.timesteps,
+            n_envs=args.n_envs,
+            eval_every=args.eval_every,
+            eval_episodes=args.eval_episodes,
+            seed=args.seed,
+        )
+    )
+
+
 def main(args: argparse.Namespace) -> None:
     if args.command == "calibrate":
         calibrate(
@@ -494,6 +543,8 @@ def main(args: argparse.Namespace) -> None:
         generate_surrogate_data_command(args)
     elif args.command == "train-surrogate":
         train_surrogate_command(args)
+    elif args.command == "train-ppo":
+        train_ppo_command(args)
     else:
         simulate(args)
 
