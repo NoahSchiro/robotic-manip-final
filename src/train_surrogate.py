@@ -23,7 +23,6 @@ from torch import nn
 from .estimator import CALIBRATED_R
 from .surrogate import N_INPUTS, N_OUTPUTS, MLPWeights, SurrogateEnsemble, save_ensemble
 
-HIDDEN = 512
 BATCH_SIZE = 1024
 
 
@@ -67,19 +66,19 @@ def train_member(
     loss_w: torch.Tensor,
     epochs: int,
     patience: int,
+    hidden: int = 512,
+    layers: int = 3,
 ) -> tuple[MLPWeights, float]:
     """Train one member, returning its best weights (by validation loss)
     and that loss.  Weights come back as float64 numpy for numpy inference."""
     generator = torch.Generator().manual_seed(seed)
-    model = nn.Sequential(
-        nn.Linear(N_INPUTS, HIDDEN),
-        nn.ReLU(),
-        nn.Linear(HIDDEN, HIDDEN),
-        nn.ReLU(),
-        nn.Linear(HIDDEN, HIDDEN),
-        nn.ReLU(),
-        nn.Linear(HIDDEN, N_OUTPUTS),
-    )
+    hidden_layers: list[nn.Module] = []
+    for _ in range(layers):
+        hidden_layers += [
+            nn.Linear(N_INPUTS if not hidden_layers else hidden, hidden),
+            nn.ReLU(),
+        ]
+    model = nn.Sequential(*hidden_layers, nn.Linear(hidden, N_OUTPUTS))
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=epochs, eta_min=1e-5
@@ -115,16 +114,16 @@ def train_member(
                 break
     assert best_state is not None
     model.load_state_dict(best_state)
-    layers: list[tuple[np.ndarray, np.ndarray]] = []
+    extracted: list[tuple[np.ndarray, np.ndarray]] = []
     for i in range(0, len(model), 2):
         linear = cast_linear(model[i])
-        layers.append(
+        extracted.append(
             (
                 linear.weight.detach().numpy().astype(np.float64),
                 linear.bias.detach().numpy().astype(np.float64),
             )
         )
-    return tuple(layers), best_loss
+    return tuple(extracted), best_loss
 
 
 def cast_linear(module: nn.Module) -> nn.Linear:
@@ -154,6 +153,31 @@ def world_frame_rmse(
     return np.sqrt((world**2).mean(axis=0))
 
 
+def _train_member_worker(
+    seed: int,
+    hidden: int,
+    layers: int,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_val: np.ndarray,
+    y_val: np.ndarray,
+    loss_w: np.ndarray,
+    epochs: int,
+    patience: int,
+) -> tuple[MLPWeights, float]:
+    """Train one member in a worker process (torch single-threaded; the
+    members run in parallel)."""
+    torch.set_num_threads(1)
+    x_tr = torch.tensor(x_train, dtype=torch.float32)
+    y_tr = torch.tensor(y_train, dtype=torch.float32)
+    x_v = torch.tensor(x_val, dtype=torch.float32)
+    y_v = torch.tensor(y_val, dtype=torch.float32)
+    lw = torch.tensor(loss_w, dtype=torch.float32)
+    return train_member(
+        seed, x_tr, y_tr, x_v, y_v, lw, epochs, patience, hidden, layers
+    )
+
+
 def train_ensemble(
     dataset_path: Path,
     out_path: Path,
@@ -161,6 +185,8 @@ def train_ensemble(
     epochs: int,
     patience: int,
     seed: int,
+    hidden: int = 512,
+    layers: int = 3,
 ) -> str:
     """Train the ensemble on the dataset, save it, and return the summary:
     validation RMSE against the estimator's tolerated prediction error."""
@@ -173,19 +199,34 @@ def train_ensemble(
     input_std[input_std < 1e-6] = 1.0
     output_std[output_std < 1e-6] = 1.0
 
-    x_train = torch.tensor((x[train] - input_mean) / input_std, dtype=torch.float32)
-    y_train = torch.tensor((y[train] - output_mean) / output_std, dtype=torch.float32)
-    x_val = torch.tensor((x[val] - input_mean) / input_std, dtype=torch.float32)
-    y_val = torch.tensor((y[val] - output_mean) / output_std, dtype=torch.float32)
-    loss_w = torch.tensor(loss_weights(output_std), dtype=torch.float32)
+    from concurrent.futures import ProcessPoolExecutor
 
-    weights = []
-    for i in range(members):
-        member_weights, best_loss = train_member(
-            seed + i, x_train, y_train, x_val, y_val, loss_w, epochs, patience
+    x_train_np = ((x[train] - input_mean) / input_std).astype(np.float64)
+    y_train_np = ((y[train] - output_mean) / output_std).astype(np.float64)
+    x_val_np = ((x[val] - input_mean) / input_std).astype(np.float64)
+    y_val_np = ((y[val] - output_mean) / output_std).astype(np.float64)
+    member_args = [
+        (
+            seed + i,
+            hidden,
+            layers,
+            x_train_np,
+            y_train_np,
+            x_val_np,
+            y_val_np,
+            loss_weights(output_std),
+            epochs,
+            patience,
         )
-        weights.append(member_weights)
-        print(f"member {i}: best weighted val MSE {best_loss:.6f}", flush=True)
+        for i in range(members)
+    ]
+    weights = []
+    with ProcessPoolExecutor(members) as pool:
+        for i, (member_weights, best_loss) in enumerate(
+            pool.map(_train_member_worker, *zip(*member_args))
+        ):
+            weights.append(member_weights)
+            print(f"member {i}: best weighted val MSE {best_loss:.6f}", flush=True)
 
     ensemble = SurrogateEnsemble(
         input_mean=input_mean,

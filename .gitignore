@@ -5,7 +5,6 @@
 assets/
 __pycache__/
 
-# surrogate datasets are regenerable from their seed
-data/surrogate_*.npz
-data/generation.log
-data/ppo_*
+# everything under data/ is regenerable from the recorded commands and
+# seeds
+data/

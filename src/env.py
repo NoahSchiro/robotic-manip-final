@@ -35,14 +35,15 @@ from pydrake.all import RigidTransform, RotationMatrix
 
 from .action import Action
 from .estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
-from .geometry import SurfaceNormal
+from .geometry import SurfaceNormal, SurfacePart
 from .iiwa import STANDOFF, Pusher, clear_sites
 from .object import Object, Rod
 from .observation import wrap_angle
 from .params import Eta, GridSpec, grid_spans, make_grid, sample_eta
+from .path_family import PathFamily, load_path_family, perturb_tip_positions
+from sb3_contrib import MaskablePPO
+
 from .surrogate import (
-    LAG_MAX,
-    SCALE_JITTER,
     SurrogateEnsemble,
     SurrogatePredictor,
     load_ensemble,
@@ -81,6 +82,10 @@ class ProbingEnvConfig:
     site_normals: np.ndarray  # (S, 3) body frame
     speeds: tuple[float, ...]
     times: tuple[float, ...]
+    family: PathFamily
+    tip_body_xy: np.ndarray  # (A, 2) approach-point body xy per push action
+    normal_body_xy: np.ndarray  # (A, 2) inward normal xy per push action
+    forward: np.ndarray  # (A,) approach + v*T distance per push action
     max_pushes: int = MAX_PUSHES
     entropy_weight: float = ENTROPY_WEIGHT
     step_cost: float = STEP_COST
@@ -107,6 +112,7 @@ def make_probing_env_config(
     rod_mass: float = ROD_MASS,
     push_density: float = PUSH_DENSITY,
     site_clearance: float = SITE_CLEARANCE,
+    family_path: Path = Path("data/path_family.npz"),
 ) -> ProbingEnvConfig:
     """Build the environment's immutable setup: the hypothesis grid, the
     pruned clear-site library (same density and clearance as the training
@@ -121,13 +127,30 @@ def make_probing_env_config(
         site_clearance,
     )
     picked = prune_sites(np.array([site.position for site in clear]), keep)
+    picked_sites = [clear[i] for i in picked]
+    n_speeds, n_times = len(SPEEDS), len(TIMES)
     return ProbingEnvConfig(
         ensemble=load_ensemble(ensemble_path),
         grid=make_grid(spec, reference.parts),
-        site_positions=np.array([clear[i].position for i in picked]),
-        site_normals=np.array([clear[i].normal for i in picked]),
+        site_positions=np.array([site.position for site in picked_sites]),
+        site_normals=np.array([site.normal for site in picked_sites]),
         speeds=SPEEDS,
         times=TIMES,
+        family=load_path_family(family_path),
+        tip_body_xy=np.repeat(
+            np.array([site.position[:2] for site in picked_sites]),
+            n_speeds * n_times,
+            axis=0,
+        ),
+        normal_body_xy=np.repeat(
+            np.array([site.normal[:2] for site in picked_sites]),
+            n_speeds * n_times,
+            axis=0,
+        ),
+        forward=np.tile(
+            STANDOFF + np.repeat(SPEEDS, n_times) * np.tile(TIMES, n_speeds),
+            len(picked_sites),
+        ),
     )
 
 
@@ -164,13 +187,7 @@ def member_spread(
             velocity=speed,
             time=time,
         )
-        path = nominal_tip_path(
-            pose,
-            action,
-            SETTLE_TIME,
-            lag=float(rng.uniform(0.0, LAG_MAX)),
-            scale=float(rng.uniform(1.0 - SCALE_JITTER, 1.0 + SCALE_JITTER)),
-        )
+        path = nominal_tip_path(pose, action, SETTLE_TIME)
         start = np.zeros(6)
         start[:2] = pose.translation()[:2]
         start[2] = np.arctan2(
@@ -202,6 +219,109 @@ def member_spread(
         [ensemble.predict(inputs, member=m) for m in range(len(ensemble.members))]
     )
     return per_member.std(axis=0).mean(axis=0)
+
+
+def sample_episode_conditions(
+    rng: np.random.Generator, parts: list[SurfacePart]
+) -> tuple[Eta, np.ndarray]:
+    """The true eta and start pose from `rng` — the exact sampling the
+    env's reset uses, so paired evaluations (surrogate and Drake) see
+    identical episode conditions."""
+
+    eta = sample_eta(rng, GridSpec(), parts)
+    rho = 0.1 * np.sqrt(rng.uniform())
+    theta = rng.uniform(-np.pi, np.pi)
+    pose = np.array(
+        [
+            WORKSPACE_CENTER[0] + rho * np.cos(theta),
+            WORKSPACE_CENTER[1] + rho * np.sin(theta),
+            rng.uniform(-np.pi, np.pi),
+        ]
+    )
+    return eta, pose
+
+
+def observation_vector(
+    belief: GridBayesFilter,
+    pose: np.ndarray,
+    last_measurement: np.ndarray,
+    last_action: np.ndarray,
+    pushes: int,
+) -> np.ndarray:
+    """The policy's observation from a filter state (shared with the
+    Drake-world transfer evaluation)."""
+    probs = belief.probs
+    log_probs = np.log(np.maximum(probs, 1e-8))
+    return np.asarray(
+        np.concatenate(
+            [
+                pose,
+                log_probs,
+                [belief.entropy(), probs.max()],
+                belief.map_eta().as_array(),
+                belief.mean_eta().as_array(),
+                last_measurement,
+                last_action,
+                [float(pushes)],
+            ]
+        ),
+        dtype=np.float32,
+    )
+
+
+def reachability_mask(pose: np.ndarray, config: ProbingEnvConfig) -> np.ndarray:
+    """Mask over push actions: approach and push-end tip targets inside the
+    reach band.  The stop action is handled by the callers."""
+    c, s = np.cos(pose[2]), np.sin(pose[2])
+    rot = np.array([[c, -s], [s, c]])
+    approach_body = config.tip_body_xy - STANDOFF * config.normal_body_xy
+    push_end_body = approach_body + config.forward[:, None] * config.normal_body_xy
+    approach = pose[:2] + approach_body @ rot.T
+    push_end = pose[:2] + push_end_body @ rot.T
+    r_approach = np.linalg.norm(approach, axis=1)
+    r_push_end = np.linalg.norm(push_end, axis=1)
+    inside = (r_approach >= REACH_MIN) & (r_approach <= REACH_MAX)
+    inside &= (r_push_end >= REACH_MIN) & (r_push_end <= REACH_MAX)
+    return np.asarray(inside, dtype=bool)
+
+
+def select_push_action(
+    model: MaskablePPO,
+    belief: GridBayesFilter,
+    pose: np.ndarray,
+    last_measurement: np.ndarray,
+    last_action: np.ndarray,
+    pushes: int,
+    config: ProbingEnvConfig,
+    failed_sites: set[int],
+) -> tuple[int, float, float] | None:
+    """The deployment action selection: the trained policy picks the next
+    push from the pruned library under the reachability mask, excluding
+    sites whose IK failed.  None when the policy stops."""
+    obs = observation_vector(belief, pose, last_measurement, last_action, pushes)
+    mask = reachability_mask(pose, config).copy()
+    per_site = len(config.speeds) * len(config.times)
+    for site in failed_sites:
+        mask[site * per_site : (site + 1) * per_site] = False
+    full_mask = np.append(mask, True)
+    action, _ = model.predict(obs, action_masks=full_mask, deterministic=True)
+    chosen = int(action)
+    if chosen == config.n_actions - 1:
+        return None
+    return split_action(chosen, config)
+
+
+def split_action(action: int, config: ProbingEnvConfig) -> tuple[int, float, float]:
+    """Split a push action index into (site index, speed, contact time)."""
+    per_site = len(config.speeds) * len(config.times)
+    site, rest = divmod(action, per_site)
+    speed_idx, time_idx = divmod(rest, len(config.times))
+    return site, config.speeds[speed_idx], config.times[time_idx]
+
+
+def env_parts() -> list[tuple[float, float, float, float]]:
+    """The block's surface parts, for sampling etas."""
+    return Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, ROD_MASS)).parts
 
 
 def planar_transform(pose: np.ndarray) -> RigidTransform:
@@ -256,7 +376,7 @@ class ProbingEnv(gymnasium.Env):
             dtype=np.float32,
         )
         self.action_space = spaces.Discrete(config.n_actions)
-        self._parts = _env_parts()
+        self._parts = env_parts()
         self.belief: GridBayesFilter | None = None
         self._true_eta: Eta | None = None
         self._pose = np.zeros(3)
@@ -270,17 +390,7 @@ class ProbingEnv(gymnasium.Env):
     def _reachable(self) -> np.ndarray:
         """Mask over push actions: the approach and push-end tip targets
         must both sit inside the reach band."""
-        c, s = np.cos(self._pose[2]), np.sin(self._pose[2])
-        rot = np.array([[c, -s], [s, c]])
-        approach_body = self._tip_body_xy - STANDOFF * self._normal_body_xy
-        push_end_body = approach_body + self._forward[:, None] * self._normal_body_xy
-        approach = self._pose[:2] + approach_body @ rot.T
-        push_end = self._pose[:2] + push_end_body @ rot.T
-        r_approach = np.linalg.norm(approach, axis=1)
-        r_push_end = np.linalg.norm(push_end, axis=1)
-        inside = (r_approach >= REACH_MIN) & (r_approach <= REACH_MAX)
-        inside &= (r_push_end >= REACH_MIN) & (r_push_end <= REACH_MAX)
-        return np.asarray(inside, dtype=bool)
+        return reachability_mask(self._pose, self.config)
 
     def _action_mask(self) -> np.ndarray:
         mask = np.zeros(self.config.n_actions, dtype=bool)
@@ -330,15 +440,8 @@ class ProbingEnv(gymnasium.Env):
         self, *, seed: int | None = None, options: dict[str, object] | None = None
     ) -> tuple[np.ndarray, dict[str, object]]:
         super().reset(seed=seed)
-        self._true_eta = sample_eta(self.np_random, GridSpec(), self._parts)
-        rho = 0.1 * np.sqrt(self.np_random.uniform())
-        theta = self.np_random.uniform(-np.pi, np.pi)
-        self._pose = np.array(
-            [
-                WORKSPACE_CENTER[0] + rho * np.cos(theta),
-                WORKSPACE_CENTER[1] + rho * np.sin(theta),
-                self.np_random.uniform(-np.pi, np.pi),
-            ]
+        self._true_eta, self._pose = sample_episode_conditions(
+            self.np_random, self._parts
         )
         self._pushes = 0
         self._last_measurement = np.zeros(6)
@@ -364,7 +467,7 @@ class ProbingEnv(gymnasium.Env):
                 self._info("stop"),
             )
 
-        site, speed, time = self._split_action(int(action))
+        site, speed, time = split_action(int(action), self.config)
         entropy_before = self.belief.entropy()
 
         # The executed path: the commanded maneuver run with this push's
@@ -377,12 +480,13 @@ class ProbingEnv(gymnasium.Env):
             velocity=speed,
             time=time,
         )
-        path = nominal_tip_path(
-            planar_transform(self._pose),
-            body_action,
-            SETTLE_TIME,
-            lag=float(self.np_random.uniform(0.0, LAG_MAX)),
-            scale=float(self.np_random.uniform(1.0 - SCALE_JITTER, 1.0 + SCALE_JITTER)),
+        path = nominal_tip_path(planar_transform(self._pose), body_action, SETTLE_TIME)
+        path.tip_positions[:] = perturb_tip_positions(
+            path.tip_positions,
+            path.tip_times,
+            path.window_end,
+            self.config.family,
+            self.np_random,
         )
         path_block = path_downsample(path.tip_times, path.tip_positions)[:2].reshape(-1)
 
@@ -453,12 +557,6 @@ class ProbingEnv(gymnasium.Env):
             reward += self._stop_reward()
             return self._observation(), reward, True, False, self._info("max_pushes")
         return self._observation(), reward, False, False, self._info("push")
-
-    def _split_action(self, action: int) -> tuple[int, float, float]:
-        per_site = len(self.config.speeds) * len(self.config.times)
-        site, rest = divmod(action, per_site)
-        speed_idx, time_idx = divmod(rest, len(self.config.times))
-        return site, self.config.speeds[speed_idx], self.config.times[time_idx]
 
     def action_masks(self) -> np.ndarray:
         """MaskablePPO's hook: which actions are legal this step."""

@@ -36,12 +36,8 @@ from .iiwa import Pusher, clear_sites
 from .object import Object, Rod
 from .observation import ObjectState, wrap_angle
 from .params import GridSpec, sample_eta
-from .surrogate import (
-    LAG_MAX,
-    SCALE_JITTER,
-    nominal_tip_path,
-    path_downsample,
-)
+from .path_family import PathFamily, perturb_tip_positions
+from .surrogate import nominal_tip_path, path_downsample
 
 VAL_EVERY = 10  # every 10th sample per cell becomes validation
 MU_DECADES = 10  # validation cells along the friction range
@@ -58,6 +54,7 @@ class SurrogateSetup:
     speeds: tuple[float, ...]
     times: tuple[float, ...]
     settle_time: float
+    family: PathFamily
     model: PushModelConfig
 
 
@@ -66,6 +63,7 @@ def make_surrogate_setup(
     push_density: float,
     site_clearance: float,
     settle_time: float,
+    family: PathFamily,
     model: PushModelConfig,
     speeds: tuple[float, ...] = (0.05, 0.1),
     times: tuple[float, ...] = (0.2, 0.4),
@@ -77,6 +75,7 @@ def make_surrogate_setup(
     return SurrogateSetup(
         spec=spec,
         parts=reference.parts,
+        family=family,
         sites=clear_sites(
             reference.parts,
             reference.surface_normals(push_density),
@@ -108,10 +107,11 @@ def surrogate_sample(
     # discrete solver rejects; the truth sim's states always carry ~1e-10
     # of numerical dust, so match that here.
     start_velocity = SpatialVelocity(np.zeros(3), rng.uniform(-1e-9, 1e-9, size=3))
-    lag = float(rng.uniform(0.0, LAG_MAX))
-    scale = float(rng.uniform(1.0 - SCALE_JITTER, 1.0 + SCALE_JITTER))
 
-    path = nominal_tip_path(obj.x_wo(), action, setup.settle_time, lag, scale)
+    path = nominal_tip_path(obj.x_wo(), action, setup.settle_time)
+    path.tip_positions[:] = perturb_tip_positions(
+        path.tip_positions, path.tip_times, path.window_end, setup.family, rng
+    )
     model.set_eta(eta)
     push_end, window_end = model.predict_path(
         ObjectState(pose=obj.x_wo(), velocity=start_velocity),

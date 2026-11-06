@@ -70,8 +70,6 @@ class SurrogateEnsemble:
 
 
 SAMPLE_PERIOD = 0.01  # s, nominal tip path sampling period
-LAG_MAX = 0.05  # s, upper bound of the executed path's standoff hold
-SCALE_JITTER = 0.05  # executed push speed scale, uniform in [1 - this, 1 + this]
 
 
 @dataclass(frozen=True)
@@ -89,17 +87,15 @@ def nominal_tip_path(
     pose: RigidTransform,
     action: Action,
     settle_time: float,
-    lag: float = 0.0,
-    scale: float = 1.0,
 ) -> TipPath:
-    """Construct the executed tip path for `action`: the commanded maneuver
-    (push at constant speed from the standoff point through the contact,
-    back off one standoff, window closes `settle_time` after the push
-    segment) run at speed `scale`, with the whole response delayed by `lag`
-    — the arm-lag family the PD-tracked executed paths live in."""
+    """Construct the commanded tip path for `action`: push at constant
+    speed from the standoff point through the contact, back off one
+    standoff, window closes `settle_time` after the push segment.  The
+    executed-path deviation (arm tracking error) is added by the caller
+    from the calibrated path family."""
     contact = pose @ action.contact.position
     normal = pose.rotation() @ action.contact.normal
-    speed = action.velocity * scale
+    speed = action.velocity
     approach = contact - STANDOFF * normal
     push_end = contact + speed * action.time * normal
     push_end_time = (STANDOFF + speed * action.time) / speed
@@ -112,18 +108,15 @@ def nominal_tip_path(
     times = np.arange(0.0, window_end, SAMPLE_PERIOD)
     times = times[times < window_end - SAMPLE_PERIOD / 2]
     times = np.append(times, window_end)
-    # The executed response runs `lag` behind the commanded clock and holds
-    # at the standoff until it starts.
-    shifted = np.maximum(times - lag, 0.0)
-    pushing = (times >= lag) & (shifted <= push_end_time)
-    backing_off = (shifted > push_end_time) & (shifted < back_off_end)
+    pushing = times <= push_end_time
+    backing_off = (times > push_end_time) & (times < back_off_end)
     positions = np.where(
         pushing,
-        approach[:, None] + speed * shifted[None, :] * normal[:, None],
+        approach[:, None] + speed * times[None, :] * normal[:, None],
         np.where(
             backing_off,
             push_end[:, None]
-            - speed * (shifted[None, :] - push_end_time) * normal[:, None],
+            - speed * (times[None, :] - push_end_time) * normal[:, None],
             np.repeat(approach[:, None], len(times), axis=1),
         ),
     )
