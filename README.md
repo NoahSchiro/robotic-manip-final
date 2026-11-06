@@ -55,3 +55,19 @@ prints into `src/estimator.py`.
 The likelihood is a Student-t (`--nu 3` by default), which keeps one badly
 mispredicted push from eliminating the right hypothesis; `--nu 0` uses the
 proposal's Gaussian instead.
+
+## Offline replay (the estimator's reference)
+
+The estimator's quality is tracked on a frozen dataset of recorded trials
+(`data/replay_trials.npz`, committed).  Record it with
+`uv run python main.py record-trials` (slow: runs the truth sim), score it
+with `uv run python main.py replay` (minutes), which writes
+`data/replay_report.json`.  Any change to the prediction model is judged by
+re-running `replay` on the same dataset.
+
+## Surrogate training data
+
+`uv run python main.py gen-surrogate-data` generates the surrogate's dataset:
+sampled (eta, start pose, action) tuples replayed through the Drake prediction
+model with constructed nominal tip paths.
+

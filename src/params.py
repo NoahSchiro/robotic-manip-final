@@ -113,11 +113,30 @@ def sample_eta(
             return Eta(float(rng.uniform(*spec.mu_range)), float(bx), float(by))
 
 
+def grid_spans(grid: list[Eta]) -> np.ndarray:
+    """Get each parameter's grid extent (1.0 where the grid is constant):
+    the unit parameter distances are scaled in for comparison."""
+    points = np.array([g.as_array() for g in grid])
+    span = np.ptp(points, axis=0)
+    span[span == 0.0] = 1.0
+    return span
+
+
+def grid_step(grid: list[Eta]) -> np.ndarray:
+    """Get one grid step per parameter: the gap between adjacent values on
+    each axis (uniform on the regular axes make_grid lays out)."""
+    points = np.array([g.as_array() for g in grid])
+    step = np.ones(points.shape[1])
+    for axis in range(points.shape[1]):
+        values = np.unique(points[:, axis])
+        if len(values) > 1:
+            step[axis] = np.diff(values).min()
+    return step
+
+
 def nearest_hypothesis(grid: list[Eta], eta: Eta) -> Eta:
     """Get the grid hypothesis nearest `eta`, each parameter scaled by the
     grid's span so friction and position compare evenly."""
     points = np.array([g.as_array() for g in grid])
-    span = np.ptp(points, axis=0)
-    span[span == 0.0] = 1.0
-    distances = (((points - eta.as_array()) / span) ** 2).sum(axis=1)
+    distances = (((points - eta.as_array()) / grid_spans(grid)) ** 2).sum(axis=1)
     return grid[int(np.argmin(distances))]

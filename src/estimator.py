@@ -42,9 +42,14 @@ from .params import Eta
 # in m, rad, m/s, rad/s.  It describes the prediction model's errors, so
 # rerun main.py calibrate and paste its output here after changing the
 # prediction model, the measurement, or the grid.
-# Calibrated by main.py calibrate: 48 truth pushes, seed 0,
-# truth timestep 0.0001, model timestep 0.002, settle time 0.1 s,
-# site clearance 0.001 m.
+# Prediction-error covariances of the measurement (x, y, yaw, vx, vy, wz),
+# in m, rad, m/s, rad/s — one per prediction model, each calibrated by
+# main.py calibrate (48 truth pushes, seed 0, truth timestep 0.0001,
+# settle time 0.1 s, site clearance 0.001 m).  Rerun the matching command
+# after changing the prediction model, the measurement, or the grid.
+#
+# CALIBRATED_R covers the Drake plant replays of measured tip paths — the
+# paper-numbers world.
 CALIBRATED_R = np.array(
     [
         [2.999e-07, -3.691e-08, 2.328e-06, 7.134e-07, 5.013e-09, 5.954e-06],
@@ -53,6 +58,23 @@ CALIBRATED_R = np.array(
         [7.134e-07, -4.476e-07, 8.639e-06, 7.403e-06, 7.517e-07, 2.695e-06],
         [5.013e-09, 2.605e-07, 1.434e-06, 7.517e-07, 2.046e-06, 3.655e-07],
         [5.954e-06, -1.320e-06, 2.670e-04, 2.695e-06, 3.655e-07, 9.172e-04],
+    ]
+)
+
+# CALIBRATED_R_SURROGATE covers the trained surrogate predicting from
+# measured tip paths.  Its errors carry the arm's force- and
+# gravity-dependent tracking deviation from the commanded path, which the
+# constructed training paths do not reproduce — the env's estimator noise
+# is scaled to this world so the policy trains against deployment-honest
+# belief degradation.
+CALIBRATED_R_SURROGATE = np.array(
+    [
+        [3.892e-05, 1.022e-05, 5.268e-05, 1.437e-04, 3.888e-05, 4.768e-04],
+        [1.022e-05, 4.819e-05, 7.738e-06, 1.075e-05, 1.839e-04, -7.429e-04],
+        [5.268e-05, 7.738e-06, 3.673e-03, -1.501e-04, 2.191e-04, 7.709e-03],
+        [1.437e-04, 1.075e-05, -1.501e-04, 1.252e-03, 1.263e-04, 9.018e-05],
+        [3.888e-05, 1.839e-04, 2.191e-04, 1.263e-04, 1.329e-03, -2.172e-03],
+        [4.768e-04, -7.429e-04, 7.709e-03, 9.018e-05, -2.172e-03, 1.941e-01],
     ]
 )
 
@@ -121,8 +143,15 @@ class GridBayesFilter:
 
     def update(self, obs: PushObservation) -> None:
         """Reweight every hypothesis by its likelihood of `obs`."""
-        predicted = self.model.predict(self.grid, obs)
-        errors = planar_error(obs.measured(), predicted)
+        self.update_from_predictions(obs.measured(), self.model.predict(self.grid, obs))
+
+    def update_from_predictions(
+        self, measured: np.ndarray, predicted: np.ndarray
+    ) -> None:
+        """Reweight every hypothesis by the likelihood of `measured` against
+        each row of the (N, 6) `predicted`.  Split from update() so an offline
+        replay can score several likelihoods against one prediction pass."""
+        errors = planar_error(measured, predicted)
         q = squared_mahalanobis(errors, self.R_inv)
         log_likelihood = (
             gaussian_log_likelihood(q)

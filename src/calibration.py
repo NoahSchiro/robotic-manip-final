@@ -16,22 +16,27 @@ constant it prints into src/estimator.py:
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 import numpy as np
 
-from .dynamics import DrakePushModel, PushModelConfig
+from .dynamics import DrakePushModel, DynamicsModel, PushModelConfig
 from .geometry import SurfacePart
 from .iiwa import Pusher, clear_sites
 from .object import Object, Rod
 from .observation import planar_error
 from .params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
 from .recording import NoReachablePush, TruthSim, TruthSimConfig
+from .surrogate import SurrogatePredictor, load_ensemble
 
 # Floor on each error's standard deviation (x, y, yaw, vx, vy, wz), in m,
 # rad, m/s, rad/s: keeps R invertible where the samples barely vary.
 FLOOR_STD = np.array([1e-4, 1e-4, 1e-3, 2e-4, 2e-4, 2e-3])
 LABELS = ("x", "y", "yaw", "vx", "vy", "wz")
+
+
+PREDICTORS = ("drake", "surrogate")
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,16 @@ class SampleSetup:
     site_clearance: float
     truth: TruthSimConfig
     model: PushModelConfig
+    predictor: str = "drake"
+    ensemble_path: Path | None = None
+
+    def build_predictor(self) -> DynamicsModel:
+        """Build the sample's predictor: the Drake plant, or the trained
+        surrogate whose errors R should cover."""
+        if self.predictor == "surrogate":
+            assert self.ensemble_path is not None
+            return SurrogatePredictor(load_ensemble(self.ensemble_path))
+        return DrakePushModel(self.model)
 
 
 def make_sample_setup(
@@ -54,6 +69,8 @@ def make_sample_setup(
     site_clearance: float,
     truth: TruthSimConfig,
     model: PushModelConfig,
+    predictor: str = "drake",
+    ensemble_path: Path | None = None,
 ) -> SampleSetup:
     """Collect what every calibration sample shares."""
     spec = GridSpec()
@@ -68,6 +85,8 @@ def make_sample_setup(
         site_clearance=site_clearance,
         truth=truth,
         model=model,
+        predictor=predictor,
+        ensemble_path=ensemble_path,
     )
 
 
@@ -91,7 +110,8 @@ def calibration_sample(
         obs = TruthSim(obj, pusher, setup.truth).record_random_push(rng, obj, sites)
     except NoReachablePush:
         return None
-    nearest, true = DrakePushModel(setup.model).predict(
+    predictor = setup.build_predictor()
+    nearest, true = predictor.predict(
         [nearest_hypothesis(setup.grid, eta_true), eta_true], obs
     )
     measured = obs.measured()
