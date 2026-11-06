@@ -628,7 +628,7 @@ def simulate(args: argparse.Namespace) -> None:
         build_iiwa_pusher_plant(pusher), pusher, obj, action, Q_HOME
     )
     diagram, plant = build_diagram(
-        args.time_step, obj, Table(args.mu), pusher, meshcat=sim.meshcat, q_ref=q_traj
+        args.time_step, obj, Table(mu), pusher, meshcat=sim.meshcat, q_ref=q_traj
     )
 
     context = diagram.CreateDefaultContext()
@@ -638,7 +638,7 @@ def simulate(args: argparse.Namespace) -> None:
     # sits at the footprint's bottom center.
     object_body = place_object(plant, plant_context, obj)
     X_WO = obj.x_wo()
-    print(f"object-table friction mu = {args.mu}")
+    print(f"object-table friction mu = {mu:.3f}")
     if obj.rod is not None:
         print(f"rod welded at ({obj.rod.x}, {obj.rod.y}) m, mass {obj.rod.mass} kg")
     print(
