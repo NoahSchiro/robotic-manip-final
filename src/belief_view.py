@@ -1,4 +1,5 @@
-"""Live views of the estimator's belief, for watching --estimate work.
+"""Live views of the estimator's belief, for watching it work in --estimate
+or an MPC episode.
 
 Two views, both refreshed after every push:
 - in Meshcat, the belief over the rod's position drawn onto the block's top
@@ -232,3 +233,18 @@ class BeliefDashboard:
         ax.legend(loc="upper right", fontsize=8)
         self.ax_entropy.set_xticks(push)
         self.ax_error.set_xticks(push)
+
+
+def show_belief(
+    push: int,
+    belief: GridBayesFilter,
+    obj: Object,
+    meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
+) -> None:
+    """Draw `belief`, the belief after `push` pushes, in whichever views are
+    open."""
+    if meshcat is not None:
+        show_rod_belief(meshcat, obj, belief)
+    if dashboard is not None:
+        dashboard.update(push, belief)

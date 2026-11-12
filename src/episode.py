@@ -17,6 +17,7 @@ from pydrake.all import PiecewisePolynomial
 from pydrake.geometry import Meshcat
 
 from .action import Action
+from .belief_view import BeliefDashboard, show_belief
 from .estimator import GridBayesFilter
 from .geometry import SurfaceNormal
 from .mpc import Candidate, GoalTolerance, MpcController, at_goal, goal_error
@@ -85,10 +86,13 @@ def apply_push(
     extra: str,
     obj: Object,
     belief: GridBayesFilter | None,
+    meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
     tally: Tally,
 ) -> Tally:
     """Update `belief` from an executed push, moving `obj` to where it left the
-    object, printing the outcome, returning `tally` with the push counted."""
+    object, printing the outcome and drawing the belief in whichever views are
+    open, returning `tally` with the push counted."""
     number = tally.pushes + 1
     lines = [push_line(number, label, obs, extra)]
     update_seconds = 0.0
@@ -100,6 +104,8 @@ def apply_push(
     obj.pose = obs.final_pose()
     lines.append(goal_line(*goal_error(obj.pose, obj.goal)))
     print("\n".join(lines))
+    if belief is not None:
+        show_belief(number, belief, obj, meshcat, dashboard)
     return replace(
         tally,
         pushes=number,
@@ -112,6 +118,7 @@ def run_probes(
     obj: Object,
     truth_sim: TruthSim,
     meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
     belief: GridBayesFilter | None,
     probe_sites: list[SurfaceNormal],
     count: int,
@@ -128,7 +135,14 @@ def run_probes(
             print("no reachable probe push; starting placement")
             break
         tally = apply_push(
-            obs, "probe", "", obj, belief, replace(tally, probes=tally.probes + 1)
+            obs,
+            "probe",
+            "",
+            obj,
+            belief,
+            meshcat,
+            dashboard,
+            replace(tally, probes=tally.probes + 1),
         )
     return tally
 
@@ -160,6 +174,7 @@ def run_placement(
     obj: Object,
     truth_sim: TruthSim,
     meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
     controller: MpcController,
     belief: GridBayesFilter | None,
     plan_eta: Callable[[], Eta],
@@ -203,6 +218,8 @@ def run_placement(
             f"{chosen.cost:.3f}",
             obj,
             belief,
+            meshcat,
+            dashboard,
             tally,
         )
 
@@ -212,6 +229,7 @@ def run_episode(
     obj: Object,
     truth_sim: TruthSim,
     meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
     controller: MpcController,
     belief: GridBayesFilter | None,
     plan_eta: Callable[[], Eta],
@@ -224,17 +242,28 @@ def run_episode(
     must hold the block where `obj.pose` says, moving `obj.pose` along.  The
     first `probe_pushes` are random draws from `probe_sites`; the rest come
     from `controller`, which asks `plan_eta` for its eta before each plan.
-    `belief` (None skips estimation) is updated after every push."""
+    `belief` (None skips estimation) is updated after every push and drawn
+    in `meshcat` and `dashboard` when they're open."""
     if meshcat is not None:
         show_object_goal(meshcat, obj)
+    if belief is not None:
+        show_belief(0, belief, obj, meshcat, dashboard)
     started = truth_sim.context.get_time()
     probed = run_probes(
-        rng, obj, truth_sim, meshcat, belief, probe_sites, min(probe_pushes, max_pushes)
+        rng,
+        obj,
+        truth_sim,
+        meshcat,
+        dashboard,
+        belief,
+        probe_sites,
+        min(probe_pushes, max_pushes),
     )
     stop_reason, tally = run_placement(
         obj,
         truth_sim,
         meshcat,
+        dashboard,
         controller,
         belief,
         plan_eta,

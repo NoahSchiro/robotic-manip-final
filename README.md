@@ -95,3 +95,8 @@ and 10 degrees of the goal (`--position-tolerance`, `--yaw-tolerance`).  It
 stops after 20 pushes (`--max-pushes`, probes included) or when no push is
 predicted to help.  Each MPC
 decision takes about 35 to 50 s on 12 cores, plus the estimator update.
+
+Without `--headless`, the belief views from parameter estimation update
+after every push, probes included; Meshcat also shows a yellow ghost where
+the MPC predicts its push leaves the block.  `--plan-with-true-eta` has no
+belief, so it shows neither belief view.

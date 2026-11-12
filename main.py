@@ -8,7 +8,7 @@ from pydrake.all import Simulator
 from pydrake.geometry import Meshcat
 
 from src.action import Action, push_library
-from src.belief_view import BeliefDashboard, show_rod_belief
+from src.belief_view import BeliefDashboard, show_belief
 from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
@@ -228,21 +228,6 @@ def format_push_report(
     )
 
 
-def show_belief(
-    push: int,
-    belief: GridBayesFilter,
-    obj: Object,
-    meshcat: Meshcat | None,
-    dashboard: BeliefDashboard | None,
-) -> None:
-    """Draw `belief`, the belief after `push` pushes, in whichever views are
-    open."""
-    if meshcat is not None:
-        show_rod_belief(meshcat, obj, belief)
-    if dashboard is not None:
-        dashboard.update(push, belief)
-
-
 def run_estimation(
     belief: GridBayesFilter,
     eta_true: Eta,
@@ -337,16 +322,12 @@ def simulate(args: argparse.Namespace) -> None:
         )
         actions = push_library(push_sites)
         print(format_placement_start(eta_true, obj, len(actions)))
+        grid = make_grid(GridSpec(), obj.parts)
         with ParallelPushModel(args.workers, push_model_config(args)) as model:
             belief = (
                 None
                 if args.plan_with_true_eta
-                else GridBayesFilter(
-                    make_grid(GridSpec(), obj.parts),
-                    model,
-                    CALIBRATED_R,
-                    args.nu or None,
-                )
+                else GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None)
             )
             result = run_episode(
                 rng=rng,
@@ -359,6 +340,11 @@ def simulate(args: argparse.Namespace) -> None:
                     realtime_rate=0.0 if sim.headless else 1.0,
                 ),
                 meshcat=sim.meshcat,
+                dashboard=(
+                    None
+                    if sim.headless or belief is None
+                    else BeliefDashboard(grid, obj.parts, eta_true)
+                ),
                 controller=MpcController(
                     model,
                     actions,
