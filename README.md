@@ -1,5 +1,7 @@
 # robotic-manip-final
 
+Implementation details and timing contracts are in [the system description](docs/system.md).
+
 ## Running the simulation
 
 ```sh
@@ -28,8 +30,23 @@ The subsystems live in `src/`
 `main.py` assembles the scene, sets the per-run block pose, and holds the
 plant time step.
 
-`uv run pytest` runs the tests.  They cover the math and geometry without
-running a simulation, so they take seconds; they can't catch physics problems.
+`uv run pytest` runs the tests. The mathematical and geometry checks take
+seconds; surrogate-environment checks need `data/surrogate_ensemble.npz` and
+`data/path_family.npz` and took about two minutes on the development laptop.
+They do not replace short Drake motion checks for physics changes.
+
+For a local CPU-only PyTorch environment on Linux:
+
+```sh
+uv venv --python 3.14 .venv
+uv pip install --python .venv/bin/python --torch-backend cpu 'torch>=2.15'
+uv pip install --python .venv/bin/python 'drake>=1.58.0' 'gymnasium>=1.4.0' 'matplotlib>=3.11.2' 'sb3-contrib>=2.9.2' 'stable-baselines3>=2.9.2' 'pytest>=9.2.0' 'mypy>=2.4.1' 'ruff>=0.17.3'
+uv run --no-sync pytest -q
+```
+
+Use `uv run --no-sync` for later commands in this local environment. A regular
+`uv run` syncs from the current lockfile, which selects the GPU PyTorch build.
+This local choice does not change teammates' environments.
 
 ## Parameter estimation
 
