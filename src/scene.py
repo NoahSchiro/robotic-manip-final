@@ -26,18 +26,12 @@ from pydrake.all import (
 from pydrake.geometry import Meshcat, Rgba
 
 from src.geometry import SurfaceNormal
-from src.iiwa import (
-    Q_HOME,
-    Pusher,
-    add_iiwa_and_pusher,
-    build_iiwa_pusher_plant,
-    hover_tip_pose,
-    solve_tip_ik,
-)
+from src.iiwa import Q_HOME, Pusher, add_iiwa_and_pusher
 from src.object import Object, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
 
 _STATE_LOGGER = "state_logger"
+_ARM_REFERENCE = "arm_reference"
 
 # Color of the ghost showing where the MPC predicts its push leaves the block.
 PREDICTION_COLOR = (0.95, 0.80, 0.15)
@@ -75,8 +69,9 @@ def build_diagram(
 ) -> tuple[Diagram, MultibodyPlant]:
     """Assemble the scene (arm with stick, table, block) plus the arm controller.
 
-    With `log_period`, the plant state is also logged at that period, in a
-    logger state_logger finds."""
+    With `q_ref`, the arm follows it from a source arm_reference finds.  With
+    `log_period`, the plant state is also logged at that period, in a logger
+    state_logger finds."""
     builder = DiagramBuilder()
     plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
     parser = Parser(plant)
@@ -104,6 +99,7 @@ def build_diagram(
         reference = builder.AddSystem(
             TrajectorySource(q_ref, output_derivative_order=1)
         )
+        reference.set_name(_ARM_REFERENCE)
     builder.Connect(reference.get_output_port(), controller.get_input_port(1))
     builder.Connect(controller.get_output_port(), plant.get_actuation_input_port())
 
@@ -127,6 +123,16 @@ def state_logger(diagram: Diagram) -> VectorLogSink:
     return logger
 
 
+def arm_reference(diagram: Diagram) -> TrajectorySource:
+    """Get the arm's reference source of a diagram built with `q_ref`.
+
+    Raises RuntimeError when `diagram` was built without one.
+    """
+    reference = diagram.GetSubsystemByName(_ARM_REFERENCE)
+    assert isinstance(reference, TrajectorySource)
+    return reference
+
+
 def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidBody:
     """Rest the block on the table top at its start pose, returning the body
     for later pose queries."""
@@ -136,23 +142,6 @@ def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidB
     )
     plant.SetFreeBodyPose(context, object_body, X_WO)
     return object_body
-
-
-def show_scene(meshcat: Meshcat, obj: Object, pusher: Pusher, time_step: float) -> None:
-    """Draw the scene as it stands between pushes: the block at its pose and
-    the arm parked over it, as each push starts."""
-    q_hover = solve_tip_ik(
-        build_iiwa_pusher_plant(pusher), pusher, hover_tip_pose(obj), Q_HOME
-    )
-    diagram, plant = build_diagram(
-        time_step, obj, Table(obj.friction), pusher, meshcat=meshcat
-    )
-    context = diagram.CreateDefaultContext()
-    plant_context = plant.GetMyMutableContextFromRoot(context)
-    place_object(plant, plant_context, obj)
-    iiwa = plant.GetBodyByName("iiwa_link_0").model_instance()
-    plant.SetPositions(plant_context, iiwa, q_hover)
-    diagram.ForcedPublish(context)
 
 
 def show_ghost(

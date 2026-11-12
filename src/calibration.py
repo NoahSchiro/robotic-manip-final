@@ -8,12 +8,11 @@ likelihood assumes zero-mean errors) plus a diagonal floor.
 
 R lives in the code as estimator.CALIBRATED_R.  Rerun this after changing
 the prediction model, the measurement, or the grid, then paste the
-constant it prints into src/estimator.py.  From the repo root:
+constant it prints into src/estimator.py:
 
-    uv run python -m scripts.calibrate_R --samples 48
+    uv run main.py calibrate --samples 48
 """
 
-import argparse
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -21,19 +20,13 @@ from typing import cast
 
 import numpy as np
 
-from src.cli import (
-    add_shared_options,
-    finish_shared_options,
-    push_model_config,
-    truth_sim_config,
-)
-from src.dynamics import DrakePushModel, PushModelConfig
-from src.geometry import SurfacePart
-from src.iiwa import Pusher
-from src.object import Object, Rod
-from src.observation import planar_error
-from src.params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
-from src.recording import TruthSimConfig, record_random_push
+from .dynamics import DrakePushModel, PushModelConfig
+from .geometry import SurfacePart
+from .iiwa import Pusher, clear_sites
+from .object import Object, Rod
+from .observation import planar_error
+from .params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
+from .recording import NoReachablePush, TruthSim, TruthSimConfig
 
 # Floor on each error's standard deviation (x, y, yaw, vx, vy, wz), in m,
 # rad, m/s, rad/s: keeps R invertible where the samples barely vary.
@@ -50,8 +43,32 @@ class SampleSetup:
     parts: list[SurfacePart]
     rod_mass: float
     push_density: float
+    site_clearance: float
     truth: TruthSimConfig
     model: PushModelConfig
+
+
+def make_sample_setup(
+    rod_mass: float,
+    push_density: float,
+    site_clearance: float,
+    truth: TruthSimConfig,
+    model: PushModelConfig,
+) -> SampleSetup:
+    """Collect what every calibration sample shares."""
+    spec = GridSpec()
+    # Only the footprint is needed, and it's the same for every eta.
+    parts = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass)).parts
+    return SampleSetup(
+        grid=make_grid(spec, parts),
+        spec=spec,
+        parts=parts,
+        rod_mass=rod_mass,
+        push_density=push_density,
+        site_clearance=site_clearance,
+        truth=truth,
+        model=model,
+    )
 
 
 def calibration_sample(
@@ -63,11 +80,16 @@ def calibration_sample(
     rng = np.random.default_rng(seed)
     eta_true = sample_eta(rng, setup.spec, setup.parts)
     obj = eta_true.to_object(rng, setup.rod_mass)
+    pusher = Pusher()
+    sites = clear_sites(
+        obj.parts,
+        obj.surface_normals(setup.push_density),
+        pusher.radius,
+        setup.site_clearance,
+    )
     try:
-        obs = record_random_push(
-            rng, obj, Pusher(), obj.surface_normals(setup.push_density), setup.truth
-        )
-    except RuntimeError:
+        obs = TruthSim(obj, pusher, setup.truth).record_random_push(rng, obj, sites)
+    except NoReachablePush:
         return None
     nearest, true = DrakePushModel(setup.model).predict(
         [nearest_hypothesis(setup.grid, eta_true), eta_true], obs
@@ -101,6 +123,7 @@ def format_constant(
     R: np.ndarray,
     samples: int,
     seed: int,
+    site_clearance: float,
     truth: TruthSimConfig,
     model: PushModelConfig,
 ) -> str:
@@ -110,42 +133,23 @@ def format_constant(
         "        [" + ", ".join(f"{v:.3e}" for v in row) + "]," for row in R
     )
     return (
-        f"# Calibrated by scripts/calibrate_R.py: {samples} truth pushes, seed "
-        f"{seed},\n"
+        f"# Calibrated by main.py calibrate: {samples} truth pushes, seed {seed},\n"
         f"# truth timestep {truth.time_step:g}, model timestep "
-        f"{model.time_step:g}, settle time {truth.settle_time:g} s.\n"
+        f"{model.time_step:g}, settle time {truth.settle_time:g} s,\n"
+        f"# site clearance {site_clearance:g} m.\n"
         f"CALIBRATED_R = np.array(\n    [\n{rows}\n    ]\n)"
     )
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    add_shared_options(parser)
-    parser.add_argument("--samples", type=int, default=48, help="truth pushes")
-    parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
-    args = parser.parse_args()
-    finish_shared_options(args)
-    return args
+def calibrate(samples: int, seed: int, workers: int, setup: SampleSetup) -> None:
+    """Run `samples` calibration pushes on `workers` processes, printing the
+    CALIBRATED_R block they give.
 
-
-def main(args: argparse.Namespace) -> None:
-    spec = GridSpec()
-    # Only the footprint is needed, and it's the same for every eta.
-    parts = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, args.rod_mass)).parts
-    truth = truth_sim_config(args)
-    model = push_model_config(args)
-    setup = SampleSetup(
-        grid=make_grid(spec, parts),
-        spec=spec,
-        parts=parts,
-        rod_mass=args.rod_mass,
-        push_density=args.push_density,
-        truth=truth,
-        model=model,
-    )
-    seeds = np.random.default_rng(args.seed).integers(2**32, size=args.samples)
+    Raises SystemExit when no sample found a reachable push.
+    """
+    seeds = np.random.default_rng(seed).integers(2**32, size=samples)
     started = time.time()
-    with ProcessPoolExecutor(args.workers) as pool:
+    with ProcessPoolExecutor(workers) as pool:
         futures = [pool.submit(calibration_sample, int(s), setup) for s in seeds]
         results = [r for r in (f.result() for f in futures) if r is not None]
     if not results:
@@ -153,7 +157,7 @@ def main(args: argparse.Namespace) -> None:
     nearest = np.array([e for e, _ in results])
     true = np.array([e for _, e in results])
     print(
-        f"{len(results)}/{args.samples} samples in {time.time() - started:.0f} s "
+        f"{len(results)}/{samples} samples in {time.time() - started:.0f} s "
         f"({len(setup.grid)} hypotheses)"
     )
     for name, errors in (("nearest grid", nearest), ("true eta", true)):
@@ -164,9 +168,12 @@ def main(args: argparse.Namespace) -> None:
     print(f"R std devs: {labeled(np.sqrt(np.diag(R)))}")
     print(
         "\nPaste into src/estimator.py, replacing CALIBRATED_R:\n\n"
-        + format_constant(rounded_R(R), len(results), args.seed, truth, model)
+        + format_constant(
+            rounded_R(R),
+            len(results),
+            seed,
+            setup.site_clearance,
+            setup.truth,
+            setup.model,
+        )
     )
-
-
-if __name__ == "__main__":
-    main(parse_args())

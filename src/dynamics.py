@@ -79,23 +79,25 @@ class PlanningModel(Protocol):
 def nominal_tip_path(obj: Object, action: Action) -> PiecewisePolynomial:
     """Get the tip's commanded path for `action` from `obj`'s current pose,
     as push_maneuver lays it out: from the standoff point, push at the
-    commanded speed, back off the same way, and rise clear of the block,
-    each leg straight and at constant speed.  Times start at 0 at the
-    standoff, like a push window's.
+    commanded speed, back off along the push line far enough to release the
+    contact, and rise clear of the block, each leg straight and at constant
+    speed.  Times start at 0 at the standoff, like a push window's.
 
     The rise matters: backing off along the push line can strike a block
     the push has rotated, and the stick drags it until it clears the top.
     """
     maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
     # Segment 1 lowers to the standoff; 2 pushes; 3 backs off; 4 rises.
-    (lowered, _), (push_end, t_push), (_, t_back_off), (over, t_rise) = maneuver[1:5]
+    (lowered, _), (push_end, t_push), (backed_off, t_back_off), (raised, t_rise) = (
+        maneuver[1:5]
+    )
     times = list(np.cumsum([0.0, t_push, t_back_off, t_rise]))
     positions = np.column_stack(
         [
             lowered.translation(),
             push_end.translation(),
-            lowered.translation(),
-            over.translation(),
+            backed_off.translation(),
+            raised.translation(),
         ]
     )
     return PiecewisePolynomial.FirstOrderHold(times, positions.tolist())

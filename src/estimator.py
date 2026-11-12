@@ -18,10 +18,12 @@ exp(-q / 2) (nu=None).  Under a Gaussian, a single badly mispredicted push
 costs the correct hypothesis hundreds of nats and a wrong one takes over
 with near certainty; the t's log-penalty grows only logarithmically in q,
 so no single push can eliminate a hypothesis.  Measuring velocity at the
-push segment's end removed the outliers seen so far, so the t is a safety
-net: in an offline replay of 19 held-out trials it still took MAPs within
-one grid step of the truth from 89% to 100% and confidently wrong final
-beliefs from 5% to 0%.
+push segment's end removed most outliers, though rare ones remain, so the t
+is a safety net: in an offline replay of 19 held-out trials it beat the
+Gaussian on MAPs within one grid step of the truth (100% against 89%) and on
+confidently wrong final beliefs (0% against 5%), a margin of one or two
+trials.  Live runs since end within one grid step in 17 or 18 of 19, with up
+to one confidently wrong.
 
 Probabilities are kept as logs so long push sequences don't underflow.  A
 wait (no push) yields no observation, so it makes no update.
@@ -38,18 +40,19 @@ from .params import Eta
 
 # Prediction-error covariance R of the measurement (x, y, yaw, vx, vy, wz),
 # in m, rad, m/s, rad/s.  It describes the prediction model's errors, so
-# rerun scripts/calibrate_R.py and paste its output here after changing the
+# rerun main.py calibrate and paste its output here after changing the
 # prediction model, the measurement, or the grid.
-# Calibrated by scripts/calibrate_R.py: 48 truth pushes, seed 0,
-# truth timestep 0.0001, model timestep 0.002, settle time 0.1 s.
+# Calibrated by main.py calibrate: 48 truth pushes, seed 0,
+# truth timestep 0.0001, model timestep 0.002, settle time 0.1 s,
+# site clearance 0.001 m.
 CALIBRATED_R = np.array(
     [
-        [2.278e-07, -7.229e-08, 1.755e-06, 5.373e-07, -1.048e-07, 4.540e-06],
-        [-7.229e-08, 2.519e-07, -2.344e-06, -4.940e-07, 4.773e-07, -2.719e-06],
-        [1.755e-06, -2.344e-06, 1.299e-04, 6.646e-06, -1.864e-06, 2.958e-04],
-        [5.373e-07, -4.940e-07, 6.646e-06, 6.955e-06, 6.318e-07, -4.723e-06],
-        [-1.048e-07, 4.773e-07, -1.864e-06, 6.318e-07, 2.253e-06, -1.957e-06],
-        [4.540e-06, -2.719e-06, 2.958e-04, -4.723e-06, -1.957e-06, 9.148e-04],
+        [2.999e-07, -3.691e-08, 2.328e-06, 7.134e-07, 5.013e-09, 5.954e-06],
+        [-3.691e-08, 1.680e-07, -1.453e-06, -4.476e-07, 2.605e-07, -1.320e-06],
+        [2.328e-06, -1.453e-06, 1.158e-04, 8.639e-06, 1.434e-06, 2.670e-04],
+        [7.134e-07, -4.476e-07, 8.639e-06, 7.403e-06, 7.517e-07, 2.695e-06],
+        [5.013e-09, 2.605e-07, 1.434e-06, 7.517e-07, 2.046e-06, 3.655e-07],
+        [5.954e-06, -1.320e-06, 2.670e-04, 2.695e-06, 3.655e-07, 9.172e-04],
     ]
 )
 

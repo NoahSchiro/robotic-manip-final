@@ -5,8 +5,10 @@ import time
 
 import numpy as np
 from pydrake.all import Simulator
+from pydrake.geometry import Meshcat
 
 from src.action import Action, push_library
+from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
     finish_shared_options,
@@ -14,21 +16,21 @@ from src.cli import (
     truth_sim_config,
 )
 from src.dynamics import ParallelPushModel, Pose
-from src.episode import EpisodeResult, PushRunner, run_episode
+from src.episode import EpisodeResult, run_episode
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.geometry import SurfaceNormal
-from src.iiwa import Pusher, build_iiwa_pusher_plant, make_push_trajectory
-from src.mpc import (
-    GoalTolerance,
-    MpcController,
-    PoseCostWeights,
+from src.iiwa import (
+    Q_HOME,
+    Pusher,
+    build_iiwa_pusher_plant,
     clear_sites,
-    goal_error,
+    make_push_trajectory,
 )
+from src.mpc import GoalTolerance, MpcController, PoseCostWeights, goal_error
 from src.object import Object, Rod, Table
 from src.observation import PushObservation
 from src.params import Eta, GridSpec, make_grid
-from src.recording import TruthSimConfig, record_random_push
+from src.recording import NoReachablePush, TruthSim
 from src.scene import (
     Sim,
     build_diagram,
@@ -39,31 +41,48 @@ from src.scene import (
 
 
 def parse_args() -> argparse.Namespace:
+    shared = argparse.ArgumentParser(add_help=False)
+    add_shared_options(shared)
+
     parser = argparse.ArgumentParser()
-    add_shared_options(parser)
-    parser.add_argument(
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    calibrate_parser = commands.add_parser(
+        "calibrate",
+        parents=[shared],
+        help="calibrate the estimator's prediction-error covariance R",
+    )
+    calibrate_parser.add_argument(
+        "--samples", type=int, default=48, help="truth pushes"
+    )
+    calibrate_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+
+    simulate_parser = commands.add_parser(
+        "simulate", parents=[shared], help="run the arm and block simulation"
+    )
+    simulate_parser.add_argument(
         "--headless", action="store_true", help="Run without visualization"
     )
-    parser.add_argument("--seed", type=int, default=538, help="PRNG seed")
-    parser.add_argument(
+    simulate_parser.add_argument("--seed", type=int, default=538, help="PRNG seed")
+    simulate_parser.add_argument(
         "--mu",
         type=float,
         default=0.3,
         help="object-table friction coefficient (nonnegative)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--rod-x",
         type=float,
         default=0.05,
         help="rod x in the object body frame (m)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--rod-y",
         type=float,
         default=0,
         help="rod y in the object body frame (m)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--start",
         type=float,
         nargs=3,
@@ -71,7 +90,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="object start pose (m, m, deg), instead of the seed's random one",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--goal",
         type=float,
         nargs=3,
@@ -79,76 +98,70 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="object goal pose (m, m, deg), instead of the seed's random one",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--estimate",
         action="store_true",
         help="run random pushes and estimate (mu, rod x, rod y) after each",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--pushes", type=int, default=5, help="pushes to run with --estimate"
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--mpc",
         action="store_true",
         help="push the object to its goal with MPC, estimating eta along the way",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--probe-pushes",
         type=int,
         default=0,
         help="random probe pushes before MPC with --mpc (0: no probing)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--max-pushes",
         type=int,
         default=20,
         help="push budget per --mpc episode, probes included",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--plan-with-true-eta",
         action="store_true",
         help="with --mpc, plan with the true eta and skip estimation",
     )
     # 0.07 is half the T's 14 cm extent, so with --yaw-weight 1 a 7 cm position
     # error costs as much as a 1 rad yaw error.
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--cost-length",
         type=float,
         default=0.07,
         help="MPC pose cost's length scale l (m)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--yaw-weight",
         type=float,
         default=1.0,
         help="MPC pose cost's yaw weight lambda_phi (1/rad^2)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--time-weight",
         type=float,
         default=0.005,
         help="MPC action cost per second of maneuver time",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--position-tolerance",
         type=float,
         default=0.01,
         help="an episode succeeds within this of the goal position (m)",
     )
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--yaw-tolerance",
         type=float,
         default=10.0,
         help="an episode succeeds within this of the goal yaw (deg)",
     )
-    parser.add_argument(
-        "--site-clearance",
-        type=float,
-        default=1e-3,
-        help="gap the lowered stick must leave to the block at an MPC site (m)",
-    )
     # 3 has heavy tails: chosen by an offline replay (see src/estimator.py).
-    parser.add_argument(
+    simulate_parser.add_argument(
         "--nu",
         type=float,
         default=3.0,
@@ -157,28 +170,27 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
 
     finish_shared_options(args)
-    if args.mu < 0.0:
-        raise SystemExit("--mu must be nonnegative")
-    if args.pushes < 1:
-        raise SystemExit("--pushes must be at least 1")
-    if args.probe_pushes < 0:
-        raise SystemExit("--probe-pushes must be nonnegative")
-    if args.max_pushes < 1:
-        raise SystemExit("--max-pushes must be at least 1")
-    if args.cost_length <= 0.0:
-        raise SystemExit("--cost-length must be positive")
-    if args.yaw_weight < 0.0:
-        raise SystemExit("--yaw-weight must be nonnegative")
-    if args.time_weight < 0.0:
-        raise SystemExit("--time-weight must be nonnegative")
-    if args.position_tolerance <= 0.0:
-        raise SystemExit("--position-tolerance must be positive")
-    if args.yaw_tolerance <= 0.0:
-        raise SystemExit("--yaw-tolerance must be positive")
-    if args.site_clearance < 0.0:
-        raise SystemExit("--site-clearance must be nonnegative")
-    if args.nu < 0.0:
-        raise SystemExit("--nu must be nonnegative")
+    if args.command == "simulate":
+        if args.mu < 0.0:
+            raise SystemExit("--mu must be nonnegative")
+        if args.pushes < 1:
+            raise SystemExit("--pushes must be at least 1")
+        if args.probe_pushes < 0:
+            raise SystemExit("--probe-pushes must be nonnegative")
+        if args.max_pushes < 1:
+            raise SystemExit("--max-pushes must be at least 1")
+        if args.cost_length <= 0.0:
+            raise SystemExit("--cost-length must be positive")
+        if args.yaw_weight < 0.0:
+            raise SystemExit("--yaw-weight must be nonnegative")
+        if args.time_weight < 0.0:
+            raise SystemExit("--time-weight must be nonnegative")
+        if args.position_tolerance <= 0.0:
+            raise SystemExit("--position-tolerance must be positive")
+        if args.yaw_tolerance <= 0.0:
+            raise SystemExit("--yaw-tolerance must be positive")
+        if args.nu < 0.0:
+            raise SystemExit("--nu must be nonnegative")
 
     return args
 
@@ -219,33 +231,30 @@ def run_estimation(
     belief: GridBayesFilter,
     eta_true: Eta,
     pushes: int,
-    truth: TruthSimConfig,
-    sim: Sim,
+    truth_sim: TruthSim,
+    meshcat: Meshcat | None,
     rng: np.random.Generator,
     obj: Object,
-    pusher: Pusher,
     push_sites: list[SurfaceNormal],
 ) -> None:
-    """Update `belief` after each of `pushes` random library pushes, moving
-    `obj` to where each push leaves it so the next starts from there."""
+    """Update `belief` after each of `pushes` random library pushes, run one
+    after another in `truth_sim`, moving `obj` to where each push leaves it."""
     print(
         f"estimating eta = (mu, rod x, rod y), true {eta_true}, over "
         f"{len(belief.grid)} hypotheses"
     )
     print(f"push 0: entropy {belief.entropy():.3f}")
     for k in range(1, pushes + 1):
-        if sim.meshcat is not None:
-            show_object_goal(sim.meshcat, obj)
-            show_push_sites(sim.meshcat, obj, push_sites)
-        obs = record_random_push(
-            rng,
-            obj,
-            pusher,
-            push_sites,
-            truth,
-            meshcat=sim.meshcat,
-            realtime_rate=0.0 if sim.headless else 1.0,
-        )
+        if meshcat is not None:
+            show_object_goal(meshcat, obj)
+            show_push_sites(meshcat, obj, push_sites)
+        try:
+            obs = truth_sim.record_random_push(rng, obj, push_sites)
+        except NoReachablePush as unreachable:
+            # Random pushes can walk the block out of reach; the belief so far
+            # is still good.
+            print(f"stopped after {k - 1} pushes: {unreachable}")
+            return
         started = time.time()
         belief.update(obs)
         print(format_push_report(k, obs, time.time() - started, belief, eta_true))
@@ -284,7 +293,7 @@ def format_map_error(belief: GridBayesFilter, eta_true: Eta) -> str:
     )
 
 
-def main(args: argparse.Namespace) -> None:
+def simulate(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
     rng = np.random.default_rng(seed=args.seed)
 
@@ -301,10 +310,13 @@ def main(args: argparse.Namespace) -> None:
 
     if args.mpc:
         eta_true = Eta(args.mu, args.rod_x, args.rod_y)
-        push_sites = obj.surface_normals(args.push_density)
-        actions = push_library(
-            clear_sites(obj.parts, push_sites, pusher.radius, args.site_clearance)
+        push_sites = clear_sites(
+            obj.parts,
+            obj.surface_normals(args.push_density),
+            pusher.radius,
+            args.site_clearance,
         )
+        actions = push_library(push_sites)
         print(format_placement_start(eta_true, obj, len(actions)))
         with ParallelPushModel(args.workers, push_model_config(args)) as model:
             belief = (
@@ -320,12 +332,14 @@ def main(args: argparse.Namespace) -> None:
             result = run_episode(
                 rng=rng,
                 obj=obj,
-                runner=PushRunner(
-                    pusher=pusher,
-                    truth=truth_sim_config(args),
+                truth_sim=TruthSim(
+                    obj,
+                    pusher,
+                    truth_sim_config(args),
                     meshcat=sim.meshcat,
                     realtime_rate=0.0 if sim.headless else 1.0,
                 ),
+                meshcat=sim.meshcat,
                 controller=MpcController(
                     model,
                     actions,
@@ -356,12 +370,22 @@ def main(args: argparse.Namespace) -> None:
                 belief=GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None),
                 eta_true=Eta(args.mu, args.rod_x, args.rod_y),
                 pushes=args.pushes,
-                truth=truth_sim_config(args),
-                sim=sim,
+                truth_sim=TruthSim(
+                    obj,
+                    pusher,
+                    truth_sim_config(args),
+                    meshcat=sim.meshcat,
+                    realtime_rate=0.0 if sim.headless else 1.0,
+                ),
+                meshcat=sim.meshcat,
                 rng=rng,
                 obj=obj,
-                pusher=pusher,
-                push_sites=obj.surface_normals(args.push_density),
+                push_sites=clear_sites(
+                    obj.parts,
+                    obj.surface_normals(args.push_density),
+                    pusher.radius,
+                    args.site_clearance,
+                ),
             )
         if not sim.headless:
             input("Press Enter to quit.")
@@ -369,7 +393,9 @@ def main(args: argparse.Namespace) -> None:
 
     push_sites = obj.surface_normals(args.push_density)
     action = demo_action(obj, push_sites)
-    q_traj = make_push_trajectory(build_iiwa_pusher_plant(pusher), pusher, obj, action)
+    q_traj = make_push_trajectory(
+        build_iiwa_pusher_plant(pusher), pusher, obj, action, Q_HOME
+    )
     diagram, plant = build_diagram(
         args.time_step, obj, Table(args.mu), pusher, meshcat=sim.meshcat, q_ref=q_traj
     )
@@ -414,6 +440,24 @@ def main(args: argparse.Namespace) -> None:
     # Keep meshcat open until user wants to quit
     if not sim.headless:
         input("Press Enter to quit.")
+
+
+def main(args: argparse.Namespace) -> None:
+    if args.command == "calibrate":
+        calibrate(
+            samples=args.samples,
+            seed=args.seed,
+            workers=args.workers,
+            setup=make_sample_setup(
+                rod_mass=args.rod_mass,
+                push_density=args.push_density,
+                site_clearance=args.site_clearance,
+                truth=truth_sim_config(args),
+                model=push_model_config(args),
+            ),
+        )
+    else:
+        simulate(args)
 
 
 if __name__ == "__main__":

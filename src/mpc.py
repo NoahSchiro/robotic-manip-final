@@ -9,11 +9,11 @@ plus an action cost proportional to its maneuver time (moving to the
 push, pushing, backing off, and returning).  The caller executes the best
 push the arm can reach, updates the estimator, and replans.
 
-The candidates are the push library minus the sites where the stick,
-lowered to its standoff point, lands on the block: at the T's inner
-corners the standoff sits within a stick radius of the other part.  The
-nominal tip path starts there, so the prediction would begin with the
-stick inside the block.
+The candidates are the push library minus the sites iiwa.clear_sites
+drops, where the stick, lowered to its standoff point, lands on the block:
+at the T's inner corners the standoff sits within a stick radius of the
+other part.  The nominal tip path starts there, so the prediction would
+begin with the stick inside the block.
 """
 
 from collections.abc import Sequence
@@ -23,8 +23,7 @@ import numpy as np
 
 from .action import Action
 from .dynamics import PlanningModel, Pose
-from .geometry import SurfaceNormal, SurfacePart, distance_to_footprint
-from .iiwa import STANDOFF, maneuver_time
+from .iiwa import maneuver_time
 from .object import Object
 from .observation import wrap_angle
 from .params import Eta
@@ -70,24 +69,6 @@ def at_goal(pose: Pose, goal: Pose, tolerance: GoalTolerance) -> bool:
     """Check whether `pose` is within `tolerance` of `goal`."""
     position_error, yaw_error = goal_error(pose, goal)
     return position_error < tolerance.position and yaw_error < tolerance.yaw
-
-
-def clear_sites(
-    parts: list[SurfacePart],
-    sites: list[SurfaceNormal],
-    stick_radius: float,
-    clearance: float,
-) -> list[SurfaceNormal]:
-    """Keep the sites where a stick of `stick_radius`, lowered to its standoff
-    point, clears the `parts`' footprint by `clearance`."""
-    return [
-        site
-        for site in sites
-        if distance_to_footprint(
-            parts, *(site.position[:2] - STANDOFF * site.normal[:2])
-        )
-        > stick_radius + clearance
-    ]
 
 
 @dataclass(frozen=True)
