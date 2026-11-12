@@ -71,3 +71,14 @@ re-running `replay` on the same dataset.
 sampled (eta, start pose, action) tuples replayed through the Drake prediction
 model with constructed nominal tip paths.
 
+## Random Drake evaluation
+
+```sh
+uv run python main.py evaluate --random-only --push-budget 1 --episodes 1 --seed 70000 --out data/random_drake_report.json
+```
+
+This runs random probing and the Drake grid filter without PPO, ensemble, or
+path-family files. The report gives signed per-episode parameter errors and a
+range-normalized Euclidean MAP error, using each grid parameter's full span.
+The default `evaluate` command still runs the paired policy comparison.
+

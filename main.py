@@ -19,7 +19,12 @@ from src.cli import (
 )
 from src.dataset_file import save_dataset
 from src.dynamics import ParallelPushModel
-from src.env import ProbingEnvConfig, make_probing_env_config, select_push_action
+from src.env import (
+    MAX_PUSHES,
+    ProbingEnvConfig,
+    make_probing_env_config,
+    select_push_action,
+)
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.evaluation import run_evaluation
 from src.geometry import SurfaceNormal
@@ -319,6 +324,17 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--episodes", type=int, default=24, help="evaluation episodes"
     )
+    eval_parser.add_argument(
+        "--random-only",
+        action="store_true",
+        help="run random probing with Drake without policy or surrogate assets",
+    )
+    eval_parser.add_argument(
+        "--push-budget",
+        type=int,
+        default=None,
+        help="executed push limit for --random-only (default: environment maximum)",
+    )
     eval_parser.add_argument("--seed", type=int, default=70000, help="PRNG seed")
     eval_parser.add_argument(
         "--path-family",
@@ -434,6 +450,14 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--timesteps, --n-envs and --eval-episodes must be at least 1")
     if args.command == "evaluate" and args.episodes < 1:
         raise SystemExit("--episodes must be at least 1")
+    if (
+        args.command == "evaluate"
+        and args.push_budget is not None
+        and (not args.random_only or not 0 <= args.push_budget <= MAX_PUSHES)
+    ):
+        raise SystemExit(
+            f"--push-budget requires --random-only and must be 0–{MAX_PUSHES}"
+        )
 
     return args
 
@@ -797,6 +821,8 @@ def evaluate_command(args: argparse.Namespace) -> None:
             seed=args.seed,
             workers=args.workers,
             predictor=args.predictor,
+            random_only=args.random_only,
+            random_pushes=args.push_budget,
         )
     )
 

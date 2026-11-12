@@ -1,7 +1,7 @@
-"""The policy evaluation: the learned probing policy and the
-random-probing baseline, run through the identical Drake pipeline — the
-real arm executes every push (TruthSim) and the estimator is the Drake
-plant predicting from the measured tip paths with CALIBRATED_R.
+"""Evaluate learned or random probing in the continuous Drake truth sim.
+
+The paired comparison runs the learned policy and random baseline through
+the same arm pipeline. The random-only mode needs no learned assets.
 
 Each episode samples the true eta and start pose
 (sample_episode_conditions); the learned policy runs first, then the
@@ -10,8 +10,7 @@ identical episode, so the comparison isolates push selection.  The same
 episodes also run in the surrogate world as the reference, which
 quantifies the sim-to-real gap of the surrogate pipeline directly.
 
-This is slow on purpose: every push runs the arm (~14 s) and a
-405-hypothesis Drake prediction (~6 s on 12 workers).
+Every push runs the arm and a full-grid prediction when Drake is selected.
 """
 
 import json
@@ -56,7 +55,10 @@ class EpisodeRecord:
     policy: str  # "learned" or "random"
     pushes: int
     reward: float
-    error: float
+    error: float  # range-normalized Euclidean MAP error
+    friction_error: float  # signed mu error
+    rod_x_error: float  # signed body-frame meters
+    rod_y_error: float  # signed body-frame meters
     entropy: float
     reason: str
 
@@ -68,6 +70,9 @@ class WorldSummary:
     episodes: int
     mean_reward: float
     mean_error: float
+    mean_abs_friction_error: float
+    mean_abs_rod_x_error: float
+    mean_abs_rod_y_error: float
     mean_pushes: float
 
 
@@ -76,6 +81,11 @@ def _summary(records: list[EpisodeRecord]) -> WorldSummary:
         episodes=len(records),
         mean_reward=float(np.mean([r.reward for r in records])),
         mean_error=float(np.mean([r.error for r in records])),
+        mean_abs_friction_error=float(
+            np.mean([abs(r.friction_error) for r in records])
+        ),
+        mean_abs_rod_x_error=float(np.mean([abs(r.rod_x_error) for r in records])),
+        mean_abs_rod_y_error=float(np.mean([abs(r.rod_y_error) for r in records])),
         mean_pushes=float(np.mean([r.pushes for r in records])),
     )
 
@@ -120,27 +130,19 @@ def _random_site(
     failed_sites: set[int],
     rng: np.random.Generator,
 ) -> tuple[int, float, float] | None:
-    """A uniformly random feasible (site, speed, time); None when every
-    site is exhausted."""
-    mask = reachability_mask(pose, config)
+    """Draw uniformly from feasible push actions, excluding failed IK sites."""
+    mask = reachability_mask(pose, config).copy()
     per_site = len(config.speeds) * len(config.times)
-    feasible = [
-        site
-        for site in range(len(config.site_positions))
-        if site not in failed_sites
-        and mask[site * per_site : (site + 1) * per_site].any()
-    ]
-    if not feasible:
+    for site in failed_sites:
+        mask[site * per_site : (site + 1) * per_site] = False
+    feasible = np.flatnonzero(mask)
+    if len(feasible) == 0:
         return None
-    site = int(feasible[int(rng.integers(len(feasible)))])
-    options = np.where(mask[site * per_site : (site + 1) * per_site])[0]
-    pick = int(options[int(rng.integers(len(options)))])
-    speed_idx, time_idx = divmod(pick, len(config.times))
-    return site, config.speeds[speed_idx], config.times[time_idx]
+    return split_action(int(rng.choice(feasible)), config)
 
 
 def _drake_episode(
-    model: MaskablePPO,
+    model: MaskablePPO | None,
     config: ProbingEnvConfig,
     truth_config: TruthSimConfig,
     filter_model: DynamicsModel,
@@ -152,15 +154,16 @@ def _drake_episode(
     """One episode in the Drake world.  `policy` runs the trained policy's
     stop decision; otherwise the episode runs `forced_pushes` random pushes
     (the paired baseline)."""
-    rng = np.random.default_rng(seed)
-    eta, start_pose = sample_episode_conditions(rng, env_parts())
+    eta, start_pose = sample_episode_conditions(
+        np.random.default_rng(seed), env_parts()
+    )
+    action_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
     obj = eta.to_object(np.random.default_rng(0), ROD_MASS)
     obj.pose = (float(start_pose[0]), float(start_pose[1]), float(start_pose[2]))
     truth_sim = TruthSim(obj, Pusher(), truth_config)
     spans = grid_spans(config.grid)
     belief = GridBayesFilter(config.grid, filter_model, r_matrix, nu=3.0)
 
-    pose = np.array([*start_pose[:2], start_pose[2]])
     last_measurement = np.zeros(6)
     last_action = np.zeros(8)
     failed_sites: set[int] = set()
@@ -169,8 +172,18 @@ def _drake_episode(
     reason = "stop"
     attempts = 0
     while True:
+        if forced_pushes is not None and pushes >= forced_pushes:
+            total += stop_reward(belief, eta, spans)
+            reason = "matched_budget"
+            break
+        if pushes >= config.max_pushes:
+            total += stop_reward(belief, eta, spans)
+            reason = "max_pushes"
+            break
         chosen: int | None = None
+        pose = np.asarray(obj.pose, dtype=float)
         if policy:
+            assert model is not None
             chosen = _policy_action(
                 model,
                 belief,
@@ -182,16 +195,19 @@ def _drake_episode(
                 failed_sites,
             )
             if chosen is None:
+                total += stop_reward(belief, eta, spans)
                 break
             site, speed, time = split_action(chosen, config)
         else:
-            picked = _random_site(config, pose, failed_sites, rng)
+            picked = _random_site(config, pose, failed_sites, action_rng)
             if picked is None:
+                total += stop_reward(belief, eta, spans)
                 reason = "unreachable"
                 break
             site, speed, time = picked
         attempts += 1
         if attempts > MAX_IK_RETRIES:
+            total += stop_reward(belief, eta, spans)
             reason = "ik_exhausted"
             break
 
@@ -210,14 +226,16 @@ def _drake_episode(
             failed_sites.add(site)  # the arm cannot reach this site here
             continue
         observation = truth_sim.record_push(obj, action, q_traj)
+        obj.pose = observation.final_pose()
         belief.update(observation)
 
         pushes += 1
+        attempts = 0
+        failed_sites.clear()
         total += (
             config.entropy_weight * (entropy_before - belief.entropy())
             - config.step_cost
         )
-        pose = np.array(observation.final_pose())
         last_measurement = observation.measured()
         last_action = np.array(
             [
@@ -228,25 +246,21 @@ def _drake_episode(
             ]
         )
 
-        if out_of_bounds(pose):
+        if out_of_bounds(np.asarray(obj.pose, dtype=float)):
             total += stop_reward(belief, eta, spans) - config.out_of_bounds_penalty
             reason = "out_of_bounds"
             break
-        if forced_pushes is not None and pushes >= forced_pushes:
-            total += stop_reward(belief, eta, spans)
-            reason = "matched_budget"
-            break
-        if policy and pushes >= config.max_pushes:
-            total += stop_reward(belief, eta, spans)
-            reason = "max_pushes"
-            break
 
+    component_error = belief.estimation_error(eta)
     return EpisodeRecord(
         seed=seed,
         policy="learned" if policy else "random",
         pushes=pushes,
         reward=total,
-        error=float(np.linalg.norm(belief.estimation_error(eta))),
+        error=float(np.linalg.norm(component_error / spans)),
+        friction_error=float(component_error[0]),
+        rod_x_error=float(component_error[1]),
+        rod_y_error=float(component_error[2]),
         entropy=belief.entropy(),
         reason=reason,
     )
@@ -264,16 +278,18 @@ def _surrogate_episode(
     while not terminated:
         masks = env.action_masks()
         action, _ = model.predict(obs, action_masks=masks, deterministic=True)
-        if int(action) == config.n_actions - 1:
-            break
         obs, reward, terminated, _, info = env.step(int(action))
         total += reward
+    component_error = cast(np.ndarray, info["estimation_error"])
     return EpisodeRecord(
         seed=seed,
         policy="learned",
         pushes=int(cast(int, info["pushes"])),
         reward=total,
-        error=float(np.linalg.norm(cast(np.ndarray, info["estimation_error"]))),
+        error=float(np.linalg.norm(component_error / grid_spans(config.grid))),
+        friction_error=float(component_error[0]),
+        rod_x_error=float(component_error[1]),
+        rod_y_error=float(component_error[2]),
         entropy=cast(float, info["entropy"]),
         reason=str(info["reason"]),
     )
@@ -337,16 +353,56 @@ def run_evaluation(
     seed: int,
     workers: int,
     predictor: str = "drake",
+    random_only: bool = False,
+    random_pushes: int | None = None,
 ) -> str:
     """Run the paired evaluation — the learned policy and the
     random-probing baseline through the identical Drake pipeline — and
     write the report.  `predictor` picks the filter's prediction model:
     the Drake plant (gold-standard accuracy), or the surrogate (online
     speed, calibrated to CALIBRATED_R_SURROGATE)."""
-    config = make_probing_env_config(ensemble_path, family_path=family_path)
-    model = MaskablePPO.load(model_path)
     truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.1, log_period=1e-3)
     started = time.perf_counter()
+    if random_only:
+        if predictor != "drake":
+            raise ValueError("random-only evaluation requires the Drake predictor")
+        config = make_probing_env_config(None, family_path=None)
+        with ParallelPushModel(
+            workers, PushModelConfig(time_step=2e-3, rod_mass=ROD_MASS)
+        ) as random_model:
+            records = [
+                _drake_episode(
+                    None,
+                    config,
+                    truth_config,
+                    random_model,
+                    seed + episode,
+                    forced_pushes=(
+                        config.max_pushes if random_pushes is None else random_pushes
+                    ),
+                    policy=False,
+                    r_matrix=CALIBRATED_R,
+                )
+                for episode in range(episodes)
+            ]
+        report = {
+            "episodes": episodes,
+            "seed": seed,
+            "predictor": predictor,
+            "drake_world": {"random": _summary(records).__dict__},
+            "per_episode": [record.__dict__ for record in records],
+        }
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(report, indent=2) + "\n")
+        summary = _summary(records)
+        return (
+            f"drake random: reward {summary.mean_reward:+.3f} "
+            f"err {summary.mean_error:.3f} ({summary.mean_pushes:.1f} pushes) "
+            f"({time.perf_counter() - started:.0f} s)"
+        )
+
+    config = make_probing_env_config(ensemble_path, family_path=family_path)
+    model = MaskablePPO.load(model_path)
     filter_model: DynamicsModel
     r_matrix: np.ndarray
     if predictor == "surrogate":

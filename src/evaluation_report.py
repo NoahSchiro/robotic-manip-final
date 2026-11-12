@@ -17,6 +17,7 @@ import numpy as np
 from sb3_contrib import MaskablePPO
 
 from .env import ProbingEnv, ProbingEnvConfig, make_probing_env_config
+from .params import grid_spans
 
 
 def _plot_curve(curve_path: Path, out: Path) -> None:
@@ -51,18 +52,24 @@ def _paired_table(report: dict[str, object]) -> list[str]:
     )
     learned_row = (
         f"| learned probing | {learned['mean_reward']:+.3f} "
-        f"| {learned['mean_error']:.3f} | {learned['mean_pushes']:.2f} |"
+        f"| {learned['mean_error']:.3f} | {learned['mean_abs_friction_error']:.3f} "
+        f"| {learned['mean_abs_rod_x_error'] * 100:.2f} "
+        f"| {learned['mean_abs_rod_y_error'] * 100:.2f} "
+        f"| {learned['mean_pushes']:.2f} |"
     )
     random_row = (
         f"| random probing | {random['mean_reward']:+.3f} "
-        f"| {random['mean_error']:.3f} | {random['mean_pushes']:.2f} |"
+        f"| {random['mean_error']:.3f} | {random['mean_abs_friction_error']:.3f} "
+        f"| {random['mean_abs_rod_x_error'] * 100:.2f} "
+        f"| {random['mean_abs_rod_y_error'] * 100:.2f} "
+        f"| {random['mean_pushes']:.2f} |"
     )
     return [
         "",
         title,
         "",
-        "| policy | return | final MAP error | pushes |",
-        "|---|---|---|---|",
+        "| policy | return | range-normalized MAP error | mean absolute mu error | mean absolute rod x error (cm) | mean absolute rod y error (cm) | pushes |",
+        "|---|---|---|---|---|---|---|",
         learned_row,
         random_row,
     ]
@@ -91,13 +98,18 @@ def _behavioral_probe(
         while not terminated:
             masks = env.action_masks()
             action, _ = model.predict(obs, action_masks=masks, deterministic=True)
-            if int(action) == config.n_actions - 1:
-                break
-            action_counts[int(action)] += 1
-            picks.append(int(action))
+            if int(action) != config.n_actions - 1:
+                action_counts[int(action)] += 1
+                picks.append(int(action))
             obs, _, terminated, _, info = env.step(int(action))
         pushes_list.append(int(cast(int, info["pushes"])))
-        errors.append(float(np.linalg.norm(cast(np.ndarray, info["estimation_error"]))))
+        errors.append(
+            float(
+                np.linalg.norm(
+                    cast(np.ndarray, info["estimation_error"]) / grid_spans(config.grid)
+                )
+            )
+        )
         stop_ent.append(float(cast(float, info["entropy"])))
         follow_sets.append(tuple(picks[1:]))
     pushes_arr, errors_arr = np.array(pushes_list), np.array(errors)
@@ -108,7 +120,7 @@ def _behavioral_probe(
         f"{np.bincount(pushes_arr).tolist()}"
     )
     error_line = (
-        f"- final MAP error: mean {errors_arr.mean():.3f}, "
+        f"- range-normalized final MAP error: mean {errors_arr.mean():.3f}, "
         f"p50 {np.median(errors_arr):.3f}, max {errors_arr.max():.3f}"
     )
     lines = [

@@ -32,6 +32,7 @@ import gymnasium
 import numpy as np
 from gymnasium import spaces
 from pydrake.all import RigidTransform, RotationMatrix
+from sb3_contrib import MaskablePPO
 
 from .action import Action
 from .estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
@@ -41,8 +42,6 @@ from .object import Object, Rod
 from .observation import wrap_angle
 from .params import Eta, GridSpec, grid_spans, make_grid, sample_eta
 from .path_family import PathFamily, load_path_family, perturb_tip_positions
-from sb3_contrib import MaskablePPO
-
 from .surrogate import (
     SurrogateEnsemble,
     SurrogatePredictor,
@@ -76,13 +75,13 @@ class ProbingEnvConfig:
     """Everything one environment instance runs on.  Built once by
     make_probing_env_config; the env's steps are pure numpy."""
 
-    ensemble: SurrogateEnsemble
+    ensemble: SurrogateEnsemble | None
     grid: list[Eta]
     site_positions: np.ndarray  # (S, 3) body frame
     site_normals: np.ndarray  # (S, 3) body frame
     speeds: tuple[float, ...]
     times: tuple[float, ...]
-    family: PathFamily
+    family: PathFamily | None
     tip_body_xy: np.ndarray  # (A, 2) approach-point body xy per push action
     normal_body_xy: np.ndarray  # (A, 2) inward normal xy per push action
     forward: np.ndarray  # (A,) approach + v*T distance per push action
@@ -107,17 +106,15 @@ def prune_sites(positions: np.ndarray, keep: int = N_PROBE_SITES) -> np.ndarray:
 
 
 def make_probing_env_config(
-    ensemble_path: Path,
+    ensemble_path: Path | None,
     keep: int = N_PROBE_SITES,
     rod_mass: float = ROD_MASS,
     push_density: float = PUSH_DENSITY,
     site_clearance: float = SITE_CLEARANCE,
-    family_path: Path = Path("data/path_family.npz"),
+    family_path: Path | None = Path("data/path_family.npz"),
 ) -> ProbingEnvConfig:
-    """Build the environment's immutable setup: the hypothesis grid, the
-    pruned clear-site library (same density and clearance as the training
-    dataset's library, so the surrogate sees in-distribution actions) and
-    the trained ensemble."""
+    """Build the hypothesis grid and pruned clear-site library. Optional
+    ensemble and path-family assets are needed for surrogate execution."""
     spec = GridSpec()
     reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
     clear = clear_sites(
@@ -130,13 +127,13 @@ def make_probing_env_config(
     picked_sites = [clear[i] for i in picked]
     n_speeds, n_times = len(SPEEDS), len(TIMES)
     return ProbingEnvConfig(
-        ensemble=load_ensemble(ensemble_path),
+        ensemble=load_ensemble(ensemble_path) if ensemble_path is not None else None,
         grid=make_grid(spec, reference.parts),
         site_positions=np.array([site.position for site in picked_sites]),
         site_normals=np.array([site.normal for site in picked_sites]),
         speeds=SPEEDS,
         times=TIMES,
-        family=load_path_family(family_path),
+        family=load_path_family(family_path) if family_path is not None else None,
         tip_body_xy=np.repeat(
             np.array([site.position[:2] for site in picked_sites]),
             n_speeds * n_times,
@@ -340,10 +337,15 @@ class ProbingEnv(gymnasium.Env):
 
     def __init__(self, config: ProbingEnvConfig) -> None:
         super().__init__()
+        if config.ensemble is None or config.family is None:
+            raise ValueError(
+                "the surrogate environment requires an ensemble and path family"
+            )
         self.config = config
         self.grid_array = np.array([eta.as_array() for eta in config.grid])
         self.spans = grid_spans(config.grid)
         self.ensemble = config.ensemble
+        self.family = config.family
         self.predictor = SurrogatePredictor(config.ensemble)
 
         # Per (site, speed, time) body-frame tip targets: the approach and
@@ -363,7 +365,7 @@ class ProbingEnv(gymnasium.Env):
         # Measurement noise: the deployment error minus the members' own
         # spread, shrunk along R's correlation structure so the result
         # stays positive definite.
-        spread = member_spread(config.ensemble, config.grid, config)
+        spread = member_spread(self.ensemble, config.grid, config)
         r_diag = np.diag(CALIBRATED_R_SURROGATE)
         corr = CALIBRATED_R_SURROGATE / np.sqrt(np.outer(r_diag, r_diag))
         shrunk = np.maximum(r_diag - spread**2, 1e-12)
@@ -485,7 +487,7 @@ class ProbingEnv(gymnasium.Env):
             path.tip_positions,
             path.tip_times,
             path.window_end,
-            self.config.family,
+            self.family,
             self.np_random,
         )
         path_block = path_downsample(path.tip_times, path.tip_positions)[:2].reshape(-1)
