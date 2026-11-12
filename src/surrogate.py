@@ -32,7 +32,7 @@ import numpy as np
 from pydrake.all import RigidTransform
 
 from .action import Action
-from .iiwa import STANDOFF
+from .iiwa import HOLD_TIME, MOVE_TIME, STANDOFF
 from .observation import PushObservation, wrap_angle
 from .params import Eta
 
@@ -81,6 +81,19 @@ class TipPath:
     tip_velocities: np.ndarray  # (3, n) world
     push_end_time: float
     window_end: float
+
+
+@dataclass(frozen=True)
+class ActionTipPath:
+    """Constructed tip path through local lift and hold, times from standoff."""
+
+    tip_times: np.ndarray
+    tip_positions: np.ndarray
+    tip_velocities: np.ndarray
+    push_end_time: float
+    window_end: float
+    action_end: float
+    window_samples: int
 
 
 def nominal_tip_path(
@@ -135,6 +148,58 @@ def nominal_tip_path(
         tip_velocities=velocities,
         push_end_time=push_end_time,
         window_end=window_end,
+    )
+
+
+def nominal_action_tip_path(
+    pose: RigidTransform,
+    action: Action,
+    settle_time: float,
+    lift_height: float,
+) -> ActionTipPath:
+    """Extend the estimator window path through backoff, local lift, and hold."""
+    window = nominal_tip_path(pose, action, settle_time)
+    contact = pose @ action.contact.position
+    normal = pose.rotation() @ action.contact.normal
+    push_end = contact + action.velocity * action.time * normal
+    backed_off = push_end - STANDOFF * normal
+    backoff_end = window.push_end_time + STANDOFF / action.velocity
+    lift_end = backoff_end + MOVE_TIME
+    action_end = lift_end + HOLD_TIME
+    if window.window_end >= backoff_end:
+        raise ValueError("measurement window must end before backoff finishes")
+    events = np.array([backoff_end, lift_end, action_end])
+    regular_times = np.arange(
+        window.window_end + SAMPLE_PERIOD, action_end, SAMPLE_PERIOD
+    )
+    regular_times = regular_times[
+        (np.abs(regular_times[:, None] - events).min(axis=1) > SAMPLE_PERIOD / 2)
+    ]
+    tail_times = np.sort(np.concatenate([regular_times, events]))
+    lift = np.array([0.0, 0.0, lift_height - backed_off[2]])
+    tail_positions = np.empty((3, len(tail_times)))
+    tail_velocities = np.zeros_like(tail_positions)
+    for index, at in enumerate(tail_times):
+        if at < backoff_end:
+            tail_positions[:, index] = (
+                push_end - action.velocity * (at - window.push_end_time) * normal
+            )
+            tail_velocities[:, index] = -action.velocity * normal
+        elif at < lift_end:
+            tail_positions[:, index] = (
+                backed_off + (at - backoff_end) / MOVE_TIME * lift
+            )
+            tail_velocities[:, index] = lift / MOVE_TIME
+        else:
+            tail_positions[:, index] = backed_off + lift
+    return ActionTipPath(
+        tip_times=np.concatenate([window.tip_times, tail_times]),
+        tip_positions=np.column_stack([window.tip_positions, tail_positions]),
+        tip_velocities=np.column_stack([window.tip_velocities, tail_velocities]),
+        push_end_time=window.push_end_time,
+        window_end=window.window_end,
+        action_end=action_end,
+        window_samples=len(window.tip_times),
     )
 
 

@@ -53,11 +53,11 @@ from src.scene import (
 )
 from src.surrogate import SAMPLE_PERIOD
 from src.surrogate_data import (
+    assign_split,
     check_finite,
     coverage_summary,
     generate_surrogate_data,
     make_surrogate_setup,
-    mark_validation_split,
 )
 from src.train_ppo import train_ppo
 from src.train_surrogate import train_ensemble
@@ -744,7 +744,7 @@ def generate_surrogate_data_command(args: argparse.Namespace) -> None:
     dataset = generate_surrogate_data(
         setup, samples=args.samples, seed=args.seed, workers=args.workers
     )
-    dataset["is_val"] = mark_validation_split(dataset, setup.spec)
+    dataset["split"] = assign_split(dataset["sample_seed"])
     check_finite(dataset)
     print(coverage_summary(dataset, setup))
     save_dataset(
@@ -759,6 +759,10 @@ def generate_surrogate_data_command(args: argparse.Namespace) -> None:
             "model_time_step": push_model_config(args).time_step,
             "settle_time": args.settle_time,
             "sample_period": SAMPLE_PERIOD,
+            "schema_version": 3,
+            "feature_version": 1,
+            "target_version": 1,
+            "action_target_version": 1,
         },
     )
     print(f"wrote {args.samples} samples to {args.out}")

@@ -11,14 +11,18 @@ Dataset schema (one .npz):
 - speed, time: (N,) commanded push speed (m/s) and contact time (s)
 - tip_path: (N, 3, PATH_SAMPLES) executed tip positions at uniform window
   times, world frame — the surrogate's path conditioning
+- action_tip_path: (N, 3, PATH_SAMPLES) constructed tip positions through
+  local lift and hold, world frame; action_end_time: (N,) s from window start
 - displacement: (N, 3) window-end pose offset (x, y, yaw) in the start
   frame
 - push_end_velocity: (N, 3) block planar velocity at the push segment's
   end, in the start frame
 - window_end_velocity: (N, 3) block planar velocity at the window's end,
   in the start frame. A diagnostic for the at-rest assumption
-- is_val: (N,) bool, every VAL_EVERYth sample within each
-  (speed, time, mu decade) cell
+- action_end_displacement, action_end_velocity: (N, 3) block state at the
+  next decision boundary, in the start frame; not used by the current trainer
+- sample_seed: (N,) seed of each independent sampled trajectory
+- split: (N,) 0=train, 1=development, 2=held-out, assigned by sample seed
 - meta_*: generation settings
 """
 
@@ -32,15 +36,15 @@ from pydrake.all import SpatialVelocity
 from .action import Action
 from .dynamics import DrakePushModel, PushModelConfig
 from .geometry import SurfaceNormal, SurfacePart
-from .iiwa import Pusher, clear_sites
+from .iiwa import Pusher, clear_sites, hover_tip_pose
 from .object import Object, Rod
 from .observation import ObjectState, wrap_angle
 from .params import GridSpec, sample_eta
 from .path_family import PathFamily, perturb_tip_positions
-from .surrogate import nominal_tip_path, path_downsample
+from .surrogate import nominal_action_tip_path, path_downsample
 
-VAL_EVERY = 10  # every 10th sample per cell becomes validation
-MU_DECADES = 10  # validation cells along the friction range
+MU_DECADES = 10  # coverage bins along the friction range
+SPLIT_MODULUS = 10
 
 
 @dataclass(frozen=True)
@@ -108,17 +112,19 @@ def surrogate_sample(
     # of numerical dust, so match that here.
     start_velocity = SpatialVelocity(np.zeros(3), rng.uniform(-1e-9, 1e-9, size=3))
 
-    path = nominal_tip_path(obj.x_wo(), action, setup.settle_time)
+    path = nominal_action_tip_path(
+        obj.x_wo(), action, setup.settle_time, hover_tip_pose(obj).translation()[2]
+    )
     path.tip_positions[:] = perturb_tip_positions(
         path.tip_positions, path.tip_times, path.window_end, setup.family, rng
     )
     model.set_eta(eta)
-    push_end, window_end = model.predict_path(
+    push_end, window_end, action_end = model.predict_path(
         ObjectState(pose=obj.x_wo(), velocity=start_velocity),
         path.tip_times,
         path.tip_positions,
         path.tip_velocities,
-        [path.push_end_time, path.window_end],
+        [path.push_end_time, path.window_end, path.action_end],
     )
 
     # Push effects in the start pose's frame: rotate world xy by R(-yaw);
@@ -131,7 +137,14 @@ def surrogate_sample(
     )
     push_velocity = np.array([*(rot @ push_end[3:5]), push_end[5]])
     end_velocity = np.array([*(rot @ window_end[3:5]), window_end[5]])
+    action_displacement = np.array(
+        [*(rot @ (action_end[:2] - start[:2])), wrap_angle(action_end[2] - start[2])]
+    )
+    action_velocity = np.array([*(rot @ action_end[3:5]), action_end[5]])
+    window_tip_times = path.tip_times[: path.window_samples]
+    window_tip_positions = path.tip_positions[:, : path.window_samples]
     return {
+        "sample_seed": np.array(seed, dtype=np.uint64),
         "eta": eta.as_array(),
         "start_pose": start,
         "start_velocity": np.array(
@@ -146,10 +159,16 @@ def surrogate_sample(
         "site_index": np.array(site_index, dtype=int),
         "speed": np.array(action.velocity),
         "time": np.array(action.time),
-        "tip_path": path_downsample(path.tip_times, path.tip_positions),
+        "tip_path": path_downsample(window_tip_times, window_tip_positions),
+        "action_tip_path": path_downsample(path.tip_times, path.tip_positions),
+        "push_end_time": np.array(path.push_end_time),
+        "window_end_time": np.array(path.window_end),
+        "action_end_time": np.array(path.action_end),
         "displacement": displacement,
         "push_end_velocity": push_velocity,
         "window_end_velocity": end_velocity,
+        "action_end_displacement": action_displacement,
+        "action_end_velocity": action_velocity,
     }
 
 
@@ -192,27 +211,10 @@ def generate_surrogate_data(
     return stack_samples([s for i in range(len(chunks)) for s in results[i]])
 
 
-def mark_validation_split(
-    dataset: dict[str, np.ndarray], spec: GridSpec, every: int = VAL_EVERY
-) -> np.ndarray:
-    """Assign every `every`th sample within each (speed, time, mu decade)
-    cell to validation."""
-    is_val = np.zeros(len(dataset["eta"]), dtype=bool)
-    decade_width = (spec.mu_range[1] - spec.mu_range[0]) / MU_DECADES
-    decades = np.minimum(
-        np.floor((dataset["eta"][:, 0] - spec.mu_range[0]) / decade_width).astype(int),
-        MU_DECADES - 1,
-    )
-    for speed in np.unique(dataset["speed"]):
-        for time in np.unique(dataset["time"]):
-            for decade in np.unique(decades):
-                cell = np.where(
-                    (dataset["speed"] == speed)
-                    & (dataset["time"] == time)
-                    & (decades == decade)
-                )[0]
-                is_val[cell[::every]] = True
-    return is_val
+def assign_split(sample_seeds: np.ndarray) -> np.ndarray:
+    """Assign independent trajectories to train/development/held-out by seed."""
+    buckets = np.asarray(sample_seeds, dtype=np.uint64) % SPLIT_MODULUS
+    return np.where(buckets == 0, 1, np.where(buckets == 1, 2, 0)).astype(np.uint8)
 
 
 def check_finite(dataset: dict[str, np.ndarray]) -> None:

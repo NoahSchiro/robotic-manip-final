@@ -1,17 +1,16 @@
 """Train the surrogate's MLP ensemble on `gen-surrogate-data`'s dataset.
 
-Each member is a 17 -> 512 -> 512 -> 512 -> 6 ReLU MLP trained with AdamW
-and cosine LR decay on standardized inputs and outputs (statistics from
-the train split), with early stopping on the validation split's weighted
-loss.  The loss weights each component by 1/tolerated-std^2 (sqrt diag
-CALIBRATED_R), so training minimizes what the acceptance gate measures.
+Each member is a configurable 49-input, six-output ReLU MLP trained with
+AdamW and cosine LR decay on standardized inputs and outputs (statistics
+from the training split), with early stopping on the development split's
+weighted loss. The loss weights each component by the Drake calibration
+scale (sqrt diag CALIBRATED_R).
 Inference runs in numpy (see surrogate.py); this module is the only torch
 user.
 
-The command's summary compares the ensemble's validation errors, rotated
-into the world frame, against sqrt(diag(CALIBRATED_R)) — the prediction
-error the estimator already tolerates between the Drake plant and the
-truth sim.  The surrogate must add little on top of that.
+The command's summary reports development errors on world measurement axes
+against both the Drake and historical surrogate residual scales. It does
+not score or select on the held-out split.
 """
 
 from pathlib import Path
@@ -20,16 +19,60 @@ import numpy as np
 import torch
 from torch import nn
 
-from .estimator import CALIBRATED_R
+from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE
 from .surrogate import N_INPUTS, N_OUTPUTS, MLPWeights, SurrogateEnsemble, save_ensemble
 
 BATCH_SIZE = 1024
 
 
 def dataset_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load the dataset into (N, 17) inputs, (N, 6) outputs and the
-    validation mask, in surrogate.py's column order."""
+    """Load (N, 49) inputs, (N, 6) targets and the 0/1/2 data split."""
     with np.load(path, allow_pickle=True) as data:
+        schema_version = (
+            int(data["meta_schema_version"]) if "meta_schema_version" in data else 1
+        )
+        if schema_version not in (1, 2, 3):
+            raise ValueError(f"unsupported surrogate dataset schema {schema_version}")
+        if schema_version >= 2:
+            if "meta_feature_version" not in data or "meta_target_version" not in data:
+                raise ValueError("schema 2 requires feature and target versions")
+            if (
+                int(data["meta_feature_version"]) != 1
+                or int(data["meta_target_version"]) != 1
+            ):
+                raise ValueError(
+                    "surrogate feature or target version does not match the model"
+                )
+            if "sample_seed" not in data or "split" not in data:
+                raise ValueError("schema 2 requires sample_seed and split")
+            split = data["split"].astype(np.uint8)
+            if not np.isin(split, (0, 1, 2)).all():
+                raise ValueError("split must contain only 0, 1, or 2")
+            seeds = data["sample_seed"]
+            order = np.argsort(seeds)
+            if np.any(
+                (seeds[order][1:] == seeds[order][:-1])
+                & (split[order][1:] != split[order][:-1])
+            ):
+                raise ValueError("one sample seed appears in multiple splits")
+            if schema_version == 3:
+                required = (
+                    "meta_action_target_version",
+                    "action_end_displacement",
+                    "action_end_velocity",
+                    "action_end_time",
+                    "action_tip_path",
+                )
+                if any(key not in data for key in required):
+                    raise ValueError("schema 3 requires action-end labels and path")
+                if int(data["meta_action_target_version"]) != 1:
+                    raise ValueError("unsupported action-end target version")
+                if data["action_end_displacement"].shape != (len(split), 3) or data[
+                    "action_end_velocity"
+                ].shape != (len(split), 3):
+                    raise ValueError("action-end target layout is invalid")
+        else:
+            split = data["is_val"].astype(np.uint8)
         inputs = np.concatenate(
             [
                 data["eta"],
@@ -46,7 +89,21 @@ def dataset_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         outputs = np.concatenate(
             [data["displacement"], data["push_end_velocity"]], axis=1
         )
-        return inputs, outputs, data["is_val"].astype(bool)
+        if inputs.shape[1] != N_INPUTS or outputs.shape[1] != N_OUTPUTS:
+            raise ValueError(
+                "surrogate feature or target layout does not match the model"
+            )
+        if (
+            len(split) != len(inputs)
+            or not np.isfinite(inputs).all()
+            or not np.isfinite(outputs).all()
+        ):
+            raise ValueError(
+                "surrogate dataset has mismatched rows or non-finite values"
+            )
+        if not (np.any(split == 0) and np.any(split == 1)):
+            raise ValueError("surrogate dataset needs training and development rows")
+        return inputs, outputs, split
 
 
 def loss_weights(output_std: np.ndarray) -> np.ndarray:
@@ -132,25 +189,32 @@ def cast_linear(module: nn.Module) -> nn.Linear:
     return module
 
 
-def world_frame_rmse(
+def world_frame_errors(
     outputs: np.ndarray, targets: np.ndarray, start_yaw: np.ndarray
 ) -> np.ndarray:
-    """Get the (6,) RMS of start-frame output errors, rotated into the world
-    frame per sample (the measurement's component order: x, y, yaw, vx, vy,
-    wz)."""
+    """Rotate start-frame output residuals into world measurement axes."""
     errors = outputs - targets
     c, s = np.cos(start_yaw), np.sin(start_yaw)
-    to_body = np.stack([np.stack([c, s], axis=-1), np.stack([-s, c], axis=-1)], axis=-2)
-    world_xy = np.einsum("nij,nj->ni", to_body, errors[:, :2])
+    to_world = np.stack(
+        [np.stack([c, -s], axis=-1), np.stack([s, c], axis=-1)], axis=-2
+    )
+    world_xy = np.einsum("nij,nj->ni", to_world, errors[:, :2])
     world = np.column_stack(
         [
             world_xy,
             errors[:, 2],
-            np.einsum("nij,nj->ni", to_body, errors[:, 3:5]),
+            np.einsum("nij,nj->ni", to_world, errors[:, 3:5]),
             errors[:, 5],
         ]
     )
-    return np.sqrt((world**2).mean(axis=0))
+    return world
+
+
+def world_frame_rmse(
+    outputs: np.ndarray, targets: np.ndarray, start_yaw: np.ndarray
+) -> np.ndarray:
+    """Get component RMS of start-frame residuals on world measurement axes."""
+    return np.sqrt((world_frame_errors(outputs, targets, start_yaw) ** 2).mean(axis=0))
 
 
 def _train_member_worker(
@@ -190,8 +254,8 @@ def train_ensemble(
 ) -> str:
     """Train the ensemble on the dataset, save it, and return the summary:
     validation RMSE against the estimator's tolerated prediction error."""
-    x, y, is_val = dataset_arrays(dataset_path)
-    train, val = ~is_val, is_val
+    x, y, split = dataset_arrays(dataset_path)
+    train, val = split == 0, split == 1
     input_mean, input_std = x[train].mean(axis=0), x[train].std(axis=0)
     output_mean, output_std = y[train].mean(axis=0), y[train].std(axis=0)
     # A near-zero std means a constant column (float dust included); its
@@ -240,21 +304,24 @@ def train_ensemble(
     # Acceptance check: mean prediction's val RMSE in the world frame
     # against the estimator's tolerated plant-vs-truth error.
     predictions = ensemble.predict(x[val])
-    rmse = world_frame_rmse(predictions, y[val], x[val, 2])
+    residuals = world_frame_errors(predictions, y[val], x[val, 5])
+    rmse = np.sqrt((residuals**2).mean(axis=0))
     tolerated = np.sqrt(np.diag(CALIBRATED_R))
+    development_scale = np.sqrt(np.diag(CALIBRATED_R_SURROGATE))
     labels = ("x", "y", "yaw", "vx", "vy", "wz")
     lines = [
         f"ensemble of {members} members saved to {out_path}",
-        "component   surrogate RMSE   tolerated (sqrt diag R)   ratio",
+        "component   RMSE    Drake scale ratio    deployment scale ratio    bias",
     ]
     worst = 0.0
-    for label, got, want in zip(labels, rmse, tolerated):
+    for axis, (label, got, want) in enumerate(zip(labels, rmse, tolerated)):
         ratio = float(got / want)
         worst = max(worst, ratio)
-        lines.append(f"{label:<10} {got:12.3e} {want:19.3e} {ratio:14.2f}")
-    lines.append(
-        f"worst ratio {worst:.2f} — {'PASS' if worst <= 0.5 else 'FAIL'} (gate 0.5)"
-    )
+        lines.append(
+            f"{label:<10} {got:8.3e} {ratio:18.2f} "
+            f"{got / development_scale[axis]:23.2f} {residuals[:, axis].mean():+9.3e}"
+        )
+    lines.append(f"worst ratio to Drake calibration scale {worst:.2f}")
 
     # Ensemble spread: the epistemic noise the env's randomization scales.
     member_outputs = np.stack(

@@ -69,7 +69,11 @@ re-running `replay` on the same dataset.
 
 `uv run python main.py gen-surrogate-data` generates the surrogate's dataset:
 sampled (eta, start pose, action) tuples replayed through the Drake prediction
-model with constructed nominal tip paths.
+model with constructed nominal tip paths. Each independent sample is assigned
+by seed to training, development, or held-out data. The current target is the
+estimator's window-end pose and push-end velocity. Schema 3 also retains
+modeled action-end pose and velocity labels for later MPC fitting; the current
+trainer does not use those labels.
 
 ## Random Drake evaluation
 
