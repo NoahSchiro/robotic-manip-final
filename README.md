@@ -40,6 +40,14 @@ Drake has no Windows wheels, so on Windows run everything under WSL.
 uv run python main.py simulate --headless --estimate --pushes 5
 ```
 
+Without `--headless`, the belief is shown after every push.  In Meshcat,
+yellow discs on the block's top face show where the rod might be (area ~
+probability), beside the red marker at the true rod.  A matplotlib window
+charts the belief over rod position and over friction against the truth,
+the entropy and the MAP's probability, and the MAP's error in grid steps.
+The windows freeze while the filter updates.  Press Enter in the terminal
+to quit.
+
 The pushes run one after another in one continuous simulation: nothing resets
 between them, and the sim's clock stops while the filter updates.  They draw
 from the push library minus the sites where the lowered stick would land on

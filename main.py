@@ -8,6 +8,7 @@ from pydrake.all import Simulator
 from pydrake.geometry import Meshcat
 
 from src.action import Action
+from src.belief_view import BeliefDashboard, show_rod_belief
 from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
@@ -136,12 +137,28 @@ def format_push_report(
     )
 
 
+def show_belief(
+    push: int,
+    belief: GridBayesFilter,
+    obj: Object,
+    meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
+) -> None:
+    """Draw `belief`, the belief after `push` pushes, in whichever views are
+    open."""
+    if meshcat is not None:
+        show_rod_belief(meshcat, obj, belief)
+    if dashboard is not None:
+        dashboard.update(push, belief)
+
+
 def run_estimation(
     belief: GridBayesFilter,
     eta_true: Eta,
     pushes: int,
     truth_sim: TruthSim,
     meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
     rng: np.random.Generator,
     obj: Object,
     push_sites: list[SurfaceNormal],
@@ -153,6 +170,7 @@ def run_estimation(
         f"{len(belief.grid)} hypotheses"
     )
     print(f"push 0: entropy {belief.entropy():.3f}")
+    show_belief(0, belief, obj, meshcat, dashboard)
     for k in range(1, pushes + 1):
         if meshcat is not None:
             show_object_goal(meshcat, obj)
@@ -168,6 +186,7 @@ def run_estimation(
         belief.update(obs)
         print(format_push_report(k, obs, time.time() - started, belief, eta_true))
         obj.pose = obs.final_pose()
+        show_belief(k, belief, obj, meshcat, dashboard)
 
 
 def simulate(args: argparse.Namespace) -> None:
@@ -183,10 +202,11 @@ def simulate(args: argparse.Namespace) -> None:
 
     if args.estimate:
         grid = make_grid(GridSpec(), obj.parts)
+        eta_true = Eta(args.mu, args.rod_x, args.rod_y)
         with ParallelPushModel(args.workers, push_model_config(args)) as model:
             run_estimation(
                 belief=GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None),
-                eta_true=Eta(args.mu, args.rod_x, args.rod_y),
+                eta_true=eta_true,
                 pushes=args.pushes,
                 truth_sim=TruthSim(
                     obj,
@@ -196,6 +216,9 @@ def simulate(args: argparse.Namespace) -> None:
                     realtime_rate=0.0 if sim.headless else 1.0,
                 ),
                 meshcat=sim.meshcat,
+                dashboard=(
+                    None if sim.headless else BeliefDashboard(grid, obj.parts, eta_true)
+                ),
                 rng=rng,
                 obj=obj,
                 push_sites=clear_sites(
