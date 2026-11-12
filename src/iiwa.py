@@ -1,6 +1,7 @@
 """The KUKA iiwa14 plus the stick pusher welded to its flange, with the IK
 and trajectory machinery that moves the stick around the block."""
 
+from copy import copy
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,7 @@ from pydrake.all import (
 
 from . import ASSET_DIR
 from .action import Action
+from .geometry import SurfaceNormal, SurfacePart, distance_to_footprint
 from .object import Object
 
 # Home position for the iiwa
@@ -106,7 +108,7 @@ def add_iiwa_and_pusher(pusher: Pusher, plant: MultibodyPlant, parser: Parser) -
     parser.AddModelsFromUrl(
         "package://drake_models/iiwa_description/urdf/iiwa14_primitive_collision.urdf"
     )
-    parser.AddModelsFromUrl(pusher.write_sdf().as_uri())
+    parser.AddModelsFromString(pusher.sdf(), "sdf")
     # Add stick
     plant.WeldFrames(
         plant.GetFrameByName("iiwa_link_7"),
@@ -178,6 +180,26 @@ def hover_tip_pose(obj: Object) -> RigidTransform:
     )
 
 
+def clear_sites(
+    parts: list[SurfacePart],
+    sites: list[SurfaceNormal],
+    stick_radius: float,
+    clearance: float,
+) -> list[SurfaceNormal]:
+    """Keep the sites where a stick of `stick_radius`, lowered to its standoff
+    point, clears the `parts`' footprint by `clearance`."""
+    # At the T's inner corners the standoff sits within a stick radius of the
+    # other part, so the stick would come down on top of the block.
+    return [
+        site
+        for site in sites
+        if distance_to_footprint(
+            parts, *(site.position[:2] - STANDOFF * site.normal[:2])
+        )
+        > stick_radius + clearance
+    ]
+
+
 def push_maneuver(
     obj: Object, action: Action, hover: RigidTransform
 ) -> list[tuple[RigidTransform, float]]:
@@ -198,26 +220,51 @@ def push_maneuver(
         tool_down, contact + action.velocity * action.time * normal
     )
     push_time = (STANDOFF + action.velocity * action.time) / action.velocity
+    # Back off only far enough to release the contact: the push has usually
+    # turned the block, so retracing it all can drag the T's other part along.
+    backed_off = RigidTransform(tool_down, push_end.translation() - STANDOFF * normal)
+    raised = RigidTransform(
+        tool_down,
+        np.array(
+            [
+                backed_off.translation()[0],
+                backed_off.translation()[1],
+                hover.translation()[2],
+            ]
+        ),
+    )
 
     return [
         (over, MOVE_TIME),  # move over the standoff point
         (lowered, MOVE_TIME),  # lower to the contact height
         (push_end, push_time),  # push at the commanded speed and contact time
-        (lowered, push_time),  # back off the way it came
-        (over, MOVE_TIME),  # raise
+        (backed_off, STANDOFF / action.velocity),  # back off at the same speed
+        (raised, MOVE_TIME),  # raise
         (hover, MOVE_TIME),  # return to the hover
     ]
 
 
+def maneuver_time(obj: Object, action: Action) -> float:
+    """Get the push trajectory's length for `action`: push_maneuver's
+    segments plus the final hold, as make_push_trajectory plans it."""
+    maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
+    return sum(duration for _pose, duration in maneuver) + HOLD_TIME
+
+
 def make_push_trajectory(
-    ik_plant: MultibodyPlant, pusher: Pusher, obj: Object, action: Action
+    ik_plant: MultibodyPlant,
+    pusher: Pusher,
+    obj: Object,
+    action: Action,
+    q_seed: np.ndarray,
 ) -> PiecewisePolynomial:
     """Plan the joint-space trajectory that starts parked at the block's hover
-    pose, executes `push_maneuver` for `action`, and parks there for HOLD_TIME."""
+    pose, executes `push_maneuver` for `action`, and parks there for HOLD_TIME.
+    The IK starts from `q_seed`, so the arm stays close to that posture."""
     hover = hover_tip_pose(obj)
     maneuver = push_maneuver(obj, action, hover)
 
-    q_samples = [solve_tip_ik(ik_plant, pusher, hover, Q_HOME)]
+    q_samples = [solve_tip_ik(ik_plant, pusher, hover, q_seed)]
     for pose, _duration in maneuver:
         q_samples.append(solve_tip_ik(ik_plant, pusher, pose, q_samples[-1]))
 
@@ -227,3 +274,40 @@ def make_push_trajectory(
     return PiecewisePolynomial.FirstOrderHold(
         [float(t) for t in breaks], samples.tolist()
     )
+
+
+def hold_trajectory(q: np.ndarray) -> PiecewisePolynomial:
+    """Get the trajectory that holds the arm still at `q`."""
+    return PiecewisePolynomial.FirstOrderHold(
+        [0.0, 1.0], np.column_stack([q, q]).tolist()
+    )
+
+
+def transit_time(
+    q_from: np.ndarray, q_to: np.ndarray, velocity_limits: np.ndarray
+) -> float:
+    """Get how long the arm takes between postures: MOVE_TIME, or longer when
+    that would run a joint past `velocity_limits`."""
+    # The IK can land on a far-off arm shape for a nearby tip pose, a move
+    # MOVE_TIME can't cover at any speed the arm is rated for.
+    return max(MOVE_TIME, float((np.abs(q_to - q_from) / velocity_limits).max()))
+
+
+def chain_from_parked(
+    q_parked: np.ndarray,
+    q_traj: PiecewisePolynomial,
+    start_time: float,
+    transit: float,
+) -> PiecewisePolynomial:
+    """Put `q_traj`, planned from time 0, on a running sim's clock: from
+    `start_time` the arm moves from `q_parked` to `q_traj`'s start over
+    `transit` seconds, then follows `q_traj`."""
+    q_start = q_traj.value(0.0).ravel()
+    chained = PiecewisePolynomial.FirstOrderHold(
+        [start_time, start_time + transit],
+        np.column_stack([q_parked, q_start]).tolist(),
+    )
+    shifted = copy(q_traj)
+    shifted.shiftRight(chained.end_time())
+    chained.ConcatenateInTime(shifted)
+    return chained

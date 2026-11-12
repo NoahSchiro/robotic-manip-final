@@ -11,14 +11,17 @@ from pydrake.all import (
     Context,
     Diagram,
     DiagramBuilder,
+    LogVectorOutput,
     MeshcatVisualizer,
     MultibodyPlant,
     Parser,
     PiecewisePolynomial,
     RigidBody,
     RigidTransform,
+    RotationMatrix,
     StartMeshcat,
     TrajectorySource,
+    VectorLogSink,
 )
 from pydrake.geometry import Meshcat, Rgba
 
@@ -26,6 +29,12 @@ from src.geometry import SurfaceNormal
 from src.iiwa import Q_HOME, Pusher, add_iiwa_and_pusher
 from src.object import Object, Table, add_object, add_table
 from src.pdcontroller import ArmPdController
+
+_STATE_LOGGER = "state_logger"
+_ARM_REFERENCE = "arm_reference"
+
+# Color of the ghost showing where the MPC predicts its push leaves the block.
+PREDICTION_COLOR = (0.95, 0.80, 0.15)
 
 
 class Sim:
@@ -56,8 +65,13 @@ def build_diagram(
     pusher: Pusher,
     meshcat: Meshcat | None = None,
     q_ref: PiecewisePolynomial | None = None,
+    log_period: float | None = None,
 ) -> tuple[Diagram, MultibodyPlant]:
-    """Assemble the scene (arm with stick, table, block) plus the arm controller."""
+    """Assemble the scene (arm with stick, table, block) plus the arm controller.
+
+    With `q_ref`, the arm follows it from a source arm_reference finds.  With
+    `log_period`, the plant state is also logged at that period, in a logger
+    state_logger finds."""
     builder = DiagramBuilder()
     plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=time_step)
     parser = Parser(plant)
@@ -85,13 +99,38 @@ def build_diagram(
         reference = builder.AddSystem(
             TrajectorySource(q_ref, output_derivative_order=1)
         )
+        reference.set_name(_ARM_REFERENCE)
     builder.Connect(reference.get_output_port(), controller.get_input_port(1))
     builder.Connect(controller.get_output_port(), plant.get_actuation_input_port())
+
+    if log_period is not None:
+        logger = LogVectorOutput(plant.get_state_output_port(), builder, log_period)
+        logger.set_name(_STATE_LOGGER)
 
     if meshcat is not None:
         MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
 
     return builder.Build(), plant
+
+
+def state_logger(diagram: Diagram) -> VectorLogSink:
+    """Get the plant-state logger of a diagram built with `log_period`.
+
+    Raises RuntimeError when `diagram` was built without one.
+    """
+    logger = diagram.GetSubsystemByName(_STATE_LOGGER)
+    assert isinstance(logger, VectorLogSink)
+    return logger
+
+
+def arm_reference(diagram: Diagram) -> TrajectorySource:
+    """Get the arm's reference source of a diagram built with `q_ref`.
+
+    Raises RuntimeError when `diagram` was built without one.
+    """
+    reference = diagram.GetSubsystemByName(_ARM_REFERENCE)
+    assert isinstance(reference, TrajectorySource)
+    return reference
 
 
 def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidBody:
@@ -105,15 +144,33 @@ def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidB
     return object_body
 
 
-def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
-    """Draw a translucent ghost of the block at its goal orientation."""
-    X_WG = obj.x_wg()
-    r, g, b = obj.color
+def show_ghost(
+    meshcat: Meshcat,
+    obj: Object,
+    X_WG: RigidTransform,
+    prefix: str,
+    color: tuple[float, float, float],
+) -> None:
+    """Draw a translucent ghost of the block at `X_WG` under `prefix`."""
+    r, g, b = color
     for i, (part, center) in enumerate(zip(obj.parts, obj.body_part_centers())):
         sx, sy = part[:2]
-        path = f"goal/{i}"
+        path = f"{prefix}/{i}"
         meshcat.SetObject(path, Box(sx, sy, obj.height), Rgba(r, g, b, 0.35))
         meshcat.SetTransform(path, X_WG @ RigidTransform(center))
+
+
+def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
+    """Draw a translucent ghost of the block at its goal pose."""
+    show_ghost(meshcat, obj, obj.x_wg(), "goal", obj.color)
+
+
+def show_prediction(meshcat: Meshcat, obj: Object, pose: np.ndarray) -> None:
+    """Draw a translucent ghost of the block at planar `pose` (x, y, yaw),
+    where the MPC predicts its chosen push leaves it."""
+    x, y, yaw = pose
+    X_WP = RigidTransform(RotationMatrix.MakeZRotation(yaw), np.array([x, y, 0.0]))
+    show_ghost(meshcat, obj, X_WP, "prediction", PREDICTION_COLOR)
 
 
 def show_push_sites(
