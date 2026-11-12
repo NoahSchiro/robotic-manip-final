@@ -109,8 +109,6 @@ def make_probing_env_config(
     ensemble_path: Path | None,
     keep: int = N_PROBE_SITES,
     rod_mass: float = ROD_MASS,
-    push_density: float = PUSH_DENSITY,
-    site_clearance: float = SITE_CLEARANCE,
     family_path: Path | None = Path("data/path_family.npz"),
 ) -> ProbingEnvConfig:
     """Build the hypothesis grid and pruned clear-site library. Optional
@@ -119,9 +117,9 @@ def make_probing_env_config(
     reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
     clear = clear_sites(
         reference.parts,
-        reference.surface_normals(push_density),
+        reference.surface_normals(PUSH_DENSITY),
         Pusher().radius,
-        site_clearance,
+        SITE_CLEARANCE,
     )
     picked = prune_sites(np.array([site.position for site in clear]), keep)
     picked_sites = [clear[i] for i in picked]
@@ -563,8 +561,3 @@ class ProbingEnv(gymnasium.Env):
     def action_masks(self) -> np.ndarray:
         """MaskablePPO's hook: which actions are legal this step."""
         return self._action_mask()
-
-
-def _env_parts() -> list[tuple[float, float, float, float]]:
-    """The block's surface parts, for sampling etas at reset."""
-    return Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, ROD_MASS)).parts

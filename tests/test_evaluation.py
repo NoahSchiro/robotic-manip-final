@@ -6,7 +6,7 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from src import evaluation
+from src import evaluation, probing
 from src.params import Eta
 
 
@@ -52,11 +52,15 @@ def drake_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(evaluation, "TruthSim", FakeTruthSim)
     monkeypatch.setattr(
         evaluation,
-        "sample_episode_conditions",
-        lambda *_: (Eta(0.5, 0, 0), np.array([0.55, 0, 0])),
+        "episode_conditions",
+        lambda *_: (Eta(0.5, 0, 0), np.array([0.55, 0, 0]), np.random.default_rng(0)),
     )
-    monkeypatch.setattr(evaluation, "_random_site", lambda *_: (0, 0.05, 0.2))
-    monkeypatch.setattr(evaluation, "out_of_bounds", lambda *_: False)
+    monkeypatch.setattr(
+        evaluation,
+        "random_selector",
+        lambda *_: lambda *_args: (0, 0.05, 0.2),
+    )
+    monkeypatch.setattr(probing, "out_of_bounds", lambda *_: False)
     FakeTruthSim.planned_poses = []
     return SimpleNamespace(
         grid=[Eta(0.1, 0, 0), Eta(0.9, 0, 0)],
@@ -102,7 +106,11 @@ def test_next_push_uses_action_end_pose(drake_setup: SimpleNamespace) -> None:
 def test_immediate_policy_stop_receives_terminal_reward(
     drake_setup: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(evaluation, "_policy_action", lambda *_: None)
+    monkeypatch.setattr(
+        evaluation,
+        "policy_selector",
+        lambda *_: lambda *_args: None,
+    )
     record = evaluation._drake_episode(
         object(),
         drake_setup,

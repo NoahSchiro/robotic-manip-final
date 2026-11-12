@@ -1,14 +1,15 @@
 """Calibrate the estimator's prediction-error covariance R.
 
-Each sample draws off-grid true parameters and a random reachable push,
-runs the truth sim, and predicts the push with the *nearest* grid
-hypothesis, so R covers both the prediction model's mismatch and the
-grid's discretization.  R is the errors' second moment about zero (the
-likelihood assumes zero-mean errors) plus a diagonal floor.
+Each sample is one episode's first push: off-grid true parameters and a start
+pose from episode_conditions, a random push from the probing library, run in
+the truth sim.  The push is predicted with the *nearest* grid hypothesis, so R
+covers both the prediction model's mismatch and the grid's discretization.  R
+is the errors' second moment about zero (the likelihood assumes zero-mean
+errors) plus a diagonal floor.
 
 R lives in the code as estimator.CALIBRATED_R.  Rerun this after changing
-the prediction model, the measurement, or the grid, then paste the
-constant it prints into src/estimator.py:
+the prediction model, the measurement, the grid, or the probing library, then
+paste the constant it prints into src/estimator.py:
 
     uv run main.py calibrate --samples 48
 """
@@ -22,12 +23,18 @@ from typing import cast
 import numpy as np
 
 from .dynamics import DrakePushModel, DynamicsModel, PushModelConfig
-from .geometry import SurfacePart
-from .iiwa import Pusher, clear_sites
-from .object import Object, Rod
+from .env import ProbingEnvConfig, make_probing_env_config
+from .iiwa import Pusher
 from .observation import planar_error
-from .params import Eta, GridSpec, make_grid, nearest_hypothesis, sample_eta
-from .recording import NoReachablePush, TruthSim, TruthSimConfig
+from .params import nearest_hypothesis
+from .probing import (
+    ProbingState,
+    episode_conditions,
+    episode_object,
+    random_selector,
+    run_probing,
+)
+from .recording import TruthSim, TruthSimConfig
 from .surrogate import SurrogatePredictor, load_ensemble
 
 # Floor on each error's standard deviation (x, y, yaw, vx, vy, wz), in m,
@@ -41,14 +48,11 @@ PREDICTORS = ("drake", "surrogate")
 
 @dataclass(frozen=True)
 class SampleSetup:
-    """What every calibration sample shares."""
+    """What every calibration sample shares: the probing library the push is
+    drawn from, built once."""
 
-    grid: list[Eta]
-    spec: GridSpec
-    parts: list[SurfacePart]
+    probing: ProbingEnvConfig
     rod_mass: float
-    push_density: float
-    site_clearance: float
     truth: TruthSimConfig
     model: PushModelConfig
     predictor: str = "drake"
@@ -65,24 +69,15 @@ class SampleSetup:
 
 def make_sample_setup(
     rod_mass: float,
-    push_density: float,
-    site_clearance: float,
     truth: TruthSimConfig,
     model: PushModelConfig,
     predictor: str = "drake",
     ensemble_path: Path | None = None,
 ) -> SampleSetup:
     """Collect what every calibration sample shares."""
-    spec = GridSpec()
-    # Only the footprint is needed, and it's the same for every eta.
-    parts = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass)).parts
     return SampleSetup(
-        grid=make_grid(spec, parts),
-        spec=spec,
-        parts=parts,
+        probing=make_probing_env_config(None, rod_mass=rod_mass, family_path=None),
         rod_mass=rod_mass,
-        push_density=push_density,
-        site_clearance=site_clearance,
         truth=truth,
         model=model,
         predictor=predictor,
@@ -93,26 +88,27 @@ def make_sample_setup(
 def calibration_sample(
     seed: int, setup: SampleSetup
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Run one truth push at off-grid parameters, returning its prediction
-    errors under the nearest grid hypothesis and under the true parameters
-    (or None when no push was reachable)."""
-    rng = np.random.default_rng(seed)
-    eta_true = sample_eta(rng, setup.spec, setup.parts)
-    obj = eta_true.to_object(rng, setup.rod_mass)
-    pusher = Pusher()
-    sites = clear_sites(
-        obj.parts,
-        obj.surface_normals(setup.push_density),
-        pusher.radius,
-        setup.site_clearance,
+    """Run one truth push at the seed's episode conditions, returning its
+    prediction errors under the nearest grid hypothesis and under the true
+    parameters (or None when no push was reachable)."""
+    eta_true, start_pose, action_rng = episode_conditions(seed)
+    obj = episode_object(eta_true, start_pose, setup.rod_mass)
+    state = ProbingState(
+        truth_sim=TruthSim(obj, Pusher(), setup.truth), obj=obj, belief=None
     )
-    try:
-        obs = TruthSim(obj, pusher, setup.truth).record_random_push(rng, obj, sites)
-    except NoReachablePush:
+    outcome = run_probing(
+        state,
+        setup.probing,
+        random_selector(setup.probing, action_rng),
+        budget=1,
+        none_reason="unreachable",
+    )
+    if not outcome.records:
         return None
+    obs = outcome.records[0].observation
     predictor = setup.build_predictor()
     nearest, true = predictor.predict(
-        [nearest_hypothesis(setup.grid, eta_true), eta_true], obs
+        [nearest_hypothesis(setup.probing.grid, eta_true), eta_true], obs
     )
     measured = obs.measured()
     return planar_error(measured, nearest), planar_error(measured, true)
@@ -143,7 +139,6 @@ def format_constant(
     R: np.ndarray,
     samples: int,
     seed: int,
-    site_clearance: float,
     truth: TruthSimConfig,
     model: PushModelConfig,
 ) -> str:
@@ -155,8 +150,7 @@ def format_constant(
     return (
         f"# Calibrated by main.py calibrate: {samples} truth pushes, seed {seed},\n"
         f"# truth timestep {truth.time_step:g}, model timestep "
-        f"{model.time_step:g}, settle time {truth.settle_time:g} s,\n"
-        f"# site clearance {site_clearance:g} m.\n"
+        f"{model.time_step:g}, settle time {truth.settle_time:g} s.\n"
         f"CALIBRATED_R = np.array(\n    [\n{rows}\n    ]\n)"
     )
 
@@ -178,7 +172,7 @@ def calibrate(samples: int, seed: int, workers: int, setup: SampleSetup) -> None
     true = np.array([e for _, e in results])
     print(
         f"{len(results)}/{samples} samples in {time.time() - started:.0f} s "
-        f"({len(setup.grid)} hypotheses)"
+        f"({len(setup.probing.grid)} hypotheses)"
     )
     for name, errors in (("nearest grid", nearest), ("true eta", true)):
         rms = np.sqrt((errors**2).mean(axis=0))
@@ -192,7 +186,6 @@ def calibrate(samples: int, seed: int, workers: int, setup: SampleSetup) -> None
             rounded_R(R),
             len(results),
             seed,
-            setup.site_clearance,
             setup.truth,
             setup.model,
         )

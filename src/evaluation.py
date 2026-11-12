@@ -4,7 +4,7 @@ The paired comparison runs the learned policy and random baseline through
 the same arm pipeline. The random-only mode needs no learned assets.
 
 Each episode samples the true eta and start pose
-(sample_episode_conditions); the learned policy runs first, then the
+(episode_conditions); the learned policy runs first, then the
 random-probing baseline reuses the learned policy's push count on the
 identical episode, so the comparison isolates push selection.  The same
 episodes also run in the surrogate world as the reference, which
@@ -22,29 +22,28 @@ from typing import cast
 import numpy as np
 from sb3_contrib import MaskablePPO
 
-from .action import Action
 from .dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
 from .env import (
-    WORKSPACE_CENTER,
-    WORKSPACE_RADIUS,
     ProbingEnv,
     ProbingEnvConfig,
-    env_parts,
     make_probing_env_config,
-    observation_vector,
-    reachability_mask,
-    sample_episode_conditions,
-    split_action,
 )
 from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE, GridBayesFilter
-from .geometry import SurfaceNormal
 from .iiwa import Pusher
 from .params import Eta, grid_spans
+from .probing import (
+    ProbingState,
+    PushRecord,
+    episode_conditions,
+    episode_object,
+    policy_selector,
+    random_selector,
+    run_probing,
+)
 from .recording import TruthSim, TruthSimConfig
 from .surrogate import SurrogatePredictor, load_ensemble
 
 ROD_MASS = 0.2  # kg, as everywhere
-MAX_IK_RETRIES = 40
 
 
 @dataclass(frozen=True)
@@ -95,50 +94,23 @@ def stop_reward(belief: GridBayesFilter, true_eta: Eta, spans: np.ndarray) -> fl
     return -float(np.linalg.norm(error))
 
 
-def out_of_bounds(pose: np.ndarray) -> bool:
-    return bool(
-        np.linalg.norm(pose[:2] - np.array(WORKSPACE_CENTER)) > WORKSPACE_RADIUS
-    )
+def _entropy_drop(record: PushRecord) -> float:
+    """Nats the push removed from the belief; evaluation episodes always run
+    with a belief, so the entropies are present."""
+    assert record.entropy_before is not None and record.entropy_after is not None
+    return record.entropy_before - record.entropy_after
 
 
-def _policy_action(
-    model: MaskablePPO,
-    belief: GridBayesFilter,
-    pose: np.ndarray,
-    last_measurement: np.ndarray,
-    last_action: np.ndarray,
-    pushes: int,
-    config: ProbingEnvConfig,
-    failed_sites: set[int],
-) -> int | None:
-    """The policy's masked action, excluding sites that failed IK; None
-    when it stops."""
-    obs = observation_vector(belief, pose, last_measurement, last_action, pushes)
-    mask = reachability_mask(pose, config).copy()
-    per_site = len(config.speeds) * len(config.times)
-    for site in failed_sites:
-        mask[site * per_site : (site + 1) * per_site] = False
-    full_mask = np.append(mask, True)  # stop is always available
-    action, _ = model.predict(obs, action_masks=full_mask, deterministic=True)
-    chosen = int(action)
-    return None if chosen == config.n_actions - 1 else chosen
-
-
-def _random_site(
-    config: ProbingEnvConfig,
-    pose: np.ndarray,
-    failed_sites: set[int],
-    rng: np.random.Generator,
-) -> tuple[int, float, float] | None:
-    """Draw uniformly from feasible push actions, excluding failed IK sites."""
-    mask = reachability_mask(pose, config).copy()
-    per_site = len(config.speeds) * len(config.times)
-    for site in failed_sites:
-        mask[site * per_site : (site + 1) * per_site] = False
-    feasible = np.flatnonzero(mask)
-    if len(feasible) == 0:
-        return None
-    return split_action(int(rng.choice(feasible)), config)
+def _episode_reason(
+    outcome_reason: str, forced_pushes: int | None, config: ProbingEnvConfig
+) -> str:
+    """Report label for the probing loop's stop.  A budget stop is the matched
+    baseline's when the forced count is within max_pushes, else max_pushes."""
+    if outcome_reason != "budget":
+        return outcome_reason
+    if forced_pushes is not None and forced_pushes <= config.max_pushes:
+        return "matched_budget"
+    return "max_pushes"
 
 
 def _drake_episode(
@@ -154,115 +126,49 @@ def _drake_episode(
     """One episode in the Drake world.  `policy` runs the trained policy's
     stop decision; otherwise the episode runs `forced_pushes` random pushes
     (the paired baseline)."""
-    eta, start_pose = sample_episode_conditions(
-        np.random.default_rng(seed), env_parts()
-    )
-    action_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
-    obj = eta.to_object(np.random.default_rng(0), ROD_MASS)
-    obj.pose = (float(start_pose[0]), float(start_pose[1]), float(start_pose[2]))
-    truth_sim = TruthSim(obj, Pusher(), truth_config)
+    eta, start_pose, action_rng = episode_conditions(seed)
+    obj = episode_object(eta, start_pose, ROD_MASS)
     spans = grid_spans(config.grid)
     belief = GridBayesFilter(config.grid, filter_model, r_matrix, nu=3.0)
+    state = ProbingState(
+        truth_sim=TruthSim(obj, Pusher(), truth_config),
+        obj=obj,
+        belief=belief,
+    )
+    if policy:
+        assert model is not None
+        selector = policy_selector(model, config)
+        none_reason = "stop"
+    else:
+        selector = random_selector(config, action_rng)
+        none_reason = "unreachable"
+    budget = (
+        config.max_pushes
+        if forced_pushes is None
+        else min(forced_pushes, config.max_pushes)
+    )
+    outcome = run_probing(state, config, selector, budget, none_reason)
 
-    last_measurement = np.zeros(6)
-    last_action = np.zeros(8)
-    failed_sites: set[int] = set()
-    pushes = 0
     total = 0.0
-    reason = "stop"
-    attempts = 0
-    while True:
-        if forced_pushes is not None and pushes >= forced_pushes:
-            total += stop_reward(belief, eta, spans)
-            reason = "matched_budget"
-            break
-        if pushes >= config.max_pushes:
-            total += stop_reward(belief, eta, spans)
-            reason = "max_pushes"
-            break
-        chosen: int | None = None
-        pose = np.asarray(obj.pose, dtype=float)
-        if policy:
-            assert model is not None
-            chosen = _policy_action(
-                model,
-                belief,
-                pose,
-                last_measurement,
-                last_action,
-                pushes,
-                config,
-                failed_sites,
-            )
-            if chosen is None:
-                total += stop_reward(belief, eta, spans)
-                break
-            site, speed, time = split_action(chosen, config)
-        else:
-            picked = _random_site(config, pose, failed_sites, action_rng)
-            if picked is None:
-                total += stop_reward(belief, eta, spans)
-                reason = "unreachable"
-                break
-            site, speed, time = picked
-        attempts += 1
-        if attempts > MAX_IK_RETRIES:
-            total += stop_reward(belief, eta, spans)
-            reason = "ik_exhausted"
-            break
-
-        action = Action(
-            contact=SurfaceNormal(
-                position=config.site_positions[site],
-                normal=config.site_normals[site],
-            ),
-            velocity=speed,
-            time=time,
-        )
-        entropy_before = belief.entropy()
-        try:
-            q_traj = truth_sim.plan_push(obj, action)
-        except RuntimeError:
-            failed_sites.add(site)  # the arm cannot reach this site here
-            continue
-        observation = truth_sim.record_push(obj, action, q_traj)
-        obj.pose = observation.final_pose()
-        belief.update(observation)
-
-        pushes += 1
-        attempts = 0
-        failed_sites.clear()
-        total += (
-            config.entropy_weight * (entropy_before - belief.entropy())
-            - config.step_cost
-        )
-        last_measurement = observation.measured()
-        last_action = np.array(
-            [
-                *config.site_positions[site],
-                *config.site_normals[site],
-                speed,
-                time,
-            ]
-        )
-
-        if out_of_bounds(np.asarray(obj.pose, dtype=float)):
-            total += stop_reward(belief, eta, spans) - config.out_of_bounds_penalty
-            reason = "out_of_bounds"
-            break
+    for record in outcome.records:
+        total += config.entropy_weight * _entropy_drop(record) - config.step_cost
+    terminal = stop_reward(belief, eta, spans)
+    if outcome.reason == "out_of_bounds":
+        terminal -= config.out_of_bounds_penalty
+    total += terminal
 
     component_error = belief.estimation_error(eta)
     return EpisodeRecord(
         seed=seed,
         policy="learned" if policy else "random",
-        pushes=pushes,
+        pushes=state.pushes,
         reward=total,
         error=float(np.linalg.norm(component_error / spans)),
         friction_error=float(component_error[0]),
         rod_x_error=float(component_error[1]),
         rod_y_error=float(component_error[2]),
         entropy=belief.entropy(),
-        reason=reason,
+        reason=_episode_reason(outcome.reason, forced_pushes, config),
     )
 
 

@@ -1,7 +1,6 @@
 """Entry point."""
 
 import argparse
-import time
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +22,6 @@ from src.env import (
     MAX_PUSHES,
     ProbingEnvConfig,
     make_probing_env_config,
-    select_push_action,
 )
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.evaluation import run_evaluation
@@ -32,18 +30,26 @@ from src.iiwa import (
     Q_HOME,
     Pusher,
     build_iiwa_pusher_plant,
-    clear_sites,
     make_push_trajectory,
 )
-from src.object import Object, Rod, Table
+from src.object import Object, Table
 from src.observation import PushObservation
-from src.params import Eta, GridSpec, make_grid, sample_eta
+from src.params import Eta, GridSpec, make_grid
 from src.path_family import (
     calibrate_path_family,
     load_path_family,
     save_path_family,
 )
-from src.recording import NoReachablePush, TruthSim
+from src.probing import (
+    ProbingState,
+    PushRecord,
+    episode_conditions,
+    episode_object,
+    policy_selector,
+    random_selector,
+    run_probing,
+)
+from src.recording import TruthSim
 from src.replay import run_replay
 from src.scene import (
     Sim,
@@ -495,86 +501,49 @@ def run_estimation(
     pushes: int,
     truth_sim: TruthSim,
     meshcat: Meshcat | None,
-    rng: np.random.Generator,
     obj: Object,
-    push_sites: list[SurfaceNormal],
+    action_rng: np.random.Generator,
     policy: MaskablePPO | None = None,
     policy_config: ProbingEnvConfig | None = None,
 ) -> None:
-    """Update `belief` after each of `pushes` library pushes, run one after
-    another in `truth_sim`, moving `obj` to where each push leaves it.  The
-    pushes come from the random prober, or — with a trained `policy` — from
-    the PPO policy acting on the current belief."""
+    """Update `belief` after each of up to `pushes` probing pushes, run one after
+    another in `truth_sim`, moving `obj` to where each push leaves it.  Without a
+    `policy`, the pushes are random draws from the pruned library using
+    `action_rng`; with one, the PPO policy chooses them from the current belief."""
+    if policy is None:
+        config = make_probing_env_config(None, family_path=None)
+        selector = random_selector(config, action_rng)
+        none_reason = "unreachable"
+    else:
+        assert policy_config is not None
+        config = policy_config
+        selector = policy_selector(policy, config)
+        none_reason = "stop"
+
     print(
         f"estimating eta = (mu, rod x, rod y), true {eta_true}, over "
         f"{len(belief.grid)} hypotheses"
     )
     print(f"push 0: entropy {belief.entropy():.3f}")
-    last_measurement = np.zeros(6)
-    last_action = np.zeros(8)
-    failed_sites: set[int] = set()
-    done = 0
-    while done < pushes:
-        k = done + 1
+    if meshcat is not None:
+        show_object_goal(meshcat, obj)
+
+    def report(state: ProbingState, record: PushRecord) -> None:
         if meshcat is not None:
-            show_object_goal(meshcat, obj)
-        if policy is None:
-            try:
-                obs = truth_sim.record_random_push(rng, obj, push_sites)
-            except NoReachablePush as unreachable:
-                # Random pushes can walk the block out of reach; the belief so far
-                # is still good.
-                print(f"stopped after {done} pushes: {unreachable}")
-                return
-        else:
-            assert policy_config is not None
-            block_pose = np.array([*obj.pose[:2], obj.pose[2]])
-            chosen = select_push_action(
-                policy,
-                belief,
-                block_pose,
-                last_measurement,
-                last_action,
-                done,
-                policy_config,
-                failed_sites,
+            show_object_goal(meshcat, state.obj)
+        print(
+            format_push_report(
+                state.pushes,
+                record.observation,
+                record.update_seconds,
+                state.belief,
+                eta_true,
             )
-            if chosen is None:
-                print(
-                    f"stopped after {done} pushes: the policy is confident "
-                    f"in its estimate"
-                )
-                return
-            site, speed, duration = chosen
-            action = Action(
-                contact=SurfaceNormal(
-                    position=policy_config.site_positions[site],
-                    normal=policy_config.site_normals[site],
-                ),
-                velocity=speed,
-                time=duration,
-            )
-            try:
-                q_traj = truth_sim.plan_push(obj, action)
-            except RuntimeError:
-                print(f"  push {k}: site {site} unreachable by the arm, re-planning")
-                failed_sites.add(site)
-                continue
-            obs = truth_sim.record_push(obj, action, q_traj)
-        started = time.time()
-        belief.update(obs)
-        done += 1
-        print(format_push_report(k, obs, time.time() - started, belief, eta_true))
-        obj.pose = obs.final_pose()
-        last_measurement = obs.measured()
-        last_action = np.array(
-            [
-                *obs.action.contact.position,
-                *obs.action.contact.normal,
-                obs.action.velocity,
-                obs.action.time,
-            ]
         )
+
+    state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief)
+    outcome = run_probing(state, config, selector, pushes, none_reason, on_push=report)
+    print(f"stopped after {state.pushes} pushes: {outcome.reason}")
 
 
 def simulate(args: argparse.Namespace) -> None:
@@ -584,27 +553,23 @@ def simulate(args: argparse.Namespace) -> None:
     if seed is None:
         seed = int(np.random.default_rng().integers(0, 2**32))
     print(f"PRNG seed: {seed} (rerun with --seed {seed} to reproduce)")
-    rng = np.random.default_rng(seed=seed)
 
-    # The unknown parameters are the experiment: sampled fresh from the
-    # estimation grid's ranges unless the user pins them by flag.
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, args.rod_mass))
-    sampled = sample_eta(rng, GridSpec(), reference.parts)
-    mu = args.mu if args.mu is not None else sampled.mu
-    rod_x = args.rod_x if args.rod_x is not None else sampled.bx
-    rod_y = args.rod_y if args.rod_y is not None else sampled.by
+    # The unknown parameters are the experiment: sampled with the episode's
+    # conditions unless the user pins them by flag.
+    sampled, start_pose, action_rng = episode_conditions(seed)
+    eta = Eta(
+        mu=args.mu if args.mu is not None else sampled.mu,
+        bx=args.rod_x if args.rod_x is not None else sampled.bx,
+        by=args.rod_y if args.rod_y is not None else sampled.by,
+    )
     print(
-        f"true parameters: mu={mu:.3f}, rod=({rod_x:+.4f}, {rod_y:+.4f}) m "
+        f"true parameters: mu={eta.mu:.3f}, rod=({eta.bx:+.4f}, {eta.by:+.4f}) m "
         "(what the estimator must find)"
     )
 
     sim = Sim(time_step=args.time_step, headless=args.headless)
 
-    obj = Object(
-        rng,
-        rod=Rod(x=rod_x, y=rod_y, mass=args.rod_mass),
-        friction=mu,
-    )
+    obj = episode_object(eta, start_pose, args.rod_mass)
     pusher = Pusher()
 
     if args.estimate:
@@ -621,7 +586,7 @@ def simulate(args: argparse.Namespace) -> None:
         with ParallelPushModel(args.workers, push_model_config(args)) as model:
             run_estimation(
                 belief=GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None),
-                eta_true=Eta(mu, rod_x, rod_y),
+                eta_true=eta,
                 pushes=args.pushes,
                 truth_sim=TruthSim(
                     obj,
@@ -631,14 +596,8 @@ def simulate(args: argparse.Namespace) -> None:
                     realtime_rate=0.0 if sim.headless else 1.0,
                 ),
                 meshcat=sim.meshcat,
-                rng=rng,
                 obj=obj,
-                push_sites=clear_sites(
-                    obj.parts,
-                    obj.surface_normals(args.push_density),
-                    pusher.radius,
-                    args.site_clearance,
-                ),
+                action_rng=action_rng,
                 policy=policy,
                 policy_config=policy_config,
             )
@@ -652,7 +611,7 @@ def simulate(args: argparse.Namespace) -> None:
         build_iiwa_pusher_plant(pusher), pusher, obj, action, Q_HOME
     )
     diagram, plant = build_diagram(
-        args.time_step, obj, Table(mu), pusher, meshcat=sim.meshcat, q_ref=q_traj
+        args.time_step, obj, Table(eta.mu), pusher, meshcat=sim.meshcat, q_ref=q_traj
     )
 
     context = diagram.CreateDefaultContext()
@@ -662,7 +621,7 @@ def simulate(args: argparse.Namespace) -> None:
     # sits at the footprint's bottom center.
     object_body = place_object(plant, plant_context, obj)
     X_WO = obj.x_wo()
-    print(f"object-table friction mu = {mu:.3f}")
+    print(f"object-table friction mu = {eta.mu:.3f}")
     if obj.rod is not None:
         print(f"rod welded at ({obj.rod.x}, {obj.rod.y}) m, mass {obj.rod.mass} kg")
     print(
@@ -701,8 +660,6 @@ def record_trials_command(args: argparse.Namespace) -> None:
     under so a replay can rebuild the same setup."""
     setup = make_record_setup(
         rod_mass=args.rod_mass,
-        push_density=args.push_density,
-        site_clearance=args.site_clearance,
         pushes=args.pushes,
         truth=truth_sim_config(args),
     )
@@ -717,8 +674,6 @@ def record_trials_command(args: argparse.Namespace) -> None:
             "trials": args.trials,
             "pushes": args.pushes,
             "rod_mass": args.rod_mass,
-            "push_density": args.push_density,
-            "site_clearance": args.site_clearance,
             "truth_time_step": args.time_step,
             "settle_time": args.settle_time,
             "log_period": args.log_period,
@@ -856,8 +811,6 @@ def main(args: argparse.Namespace) -> None:
             workers=args.workers,
             setup=make_sample_setup(
                 rod_mass=args.rod_mass,
-                push_density=args.push_density,
-                site_clearance=args.site_clearance,
                 truth=truth_sim_config(args),
                 model=push_model_config(args),
                 predictor=args.predictor,

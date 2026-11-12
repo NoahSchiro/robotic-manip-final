@@ -19,8 +19,7 @@ from pydrake.all import (
 )
 from pydrake.geometry import Meshcat
 
-from .action import Action, sample_action
-from .geometry import SurfaceNormal
+from .action import Action
 from .iiwa import (
     HOLD_TIME,
     Q_HOME,
@@ -39,10 +38,6 @@ from .observation import ObjectState, PushObservation
 from .scene import arm_reference, build_diagram, place_object, state_logger
 
 TipSample = tuple[np.ndarray, np.ndarray]
-
-
-class NoReachablePush(RuntimeError):
-    """The arm can't reach any push it tried from the block's current pose."""
 
 
 @dataclass(frozen=True)
@@ -226,37 +221,3 @@ class TruthSim:
             tip_velocities=np.column_stack([v for _p, v in tips]),
             action_end_time=window.action_end - window.start,
         )
-
-    def record_random_push(
-        self,
-        rng: np.random.Generator,
-        obj: Object,
-        sites: list[SurfaceNormal],
-        max_tries: int = 20,
-    ) -> PushObservation:
-        """Record a random reachable library push from `obj`'s current pose.
-
-        Raises NoReachablePush when none of `max_tries` draws is reachable.
-        """
-        action, q_traj = self._draw_reachable_push(rng, obj, sites, max_tries)
-        return self.record_push(obj, action, q_traj)
-
-    def _draw_reachable_push(
-        self,
-        rng: np.random.Generator,
-        obj: Object,
-        sites: list[SurfaceNormal],
-        max_tries: int,
-    ) -> tuple[Action, PiecewisePolynomial]:
-        """Draw a random library push the arm can reach from `obj`'s current
-        pose, returning it with its planned trajectory.
-
-        Raises NoReachablePush when none of `max_tries` draws is reachable.
-        """
-        for _ in range(max_tries):
-            action = sample_action(rng, sites)
-            try:
-                return action, self.plan_push(obj, action)
-            except RuntimeError:
-                continue  # this contact is out of the arm's reach; draw again
-        raise NoReachablePush(f"no reachable push in {max_tries} draws")

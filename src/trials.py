@@ -32,12 +32,19 @@ from pydrake.all import RigidTransform, SpatialVelocity
 
 from .action import Action
 from .dataset_file import META_PREFIX
-from .geometry import SurfaceNormal, SurfacePart
-from .iiwa import Pusher, clear_sites
-from .object import Object, Rod
+from .env import ProbingEnvConfig, make_probing_env_config
+from .geometry import SurfaceNormal
+from .iiwa import Pusher
 from .observation import ObjectState, PushObservation
-from .params import Eta, GridSpec, sample_eta
-from .recording import NoReachablePush, TruthSim, TruthSimConfig
+from .params import Eta
+from .probing import (
+    ProbingState,
+    episode_conditions,
+    episode_object,
+    random_selector,
+    run_probing,
+)
+from .recording import TruthSim, TruthSimConfig
 
 STATE_NAMES = ("start", "push_end", "end", "final")
 
@@ -52,63 +59,48 @@ class TrialData:
 
 @dataclass(frozen=True)
 class RecordSetup:
-    """What every recorded trial shares."""
+    """What every recorded trial shares: the push library the random pushes
+    draw from, built once."""
 
-    spec: GridSpec
-    parts: list[SurfacePart]
     rod_mass: float
-    push_density: float
-    site_clearance: float
     pushes: int
     truth: TruthSimConfig
+    probing: ProbingEnvConfig
 
 
 def make_record_setup(
-    rod_mass: float,
-    push_density: float,
-    site_clearance: float,
-    pushes: int,
-    truth: TruthSimConfig,
+    rod_mass: float, pushes: int, truth: TruthSimConfig
 ) -> RecordSetup:
     """Collect what every recorded trial shares."""
-    spec = GridSpec()
-    # Only the footprint is needed, and it's the same for every eta.
-    parts = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass)).parts
     return RecordSetup(
-        spec=spec,
-        parts=parts,
         rod_mass=rod_mass,
-        push_density=push_density,
-        site_clearance=site_clearance,
         pushes=pushes,
         truth=truth,
+        probing=make_probing_env_config(None, rod_mass=rod_mass, family_path=None),
     )
 
 
 def record_trial(seed: int, setup: RecordSetup) -> TrialData:
-    """Record one trial: off-grid parameters, then up to `setup.pushes`
-    random reachable pushes in one continuous truth sim, each from where the
-    last left the block.  A trial ends early when no push is reachable."""
-    rng = np.random.default_rng(seed)
-    eta = sample_eta(rng, setup.spec, setup.parts)
-    obj = eta.to_object(rng, setup.rod_mass)
-    pusher = Pusher()
-    sites = clear_sites(
-        obj.parts,
-        obj.surface_normals(setup.push_density),
-        pusher.radius,
-        setup.site_clearance,
+    """Record one trial: the episode's true parameters and start pose, then up
+    to `setup.pushes` random library pushes in one continuous truth sim, each
+    from where the last left the block.  A trial ends early when no push is
+    reachable."""
+    eta, start_pose, action_rng = episode_conditions(seed)
+    obj = episode_object(eta, start_pose, setup.rod_mass)
+    state = ProbingState(
+        truth_sim=TruthSim(obj, Pusher(), setup.truth), obj=obj, belief=None
     )
-    sim = TruthSim(obj, pusher, setup.truth)
-    observations = []
-    for _ in range(setup.pushes):
-        try:
-            obs = sim.record_random_push(rng, obj, sites)
-        except NoReachablePush:
-            break
-        observations.append(obs)
-        obj.pose = obs.final_pose()
-    return TrialData(eta=eta, observations=observations)
+    outcome = run_probing(
+        state,
+        setup.probing,
+        random_selector(setup.probing, action_rng),
+        budget=setup.pushes,
+        none_reason="unreachable",
+    )
+    return TrialData(
+        eta=eta,
+        observations=[record.observation for record in outcome.records],
+    )
 
 
 def pose_matrix(state: ObjectState) -> np.ndarray:

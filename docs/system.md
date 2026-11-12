@@ -66,3 +66,19 @@ unreachable actions. The random-only report and the paired report include
 range-normalized MAP error, per-component errors, reward, pushes, and reason.
 The surrogate world remains a separate comparison and requires compatible
 ensemble and path-family assets.
+
+Every Drake-world run shares one episode setup and one action set.
+`probing.episode_conditions(seed)` returns the true eta, the start pose (x m,
+y m, yaw rad, within 0.1 m of (0.55, 0) m) and an independent action RNG
+seeded by `SeedSequence([seed, 1])`.  The evaluator, `simulate --estimate`,
+`record-trials`, `calibrate` and `scripts/diagnose_motion.py` all run their
+pushes through `probing.run_probing` with `probing.random_selector` (or the
+trained policy), which picks uniformly from the probing library: 32 pruned clear
+sites, 2 speeds (0.05, 0.1 m/s) and 2 contact times (0.2, 0.4 s), restricted to
+pushes reachable from the block's current pose and to sites whose IK has not
+failed.  Runs without a filter (`record-trials`, `calibrate`, the diagnostic)
+pass `belief=None`, so no update or entropy is computed.
+
+The stored `CALIBRATED_R`, `data/replay_trials.npz` and `data/path_family.npz`
+were produced with the previous action distribution and old arm motion, so they
+need re-recording or recalibration before they are used with this setup.

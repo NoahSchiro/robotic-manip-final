@@ -58,9 +58,12 @@ uv run python main.py simulate --headless --estimate --pushes 5
 ```
 
 The pushes run one after another in one continuous simulation: nothing resets
-between them, and the sim's clock stops while the filter updates.  They draw
-from the push library minus the sites where the lowered stick would land on
-the block (`--site-clearance`), at the T's inner corners.
+between them, and the sim's clock stops while the filter updates.  The true
+eta and start pose come from `probing.episode_conditions(--seed)`, the same
+setup `evaluate` uses.  Each push is drawn uniformly from the probing library:
+32 contact sites on the T's outline that clear the lowered stick (the T's inner
+corners are excluded), times 2 speeds and 2 contact times, restricted to pushes
+the arm can reach from the block's current pose.
 
 The default grid is 9 values each of mu, rod x and rod y, keeping only rod
 positions inside the T (405 hypotheses); change it via `params.GridSpec`.
@@ -80,7 +83,10 @@ The estimator's quality is tracked on a frozen dataset of recorded trials
 `uv run python main.py record-trials` (slow: runs the truth sim), score it
 with `uv run python main.py replay` (minutes), which writes
 `data/replay_report.json`.  Any change to the prediction model is judged by
-re-running `replay` on the same dataset.
+re-running `replay` on the same dataset.  Trials use the same episode setup and
+action set as `simulate --estimate` (see [the system description](docs/system.md)).
+The committed dataset predates that action set, so re-record it before comparing
+replay results across the change.
 
 ## Surrogate training data
 
