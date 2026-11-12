@@ -76,6 +76,17 @@ The likelihood is a Student-t (`--nu 3` by default), which keeps one badly
 mispredicted push from eliminating the right hypothesis; `--nu 0` uses the
 proposal's Gaussian instead.
 
+### Belief visualization
+
+```sh
+# Drake: one headless episode; saves the belief before and after each push
+uv run python -m scripts.plot_belief record --seed 123 --pushes 3 --out data/belief_seed123.npz
+# numpy and matplotlib only: rod-position and friction marginals per step
+uv run python -m scripts.plot_belief plot data/belief_seed123.npz --out docs/figures/belief_seed123.png
+```
+
+`record` takes `--workers`, and `--mu`, `--rod-x`, `--rod-y` to override the sampled truth.
+
 ## Offline replay (the estimator's reference)
 
 The estimator's quality is tracked on a frozen dataset of recorded trials
