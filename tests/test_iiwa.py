@@ -90,9 +90,7 @@ def test_retreat_backs_off_a_little_at_push_speed_then_lifts_straight_up() -> No
     action = make_action(velocity=0.1, contact_time=0.4)
     hover = hover_tip_pose(obj)
     maneuver = push_maneuver(obj, action, hover)
-    push_end, backed_off, raised, parked = [
-        pose.translation() for pose, _ in maneuver[2:6]
-    ]
+    push_end, backed_off, raised = [pose.translation() for pose, _ in maneuver[2:]]
 
     normal = obj.x_wo().rotation() @ action.contact.normal
     assert backed_off == pytest.approx(push_end - STANDOFF * normal)
@@ -101,7 +99,7 @@ def test_retreat_backs_off_a_little_at_push_speed_then_lifts_straight_up() -> No
     )
     assert raised[:2] == pytest.approx(backed_off[:2])
     assert raised[2] == pytest.approx(hover.translation()[2])
-    assert parked == pytest.approx(hover.translation())
+    assert len(maneuver) == 5
 
 
 def test_every_maneuver_waypoint_keeps_the_tool_pointing_down() -> None:

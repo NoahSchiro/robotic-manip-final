@@ -3,7 +3,7 @@ import pytest
 
 from src.action import Action
 from src.geometry import SurfaceNormal
-from src.iiwa import MOVE_TIME, STANDOFF
+from src.iiwa import HOLD_TIME, MOVE_TIME, STANDOFF
 from src.object import Object, Rod
 from src.recording import push_window
 
@@ -24,3 +24,6 @@ def test_push_window_opens_at_the_standoff_and_closes_after_settling() -> None:
         window.start + STANDOFF / action.velocity + action.time
     )
     assert window.end == pytest.approx(window.push_end + 0.1)
+    assert window.action_end == pytest.approx(
+        window.push_end + STANDOFF / action.velocity + MOVE_TIME + HOLD_TIME
+    )

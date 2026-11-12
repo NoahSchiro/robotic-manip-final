@@ -699,6 +699,8 @@ def record_trials_command(args: argparse.Namespace) -> None:
             "settle_time": args.settle_time,
             "log_period": args.log_period,
             "model_time_step": push_model_config(args).time_step,
+            "motion_version": 2,
+            "measurement_version": 1,
         },
     )
     print(f"wrote {args.trials} trials to {args.out}")

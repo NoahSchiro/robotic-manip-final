@@ -22,6 +22,7 @@ from pydrake.geometry import Meshcat
 from .action import Action, sample_action
 from .geometry import SurfaceNormal
 from .iiwa import (
+    HOLD_TIME,
     Q_HOME,
     Pusher,
     build_iiwa_pusher_plant,
@@ -55,11 +56,12 @@ class TruthSimConfig:
 
 
 class PushWindow(NamedTuple):
-    """The times bounding what gets recorded, on the sim's clock (s)."""
+    """Named push events on the simulation clock (s)."""
 
     start: float
     push_end: float
     end: float
+    action_end: float
 
 
 def push_window(
@@ -72,7 +74,8 @@ def push_window(
     # Segments 0-1 move over and lower to the standoff; segment 2 pushes.
     start = trajectory_start + durations[0] + durations[1]
     push_end = start + durations[2]
-    return PushWindow(start, push_end, push_end + settle_time)
+    action_end = trajectory_start + sum(durations) + HOLD_TIME
+    return PushWindow(start, push_end, push_end + settle_time, action_end)
 
 
 def read_object_state(
@@ -145,14 +148,14 @@ class TruthSim:
         self.pusher = pusher
         self.settle_time = config.settle_time
         self.ik_plant = build_iiwa_pusher_plant(pusher)
-        self.q_parked = starting_posture(self.ik_plant, pusher, obj)
+        self.q_current = starting_posture(self.ik_plant, pusher, obj)
         self.diagram, self.plant = build_diagram(
             config.time_step,
             obj,
             Table(obj.friction),
             pusher,
             meshcat=meshcat,
-            q_ref=hold_trajectory(self.q_parked),
+            q_ref=hold_trajectory(self.q_current),
             log_period=config.log_period,
         )
         self.reference = arm_reference(self.diagram)
@@ -170,21 +173,20 @@ class TruthSim:
         Raises RuntimeError when the arm can't reach the push.
         """
         return make_push_trajectory(
-            self.ik_plant, self.pusher, obj, action, self.q_parked
+            self.ik_plant, self.pusher, obj, action, self.q_current
         )
 
     def record_push(
         self, obj: Object, action: Action, q_traj: PiecewisePolynomial
     ) -> PushObservation:
-        """Run `action`, planned as `q_traj` by plan_push, leaving the arm parked
-        at the trajectory's end and the sim's clock stopped there."""
+        """Run `action`, leaving the arm lifted near release and the sim paused."""
         now = self.context.get_time()
         transit = transit_time(
-            self.q_parked,
+            self.q_current,
             q_traj.value(0.0).ravel(),
             self.ik_plant.GetVelocityUpperLimits(),
         )
-        commanded = chain_from_parked(self.q_parked, q_traj, now, transit)
+        commanded = chain_from_parked(self.q_current, q_traj, now, transit)
         window = push_window(obj, action, self.settle_time, now + transit)
         self.reference.UpdateTrajectory(commanded)
         # Wall time since the last push isn't the sim falling behind: left
@@ -199,9 +201,10 @@ class TruthSim:
         self.simulator.AdvanceTo(window.end)
         end = read_object_state(self.plant, self.plant_context, obj)
         tip_end = read_tip(self.plant, self.plant_context, self.pusher)
-        self.simulator.AdvanceTo(max(commanded.end_time(), window.end))
+        self.simulator.AdvanceTo(max(window.action_end, window.end))
         final = read_object_state(self.plant, self.plant_context, obj)
-        self.q_parked = q_traj.value(q_traj.end_time()).ravel()
+        iiwa = self.plant.GetBodyByName("iiwa_link_0").model_instance()
+        self.q_current = self.plant.GetPositions(self.plant_context, iiwa).copy()
 
         log = self.logger.FindLog(self.context)
         inside_times, inside_tips = tip_samples_inside_window(
@@ -221,6 +224,7 @@ class TruthSim:
             ),
             tip_positions=np.column_stack([p for p, _v in tips]),
             tip_velocities=np.column_stack([v for _p, v in tips]),
+            action_end_time=window.action_end - window.start,
         )
 
     def record_random_push(

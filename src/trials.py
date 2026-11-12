@@ -11,7 +11,7 @@ without pydrake.
 Dataset schema (one .npz):
 - eta: (T, 3) true (mu, bx, by) per trial
 - trial_id: (P,) ascending trial index per push
-- push_end_time, action_velocity, action_time: (P,)
+- push_end_time, action_end_time, action_velocity, action_time: (P,)
 - contact_position, contact_normal: (P, 3)
 - {start, push_end, end, final}_pose: (P, 4, 4) world transforms
 - {start, push_end, end, final}_velocity: (P, 6) spatial velocities as
@@ -133,6 +133,7 @@ def trial_to_arrays(
     arrays: dict[str, np.ndarray] = {
         "eta": eta.as_array(),
         "push_end_time": np.array([o.push_end_time for o in observations]),
+        "action_end_time": np.array([o.action_end_time for o in observations]),
         "action_velocity": np.array([o.action.velocity for o in observations]),
         "action_time": np.array([o.action.time for o in observations]),
         "contact_position": stacked(
@@ -254,6 +255,11 @@ def push_from_arrays(data: np.lib.npyio.NpzFile, push: int) -> PushObservation:
         tip_times=data["tip_times"][push],
         tip_positions=data["tip_positions"][push],
         tip_velocities=data["tip_velocities"][push],
+        action_end_time=(
+            float(data["action_end_time"][push])
+            if "action_end_time" in data.files
+            else None
+        ),
     )
 
 

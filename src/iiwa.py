@@ -204,8 +204,8 @@ def push_maneuver(
     obj: Object, action: Action, hover: RigidTransform
 ) -> list[tuple[RigidTransform, float]]:
     """Compute the tip's world-frame maneuver for `action`: waypoints paired
-    with each straight segment's duration, starting and ending parked at
-    `hover` with the tool pointing down."""
+    with each straight segment's duration. The final waypoint is lifted
+    locally above the release point, with the tool pointing down."""
     X_WO = obj.x_wo()
     contact = X_WO @ action.contact.position
     normal = X_WO.rotation() @ action.contact.normal
@@ -240,7 +240,6 @@ def push_maneuver(
         (push_end, push_time),  # push at the commanded speed and contact time
         (backed_off, STANDOFF / action.velocity),  # back off at the same speed
         (raised, MOVE_TIME),  # raise
-        (hover, MOVE_TIME),  # return to the hover
     ]
 
 
@@ -251,13 +250,12 @@ def make_push_trajectory(
     action: Action,
     q_seed: np.ndarray,
 ) -> PiecewisePolynomial:
-    """Plan the joint-space trajectory that starts parked at the block's hover
-    pose, executes `push_maneuver` for `action`, and parks there for HOLD_TIME.
-    The IK starts from `q_seed`, so the arm stays close to that posture."""
+    """Plan from the current arm posture through a push, local lift, and hold.
+    The first segment transfers at the hover clearance height."""
     hover = hover_tip_pose(obj)
     maneuver = push_maneuver(obj, action, hover)
 
-    q_samples = [solve_tip_ik(ik_plant, pusher, hover, q_seed)]
+    q_samples = [np.asarray(q_seed, dtype=float)]
     for pose, _duration in maneuver:
         q_samples.append(solve_tip_ik(ik_plant, pusher, pose, q_samples[-1]))
 

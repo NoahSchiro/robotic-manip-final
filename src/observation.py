@@ -50,8 +50,8 @@ class PushObservation:
     """One executed push: the object's state at the window's start, at the
     push segment's end, and at the window's end, plus the tip's world-frame
     path over the window, times starting at 0.  `final` is the object's
-    state at the push trajectory's end, the arm parked back at its hover:
-    where the push leaves it."""
+    state at the push trajectory's end, after withdrawal, lift, and hold:
+    the decision boundary for the next action."""
 
     action: Action
     start: ObjectState
@@ -62,6 +62,7 @@ class PushObservation:
     tip_times: np.ndarray  # (n,) s, from the window's start
     tip_positions: np.ndarray  # (3, n) world frame
     tip_velocities: np.ndarray  # (3, n) world frame
+    action_end_time: float | None = None  # s, from window start; absent in old trials
 
     @property
     def duration(self) -> float:
