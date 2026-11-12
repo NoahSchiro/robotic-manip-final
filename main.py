@@ -8,7 +8,8 @@ from pydrake.all import Simulator
 from pydrake.geometry import Meshcat
 from sb3_contrib import MaskablePPO
 
-from src.action import Action
+from src.action import Action, push_library
+from src.belief_view import BeliefDashboard, show_belief
 from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
@@ -17,12 +18,13 @@ from src.cli import (
     truth_sim_config,
 )
 from src.dataset_file import save_dataset
-from src.dynamics import ParallelPushModel
+from src.dynamics import ParallelPushModel, Pose
 from src.env import (
     MAX_PUSHES,
     ProbingEnvConfig,
     make_probing_env_config,
 )
+from src.episode import EpisodeResult, run_episode
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.evaluation import run_evaluation
 from src.geometry import SurfaceNormal
@@ -30,8 +32,10 @@ from src.iiwa import (
     Q_HOME,
     Pusher,
     build_iiwa_pusher_plant,
+    clear_sites,
     make_push_trajectory,
 )
+from src.mpc import GoalTolerance, MpcController, PoseCostWeights, goal_error
 from src.object import Object, Table
 from src.observation import PushObservation
 from src.params import Eta, GridSpec, make_grid
@@ -44,6 +48,7 @@ from src.probing import (
     ProbingState,
     PushRecord,
     episode_conditions,
+    episode_goal,
     episode_object,
     policy_selector,
     random_selector,
@@ -416,12 +421,82 @@ def parse_args() -> argparse.Namespace:
         help="rod y in the object body frame (sampled fresh if omitted)",
     )
     simulate_parser.add_argument(
+        "--start",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "YAW"),
+        default=None,
+        help="object start pose (m, m, deg), instead of the seed's random one",
+    )
+    simulate_parser.add_argument(
+        "--goal",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "YAW"),
+        default=None,
+        help="object goal pose (m, m, deg), instead of the seed's random one",
+    )
+    simulate_parser.add_argument(
         "--estimate",
         action="store_true",
         help="run random pushes and estimate (mu, rod x, rod y) after each",
     )
     simulate_parser.add_argument(
         "--pushes", type=int, default=5, help="pushes to run with --estimate"
+    )
+    simulate_parser.add_argument(
+        "--mpc",
+        action="store_true",
+        help="push the object to its goal with MPC, estimating eta along the way",
+    )
+    simulate_parser.add_argument(
+        "--probe-pushes",
+        type=int,
+        default=0,
+        help="random probe pushes before MPC with --mpc (0: no probing)",
+    )
+    simulate_parser.add_argument(
+        "--max-pushes",
+        type=int,
+        default=20,
+        help="push budget per --mpc episode, probes included",
+    )
+    simulate_parser.add_argument(
+        "--plan-with-true-eta",
+        action="store_true",
+        help="with --mpc, plan with the true eta and skip estimation",
+    )
+    # 0.07 is half the T's 14 cm extent, so with --yaw-weight 1 a 7 cm position
+    # error costs as much as a 1 rad yaw error.
+    simulate_parser.add_argument(
+        "--cost-length",
+        type=float,
+        default=0.07,
+        help="MPC pose cost's length scale l (m)",
+    )
+    simulate_parser.add_argument(
+        "--yaw-weight",
+        type=float,
+        default=1.0,
+        help="MPC pose cost's yaw weight lambda_phi (1/rad^2)",
+    )
+    simulate_parser.add_argument(
+        "--time-weight",
+        type=float,
+        default=0.005,
+        help="MPC action cost per second of maneuver time",
+    )
+    simulate_parser.add_argument(
+        "--position-tolerance",
+        type=float,
+        default=0.01,
+        help="an episode succeeds within this of the goal position (m)",
+    )
+    simulate_parser.add_argument(
+        "--yaw-tolerance",
+        type=float,
+        default=10.0,
+        help="an episode succeeds within this of the goal yaw (deg)",
     )
     # 3 has heavy tails: chosen by an offline replay (see src/estimator.py).
     simulate_parser.add_argument(
@@ -438,6 +513,20 @@ def parse_args() -> argparse.Namespace:
             raise SystemExit("--mu must be nonnegative")
         if args.pushes < 1:
             raise SystemExit("--pushes must be at least 1")
+        if args.probe_pushes < 0:
+            raise SystemExit("--probe-pushes must be nonnegative")
+        if args.max_pushes < 1:
+            raise SystemExit("--max-pushes must be at least 1")
+        if args.cost_length <= 0.0:
+            raise SystemExit("--cost-length must be positive")
+        if args.yaw_weight < 0.0:
+            raise SystemExit("--yaw-weight must be nonnegative")
+        if args.time_weight < 0.0:
+            raise SystemExit("--time-weight must be nonnegative")
+        if args.position_tolerance <= 0.0:
+            raise SystemExit("--position-tolerance must be positive")
+        if args.yaw_tolerance <= 0.0:
+            raise SystemExit("--yaw-tolerance must be positive")
         if args.nu < 0.0:
             raise SystemExit("--nu must be nonnegative")
         if args.policy == "ppo" and not args.estimate:
@@ -466,6 +555,11 @@ def parse_args() -> argparse.Namespace:
         )
 
     return args
+
+
+def pose_from_degrees(x: float, y: float, yaw_degrees: float) -> Pose:
+    """Get a planar pose (x, y, yaw) with the yaw converted to radians."""
+    return x, y, float(np.deg2rad(yaw_degrees))
 
 
 def demo_action(obj: Object, push_sites: list[SurfaceNormal]) -> Action:
@@ -501,6 +595,7 @@ def run_estimation(
     pushes: int,
     truth_sim: TruthSim,
     meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
     obj: Object,
     action_rng: np.random.Generator,
     policy: MaskablePPO | None = None,
@@ -525,25 +620,55 @@ def run_estimation(
         f"{len(belief.grid)} hypotheses"
     )
     print(f"push 0: entropy {belief.entropy():.3f}")
-    if meshcat is not None:
-        show_object_goal(meshcat, obj)
+    show_belief(0, belief, obj, meshcat, dashboard)
 
     def report(state: ProbingState, record: PushRecord) -> None:
-        if meshcat is not None:
-            show_object_goal(meshcat, state.obj)
         print(
             format_push_report(
                 state.pushes,
                 record.observation,
                 record.update_seconds,
-                state.belief,
+                belief,
                 eta_true,
             )
         )
+        show_belief(state.pushes, belief, state.obj, meshcat, dashboard)
 
     state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief)
     outcome = run_probing(state, config, selector, pushes, none_reason, on_push=report)
     print(f"stopped after {state.pushes} pushes: {outcome.reason}")
+
+
+def format_placement_start(eta_true: Eta, obj: Object, candidates: int) -> str:
+    """Render what a placement episode starts from."""
+    position_error, yaw_error = goal_error(obj.pose, obj.goal)
+    return (
+        f"placing the object, true eta {eta_true}: start "
+        f"{np.array2string(np.array(obj.pose), precision=3)}, goal "
+        f"{np.array2string(np.array(obj.goal), precision=3)} "
+        f"({position_error * 100:.1f} cm, {np.rad2deg(yaw_error):.1f} deg away); "
+        f"{candidates} candidate pushes"
+    )
+
+
+def format_episode_result(result: EpisodeResult) -> str:
+    """Render how a placement episode ended."""
+    return (
+        f"{'success' if result.success else 'failure'} ({result.stop_reason}) "
+        f"after {result.probe_pushes} probe + {result.mpc_pushes} MPC pushes: "
+        f"goal error {result.position_error * 100:.1f} cm, "
+        f"{np.rad2deg(result.yaw_error):.1f} deg; {result.sim_time:.1f} s "
+        f"simulated, planning {result.planning_time:.0f} s, estimation "
+        f"{result.estimation_time:.0f} s"
+    )
+
+
+def format_map_error(belief: GridBayesFilter, eta_true: Eta) -> str:
+    """Render `belief`'s final MAP error against `eta_true`."""
+    d_mu, d_bx, d_by = belief.estimation_error(eta_true)
+    return (
+        f"final MAP error mu {d_mu:+.3f}, b ({d_bx * 100:+.2f}, {d_by * 100:+.2f}) cm"
+    )
 
 
 def simulate(args: argparse.Namespace) -> None:
@@ -570,15 +695,74 @@ def simulate(args: argparse.Namespace) -> None:
     sim = Sim(time_step=args.time_step, headless=args.headless)
 
     obj = episode_object(eta, start_pose, args.rod_mass)
+    if args.start is not None:
+        obj.pose = pose_from_degrees(*args.start)
+    obj.goal = (
+        pose_from_degrees(*args.goal) if args.goal is not None else episode_goal(seed)
+    )
     pusher = Pusher()
+
+    if args.mpc:
+        eta_true = eta
+        push_sites = clear_sites(
+            obj.parts,
+            obj.surface_normals(args.push_density),
+            pusher.radius,
+            args.site_clearance,
+        )
+        actions = push_library(push_sites)
+        print(format_placement_start(eta_true, obj, len(actions)))
+        grid = make_grid(GridSpec(), obj.parts)
+        with ParallelPushModel(args.workers, push_model_config(args)) as model:
+            belief = (
+                None
+                if args.plan_with_true_eta
+                else GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None)
+            )
+            result = run_episode(
+                action_rng=action_rng,
+                obj=obj,
+                truth_sim=TruthSim(
+                    obj,
+                    pusher,
+                    truth_sim_config(args),
+                    meshcat=sim.meshcat,
+                    realtime_rate=0.0 if sim.headless else 1.0,
+                ),
+                meshcat=sim.meshcat,
+                dashboard=(
+                    None
+                    if sim.headless or belief is None
+                    else BeliefDashboard(grid, obj.parts, eta_true)
+                ),
+                controller=MpcController(
+                    model,
+                    actions,
+                    PoseCostWeights(args.cost_length, args.yaw_weight),
+                    args.time_weight,
+                ),
+                belief=belief,
+                plan_eta=belief.map_eta if belief is not None else lambda: eta_true,
+                probe_config=make_probing_env_config(None, family_path=None),
+                probe_pushes=args.probe_pushes,
+                max_pushes=args.max_pushes,
+                tolerance=GoalTolerance(
+                    position=args.position_tolerance,
+                    yaw=float(np.deg2rad(args.yaw_tolerance)),
+                ),
+            )
+        print(format_episode_result(result))
+        if belief is not None:
+            print(format_map_error(belief, eta_true))
+        if not sim.headless:
+            input("Press Enter to quit.")
+        return
 
     if args.estimate:
         grid = make_grid(GridSpec(), obj.parts)
         policy = None
         policy_config = None
         if args.policy == "ppo":
-            from sb3_contrib import MaskablePPO
-
             policy = MaskablePPO.load(args.model)
             policy_config = make_probing_env_config(
                 args.ensemble, family_path=args.path_family
@@ -596,6 +780,9 @@ def simulate(args: argparse.Namespace) -> None:
                     realtime_rate=0.0 if sim.headless else 1.0,
                 ),
                 meshcat=sim.meshcat,
+                dashboard=(
+                    None if sim.headless else BeliefDashboard(grid, obj.parts, eta)
+                ),
                 obj=obj,
                 action_rng=action_rng,
                 policy=policy,

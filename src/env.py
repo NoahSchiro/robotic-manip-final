@@ -34,7 +34,7 @@ from gymnasium import spaces
 from pydrake.all import RigidTransform, RotationMatrix
 from sb3_contrib import MaskablePPO
 
-from .action import Action
+from .action import SPEEDS, TIMES, Action
 from .estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
 from .geometry import SurfaceNormal, SurfacePart
 from .iiwa import STANDOFF, Pusher, clear_sites
@@ -51,8 +51,6 @@ from .surrogate import (
 )
 
 N_PROBE_SITES = 32  # the pruned library's site count (MPC keeps all)
-SPEEDS = (0.05, 0.1)
-TIMES = (0.2, 0.4)
 # Sites per meter of outline.  The dataset generator’s --push-density 2.0
 # is per centimeter; converted (x100) it is 200/m.
 PUSH_DENSITY = 200.0

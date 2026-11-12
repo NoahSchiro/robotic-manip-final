@@ -18,6 +18,7 @@ from pydrake.all import (
     PiecewisePolynomial,
     RigidBody,
     RigidTransform,
+    RotationMatrix,
     StartMeshcat,
     TrajectorySource,
     VectorLogSink,
@@ -31,6 +32,9 @@ from src.pdcontroller import ArmPdController
 
 _STATE_LOGGER = "state_logger"
 _ARM_REFERENCE = "arm_reference"
+
+# Color of the ghost showing where the MPC predicts its push leaves the block.
+PREDICTION_COLOR = (0.95, 0.80, 0.15)
 
 
 class Sim:
@@ -140,15 +144,33 @@ def place_object(plant: MultibodyPlant, context: Context, obj: Object) -> RigidB
     return object_body
 
 
-def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
-    """Draw a translucent ghost of the block at its goal orientation."""
-    X_WG = obj.x_wg()
-    r, g, b = obj.color
+def show_ghost(
+    meshcat: Meshcat,
+    obj: Object,
+    X_WG: RigidTransform,
+    prefix: str,
+    color: tuple[float, float, float],
+) -> None:
+    """Draw a translucent ghost of the block at `X_WG` under `prefix`."""
+    r, g, b = color
     for i, (part, center) in enumerate(zip(obj.parts, obj.body_part_centers())):
         sx, sy = part[:2]
-        path = f"goal/{i}"
+        path = f"{prefix}/{i}"
         meshcat.SetObject(path, Box(sx, sy, obj.height), Rgba(r, g, b, 0.35))
         meshcat.SetTransform(path, X_WG @ RigidTransform(center))
+
+
+def show_object_goal(meshcat: Meshcat, obj: Object) -> None:
+    """Draw a translucent ghost of the block at its goal pose."""
+    show_ghost(meshcat, obj, obj.x_wg(), "goal", obj.color)
+
+
+def show_prediction(meshcat: Meshcat, obj: Object, pose: np.ndarray) -> None:
+    """Draw a translucent ghost of the block at planar `pose` (x, y, yaw),
+    where the MPC predicts its chosen push leaves it."""
+    x, y, yaw = pose
+    X_WP = RigidTransform(RotationMatrix.MakeZRotation(yaw), np.array([x, y, 0.0]))
+    show_ghost(meshcat, obj, X_WP, "prediction", PREDICTION_COLOR)
 
 
 def show_push_sites(

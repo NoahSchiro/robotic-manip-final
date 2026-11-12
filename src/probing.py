@@ -34,6 +34,7 @@ from .params import Eta
 from .recording import TruthSim
 
 MAX_IK_RETRIES = 40
+GOAL_RADIUS = 0.1  # m, goal disk around the workspace center, as for starts
 
 
 @dataclass
@@ -87,6 +88,19 @@ def episode_conditions(seed: int) -> tuple[Eta, np.ndarray, np.random.Generator]
     )
     action_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
     return eta, start_pose, action_rng
+
+
+def episode_goal(seed: int) -> tuple[float, float, float]:
+    """The seed's placement goal (x m, y m, yaw rad), drawn from its own stream
+    so adding a goal never shifts the probing conditions or actions."""
+    rng = np.random.default_rng(np.random.SeedSequence([seed, 2]))
+    rho = GOAL_RADIUS * np.sqrt(rng.uniform())
+    theta = rng.uniform(-np.pi, np.pi)
+    return (
+        WORKSPACE_CENTER[0] + rho * np.cos(theta),
+        WORKSPACE_CENTER[1] + rho * np.sin(theta),
+        rng.uniform(-np.pi, np.pi),
+    )
 
 
 def episode_object(eta: Eta, start_pose: np.ndarray, rod_mass: float) -> Object:
