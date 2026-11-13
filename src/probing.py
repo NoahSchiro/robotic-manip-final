@@ -1,10 +1,10 @@
-"""The Drake-world probing loop shared by evaluation, the interactive run and
-the recorders.
+"""The Drake-world probing loop shared by evaluation, the interactive run, the
+recorders and the MPC's probe phase.
 
-Each push is selected from the pruned library by a Selector, planned against
-the arm's current state, executed in the truth sim, and folded into the belief
-when there is one.  ProbingState is the one authoritative live episode; the
-loop leaves it at the true final state so a later phase can continue from it.
+Each push is chosen by a Selector, planned against the arm's current state,
+executed in the truth sim, and folded into the belief when there is one.
+ProbingState is the one authoritative live episode; the loop leaves it at the
+true final state so a later phase can continue from it.
 """
 
 import time
@@ -21,16 +21,15 @@ from .env import (
     WORKSPACE_RADIUS,
     ProbingEnvConfig,
     env_parts,
-    reachability_mask,
     sample_episode_conditions,
     select_push_action,
-    split_action,
 )
 from .estimator import GridBayesFilter
 from .geometry import SurfaceNormal
 from .object import Object
 from .observation import PushObservation
 from .params import Eta
+from .push_space import PushSpace, reachable
 from .recording import TruthSim
 
 MAX_IK_RETRIES = 40
@@ -42,7 +41,7 @@ class ProbingState:
     """The live episode.  `obj.pose` is the block's planar pose (x m, y m, yaw
     rad) in the world frame; `belief` is None when no filter runs;
     `last_measurement` is the (6,) estimator measurement of the last push and
-    `last_action` the (8,) vector [site position (3), site normal (3), speed
+    `last_action` the (8,) vector [contact position (3), contact normal (3), speed
     m/s, contact time s]."""
 
     truth_sim: TruthSim
@@ -59,7 +58,6 @@ class PushRecord:
     the update time are None or 0.0 when the state has no belief."""
 
     observation: PushObservation
-    site: int  # index into config.site_positions
     entropy_before: float | None  # nats
     entropy_after: float | None  # nats
     update_seconds: float  # wall time of belief.update
@@ -68,15 +66,15 @@ class PushRecord:
 @dataclass(frozen=True)
 class ProbingOutcome:
     """Why the loop stopped and the pushes it executed, in order.  Reasons:
-    "budget", the selector's none_reason, "ik_exhausted", "out_of_bounds"."""
+    "budget", the selector's stop reason, "ik_exhausted", "out_of_bounds"."""
 
     reason: str
     records: tuple[PushRecord, ...]
 
 
-Selector = Callable[[ProbingState, set[int]], tuple[int, float, float] | None]
-"""Chooses the next push from the state and the IK-failed sites, returning
-(site index, speed m/s, contact time s), or None to stop."""
+Selector = Callable[[ProbingState, list[Action]], Action | str]
+"""Chooses the next push from the state and the actions whose arm plan failed at
+this decision, returning the push, or a string giving the reason to stop."""
 
 
 def episode_conditions(seed: int) -> tuple[Eta, np.ndarray, np.random.Generator]:
@@ -121,33 +119,39 @@ def _pose(state: ProbingState) -> np.ndarray:
     return np.asarray(state.obj.pose, dtype=float)
 
 
-def random_selector(config: ProbingEnvConfig, rng: np.random.Generator) -> Selector:
-    """Uniform over reachable library pushes whose site has not failed IK;
-    None when no push is feasible."""
+def random_selector(
+    space: PushSpace, rng: np.random.Generator, max_draws: int = 50
+) -> Selector:
+    """Draws pushes from `space` until one is reachable from the block's pose,
+    returning "unreachable" after `max_draws` misses.  Failed pushes are not
+    excluded: a re-selection is a fresh draw."""
 
-    def select(
-        state: ProbingState, failed_sites: set[int]
-    ) -> tuple[int, float, float] | None:
-        mask = reachability_mask(_pose(state), config)
-        per_site = len(config.speeds) * len(config.times)
-        for site in failed_sites:
-            mask[site * per_site : (site + 1) * per_site] = False
-        feasible = np.flatnonzero(mask)
-        if len(feasible) == 0:
-            return None
-        return split_action(int(rng.choice(feasible)), config)
+    def select(state: ProbingState, _failed: list[Action]) -> Action | str:
+        pose = _pose(state)
+        for _ in range(max_draws):
+            action = space.sample(rng)
+            if reachable(pose, action):
+                return action
+        return "unreachable"
 
     return select
 
 
 def policy_selector(model: MaskablePPO, config: ProbingEnvConfig) -> Selector:
-    """The trained policy's masked choice; None when it stops."""
+    """The trained policy's masked choice from the pruned library, returning
+    "stop" when it stops.  Library sites whose arm plan failed at this decision
+    are masked."""
 
-    def select(
-        state: ProbingState, failed_sites: set[int]
-    ) -> tuple[int, float, float] | None:
+    def select(state: ProbingState, failed: list[Action]) -> Action | str:
         assert state.belief is not None, "the policy chooses from the belief"
-        return select_push_action(
+        failed_sites = {
+            int(site)
+            for action in failed
+            for site in np.flatnonzero(
+                np.all(config.site_positions == action.contact.position, axis=1)
+            )
+        }
+        chosen = select_push_action(
             model,
             state.belief,
             _pose(state),
@@ -157,37 +161,10 @@ def policy_selector(model: MaskablePPO, config: ProbingEnvConfig) -> Selector:
             config,
             failed_sites,
         )
-
-    return select
-
-
-def run_probing(
-    state: ProbingState,
-    config: ProbingEnvConfig,
-    selector: Selector,
-    budget: int,
-    none_reason: str,
-    on_push: Callable[[ProbingState, PushRecord], None] | None = None,
-) -> ProbingOutcome:
-    """Execute pushes chosen by `selector` until a stop condition, updating
-    `state` in place.  Stops before selecting once `budget` pushes have run,
-    and returns `none_reason` when the selector returns None.  A push whose
-    arm plan fails marks its site and re-selects; more than MAX_IK_RETRIES
-    consecutive failures stop the loop."""
-    records: list[PushRecord] = []
-    failed_sites: set[int] = set()
-    attempts = 0
-    while True:
-        if state.pushes >= budget:
-            return ProbingOutcome("budget", tuple(records))
-        picked = selector(state, failed_sites)
-        if picked is None:
-            return ProbingOutcome(none_reason, tuple(records))
-        attempts += 1
-        if attempts > MAX_IK_RETRIES:
-            return ProbingOutcome("ik_exhausted", tuple(records))
-        site, speed, contact_time = picked
-        action = Action(
+        if chosen is None:
+            return "stop"
+        site, speed, contact_time = chosen
+        return Action(
             contact=SurfaceNormal(
                 position=config.site_positions[site],
                 normal=config.site_normals[site],
@@ -195,16 +172,43 @@ def run_probing(
             velocity=speed,
             time=contact_time,
         )
+
+    return select
+
+
+def run_probing(
+    state: ProbingState,
+    selector: Selector,
+    budget: int,
+    on_push: Callable[[ProbingState, PushRecord], None] | None = None,
+) -> ProbingOutcome:
+    """Execute pushes chosen by `selector` until a stop condition, updating
+    `state` in place.  Stops before selecting once `budget` pushes have run,
+    and returns the selector's reason when it stops.  A push whose arm plan
+    fails is re-selected with that push in the failed list; more than
+    MAX_IK_RETRIES consecutive failures stop the loop."""
+    records: list[PushRecord] = []
+    failed: list[Action] = []
+    attempts = 0
+    while True:
+        if state.pushes >= budget:
+            return ProbingOutcome("budget", tuple(records))
+        picked = selector(state, failed)
+        if isinstance(picked, str):
+            return ProbingOutcome(picked, tuple(records))
+        attempts += 1
+        if attempts > MAX_IK_RETRIES:
+            return ProbingOutcome("ik_exhausted", tuple(records))
         entropy_before = None if state.belief is None else state.belief.entropy()
         try:
-            q_traj = state.truth_sim.plan_push(state.obj, action)
+            q_traj = state.truth_sim.plan_push(state.obj, picked)
         except RuntimeError:
-            failed_sites.add(site)  # the arm cannot reach this site from here
+            failed.append(picked)  # the arm cannot reach this push from here
             continue
-        record = _execute_push(state, config, action, site, entropy_before, q_traj)
+        record = _execute_push(state, picked, entropy_before, q_traj)
         records.append(record)
         attempts = 0
-        failed_sites.clear()
+        failed.clear()
         if on_push is not None:
             on_push(state, record)
         if out_of_bounds(_pose(state)):
@@ -213,9 +217,7 @@ def run_probing(
 
 def _execute_push(
     state: ProbingState,
-    config: ProbingEnvConfig,
     action: Action,
-    site: int,
     entropy_before: float | None,
     q_traj: PiecewisePolynomial,
 ) -> PushRecord:
@@ -234,15 +236,14 @@ def _execute_push(
     state.last_measurement = observation.measured()
     state.last_action = np.array(
         [
-            *config.site_positions[site],
-            *config.site_normals[site],
+            *action.contact.position,
+            *action.contact.normal,
             action.velocity,
             action.time,
         ]
     )
     return PushRecord(
         observation=observation,
-        site=site,
         entropy_before=entropy_before,
         entropy_after=entropy_after,
         update_seconds=update_seconds,

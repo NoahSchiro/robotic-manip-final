@@ -191,10 +191,10 @@ def record_episode(args: argparse.Namespace) -> BeliefRecord:
     """Run one episode through the shared probing loop with random pushes and
     a grid Bayes filter, collecting the belief after each push."""
     from src.dynamics import ParallelPushModel, PushModelConfig
-    from src.env import ROD_MASS, make_probing_env_config
+    from src.env import ROD_MASS
     from src.estimator import CALIBRATED_R, GridBayesFilter
     from src.iiwa import Pusher
-    from src.params import Eta
+    from src.params import Eta, GridSpec, make_grid
     from src.probing import (
         ProbingState,
         episode_conditions,
@@ -202,6 +202,7 @@ def record_episode(args: argparse.Namespace) -> BeliefRecord:
         random_selector,
         run_probing,
     )
+    from src.push_space import make_push_space
     from src.recording import TruthSim, TruthSimConfig
 
     sampled, start_pose, action_rng = episode_conditions(args.seed)
@@ -211,12 +212,12 @@ def record_episode(args: argparse.Namespace) -> BeliefRecord:
         by=args.rod_y if args.rod_y is not None else sampled.by,
     )
     obj = episode_object(eta, start_pose, ROD_MASS)
-    config = make_probing_env_config(None, family_path=None)
+    grid = make_grid(GridSpec(), obj.parts)
     truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.1, log_period=1e-3)
     model_config = PushModelConfig(time_step=2e-3, rod_mass=ROD_MASS)
 
     with ParallelPushModel(args.workers, model_config) as model:
-        belief = GridBayesFilter(config.grid, model, CALIBRATED_R, nu=3.0)
+        belief = GridBayesFilter(grid, model, CALIBRATED_R, nu=3.0)
         trace = _Trace(
             probs=[belief.probs.copy()],
             entropy=[belief.entropy()],
@@ -231,16 +232,14 @@ def record_episode(args: argparse.Namespace) -> BeliefRecord:
         )
         outcome = run_probing(
             state,
-            config,
-            random_selector(config, action_rng),
+            random_selector(make_push_space(obj.parts, obj.height), action_rng),
             budget=args.pushes,
-            none_reason="unreachable",
             on_push=trace.on_push,
         )
     print(f"stopped after {state.pushes} pushes: {outcome.reason}")
 
     return BeliefRecord(
-        grid=np.array([h.as_array() for h in config.grid], dtype=float),
+        grid=np.array([h.as_array() for h in grid], dtype=float),
         probs=np.array(trace.probs, dtype=float),
         eta_true=eta.as_array(),
         parts=np.array(obj.parts, dtype=float),

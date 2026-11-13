@@ -9,11 +9,11 @@ plus an action cost proportional to its maneuver time (moving to the
 push, pushing, backing off, lifting, and holding).  The caller executes the best
 push the arm can reach, updates the estimator, and replans.
 
-The candidates are the push library minus the sites iiwa.clear_sites
-drops, where the stick, lowered to its standoff point, lands on the block:
-at the T's inner corners the standoff sits within a stick radius of the
-other part.  The nominal tip path starts there, so the prediction would
-begin with the stick inside the block.
+The candidates are a lattice on the push space (push_space.PushSpace.grid):
+contacts along each face inset from its corners, so the lowered stick clears
+the other part of the T, at a grid of speeds and contact times.  A contact
+at an inner corner would start the nominal tip path with the stick inside the
+block.
 """
 
 from collections.abc import Sequence

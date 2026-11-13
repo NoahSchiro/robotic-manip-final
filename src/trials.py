@@ -32,9 +32,9 @@ from pydrake.all import RigidTransform, SpatialVelocity
 
 from .action import Action
 from .dataset_file import META_PREFIX
-from .env import ProbingEnvConfig, make_probing_env_config
 from .geometry import SurfaceNormal
 from .iiwa import Pusher
+from .object import Object, Rod
 from .observation import ObjectState, PushObservation
 from .params import Eta
 from .probing import (
@@ -44,6 +44,7 @@ from .probing import (
     random_selector,
     run_probing,
 )
+from .push_space import PushSpace, make_push_space
 from .recording import TruthSim, TruthSimConfig
 
 STATE_NAMES = ("start", "push_end", "end", "final")
@@ -59,31 +60,32 @@ class TrialData:
 
 @dataclass(frozen=True)
 class RecordSetup:
-    """What every recorded trial shares: the push library the random pushes
+    """What every recorded trial shares: the push space the random pushes
     draw from, built once."""
 
     rod_mass: float
     pushes: int
     truth: TruthSimConfig
-    probing: ProbingEnvConfig
+    push_space: PushSpace
 
 
 def make_record_setup(
     rod_mass: float, pushes: int, truth: TruthSimConfig
 ) -> RecordSetup:
     """Collect what every recorded trial shares."""
+    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
     return RecordSetup(
         rod_mass=rod_mass,
         pushes=pushes,
         truth=truth,
-        probing=make_probing_env_config(None, rod_mass=rod_mass, family_path=None),
+        push_space=make_push_space(reference.parts, reference.height),
     )
 
 
 def record_trial(seed: int, setup: RecordSetup) -> TrialData:
     """Record one trial: the episode's true parameters and start pose, then up
-    to `setup.pushes` random library pushes in one continuous truth sim, each
-    from where the last left the block.  A trial ends early when no push is
+    to `setup.pushes` random pushes in one continuous truth sim, each from
+    where the last left the block.  A trial ends early when no push is
     reachable."""
     eta, start_pose, action_rng = episode_conditions(seed)
     obj = episode_object(eta, start_pose, setup.rod_mass)
@@ -92,10 +94,8 @@ def record_trial(seed: int, setup: RecordSetup) -> TrialData:
     )
     outcome = run_probing(
         state,
-        setup.probing,
-        random_selector(setup.probing, action_rng),
+        random_selector(setup.push_space, action_rng),
         budget=setup.pushes,
-        none_reason="unreachable",
     )
     return TrialData(
         eta=eta,

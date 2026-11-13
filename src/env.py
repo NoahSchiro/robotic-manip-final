@@ -42,6 +42,7 @@ from .object import Object, Rod
 from .observation import wrap_angle
 from .params import Eta, GridSpec, grid_spans, make_grid, sample_eta
 from .path_family import PathFamily, load_path_family, perturb_tip_positions
+from .push_space import REACH_MAX, REACH_MIN
 from .surrogate import (
     SurrogateEnsemble,
     SurrogatePredictor,
@@ -60,7 +61,6 @@ ROD_MASS = 0.2  # kg, as everywhere
 
 WORKSPACE_CENTER = (0.55, 0.0)
 WORKSPACE_RADIUS = 0.25  # m, the block center's bound
-REACH_MIN, REACH_MAX = 0.39, 0.78  # m, tip radius band from the arm base
 
 MAX_PUSHES = 12
 ENTROPY_WEIGHT = 0.1

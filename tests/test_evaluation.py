@@ -7,7 +7,17 @@ import numpy as np
 import pytest
 
 from src import evaluation, probing
+from src.action import Action
+from src.geometry import SurfaceNormal
 from src.params import Eta
+
+PUSH = Action(
+    contact=SurfaceNormal(
+        position=np.array([0.0, 0.0, 0.015]), normal=np.array([1.0, 0.0, 0.0])
+    ),
+    velocity=0.05,
+    time=0.2,
+)
 
 
 class FakeBelief:
@@ -58,7 +68,7 @@ def drake_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(
         evaluation,
         "random_selector",
-        lambda *_: lambda *_args: (0, 0.05, 0.2),
+        lambda *_: lambda *_args: PUSH,
     )
     monkeypatch.setattr(probing, "out_of_bounds", lambda *_: False)
     FakeTruthSim.planned_poses = []
@@ -68,8 +78,6 @@ def drake_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         entropy_weight=0.1,
         step_cost=0.05,
         out_of_bounds_penalty=1.0,
-        site_positions=np.array([[0.0, 0.0, 0.015]]),
-        site_normals=np.array([[1.0, 0.0, 0.0]]),
     )
 
 
@@ -109,7 +117,7 @@ def test_immediate_policy_stop_receives_terminal_reward(
     monkeypatch.setattr(
         evaluation,
         "policy_selector",
-        lambda *_: lambda *_args: None,
+        lambda *_: lambda *_args: "stop",
     )
     record = evaluation._drake_episode(
         object(),

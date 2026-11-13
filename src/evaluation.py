@@ -40,6 +40,7 @@ from .probing import (
     random_selector,
     run_probing,
 )
+from .push_space import make_push_space
 from .recording import TruthSim, TruthSimConfig
 from .surrogate import SurrogatePredictor, load_ensemble
 
@@ -138,16 +139,14 @@ def _drake_episode(
     if policy:
         assert model is not None
         selector = policy_selector(model, config)
-        none_reason = "stop"
     else:
-        selector = random_selector(config, action_rng)
-        none_reason = "unreachable"
+        selector = random_selector(make_push_space(obj.parts, obj.height), action_rng)
     budget = (
         config.max_pushes
         if forced_pushes is None
         else min(forced_pushes, config.max_pushes)
     )
-    outcome = run_probing(state, config, selector, budget, none_reason)
+    outcome = run_probing(state, selector, budget)
 
     total = 0.0
     for record in outcome.records:

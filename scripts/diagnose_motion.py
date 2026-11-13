@@ -7,11 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
-from src.env import make_probing_env_config
 from src.iiwa import MOVE_TIME, Pusher
 from src.object import Object, Rod
 from src.observation import PushObservation
 from src.probing import ProbingState, PushRecord, random_selector, run_probing
+from src.push_space import make_push_space
 from src.recording import TruthSim, TruthSimConfig, read_tip
 
 
@@ -73,7 +73,6 @@ def run(seed: int, pushes: int, friction: float, yaw: float) -> dict[str, object
         pusher,
         TruthSimConfig(time_step=1e-4, settle_time=0.1, log_period=1e-3),
     )
-    config = make_probing_env_config(None, family_path=None)
     action_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
     results: list[dict[str, object]] = []
     previous_end = [sim.context.get_time()]
@@ -90,10 +89,8 @@ def run(seed: int, pushes: int, friction: float, yaw: float) -> dict[str, object
     started = time.perf_counter()
     run_probing(
         state,
-        config,
-        random_selector(config, action_rng),
+        random_selector(make_push_space(obj.parts, obj.height), action_rng),
         budget=pushes,
-        none_reason="unreachable",
         on_push=on_push,
     )
     return {

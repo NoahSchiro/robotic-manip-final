@@ -8,12 +8,14 @@ from pydrake.all import Simulator
 from pydrake.geometry import Meshcat
 from sb3_contrib import MaskablePPO
 
-from src.action import Action, push_library
+from src.action import Action
 from src.belief_view import BeliefDashboard, show_belief
 from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
+    add_surrogate_contact_options,
     finish_shared_options,
+    finish_surrogate_contact_options,
     push_model_config,
     truth_sim_config,
 )
@@ -27,12 +29,10 @@ from src.env import (
 from src.episode import EpisodeResult, run_episode
 from src.estimator import CALIBRATED_R, GridBayesFilter
 from src.evaluation import run_evaluation
-from src.geometry import SurfaceNormal
 from src.iiwa import (
     Q_HOME,
     Pusher,
     build_iiwa_pusher_plant,
-    clear_sites,
     make_push_trajectory,
 )
 from src.mpc import GoalTolerance, MpcController, PoseCostWeights, goal_error
@@ -54,6 +54,7 @@ from src.probing import (
     random_selector,
     run_probing,
 )
+from src.push_space import PushSpace, make_push_space
 from src.recording import TruthSim
 from src.replay import run_replay
 from src.scene import (
@@ -73,6 +74,10 @@ from src.surrogate_data import (
 from src.train_ppo import train_ppo
 from src.train_surrogate import train_ensemble
 from src.trials import make_record_setup, record_trials
+
+# m, spacing of the MPC's candidate contacts along each face; with 3 speeds and
+# 3 contact times, about 400 candidates on the T.
+MPC_CANDIDATE_SPACING = 0.012
 
 
 def parse_args() -> argparse.Namespace:
@@ -156,6 +161,7 @@ def parse_args() -> argparse.Namespace:
         parents=[shared],
         help="generate the surrogate's training dataset (Drake-predicted pushes)",
     )
+    add_surrogate_contact_options(surrogate_parser)
     surrogate_parser.add_argument(
         "--samples", type=int, default=300000, help="samples to generate"
     )
@@ -362,7 +368,7 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/transfer_report.json"),
+        default=Path("data/evaluation_report.json"),
         help="report output path",
     )
 
@@ -533,8 +539,10 @@ def parse_args() -> argparse.Namespace:
             raise SystemExit("--policy ppo requires --estimate")
     if args.command == "record-trials" and (args.trials < 1 or args.pushes < 1):
         raise SystemExit("--trials and --pushes must be at least 1")
-    if args.command == "gen-surrogate-data" and args.samples < 1:
-        raise SystemExit("--samples must be at least 1")
+    if args.command == "gen-surrogate-data":
+        finish_surrogate_contact_options(args)
+        if args.samples < 1:
+            raise SystemExit("--samples must be at least 1")
     if args.command == "train-surrogate" and (
         args.members < 1 or args.epochs < 1 or args.patience < 1
     ):
@@ -562,12 +570,15 @@ def pose_from_degrees(x: float, y: float, yaw_degrees: float) -> Pose:
     return x, y, float(np.deg2rad(yaw_degrees))
 
 
-def demo_action(obj: Object, push_sites: list[SurfaceNormal]) -> Action:
-    """Pick the demo's push: the face nearest the arm, at a slow speed for a
-    short contact time."""
+def demo_action(obj: Object, space: PushSpace) -> Action:
+    """Pick the demo's push: the face whose inward normal points most along +x in
+    the world, at its midpoint, at a slow speed for a short contact time."""
     R_WO = obj.x_wo().rotation()
-    site = max(push_sites, key=lambda s: (R_WO @ s.normal)[0])
-    return Action(contact=site, velocity=0.05, time=0.4)
+    face = max(
+        range(len(space.faces)),
+        key=lambda i: (R_WO @ space.faces[i].normal)[0],
+    )
+    return Action(contact=space.contact(face, 0.5), velocity=0.05, time=0.4)
 
 
 def format_push_report(
@@ -603,17 +614,13 @@ def run_estimation(
 ) -> None:
     """Update `belief` after each of up to `pushes` probing pushes, run one after
     another in `truth_sim`, moving `obj` to where each push leaves it.  Without a
-    `policy`, the pushes are random draws from the pruned library using
-    `action_rng`; with one, the PPO policy chooses them from the current belief."""
+    `policy`, the pushes are random draws from the push space using `action_rng`;
+    with one, the PPO policy chooses them from the current belief."""
     if policy is None:
-        config = make_probing_env_config(None, family_path=None)
-        selector = random_selector(config, action_rng)
-        none_reason = "unreachable"
+        selector = random_selector(make_push_space(obj.parts, obj.height), action_rng)
     else:
         assert policy_config is not None
-        config = policy_config
-        selector = policy_selector(policy, config)
-        none_reason = "stop"
+        selector = policy_selector(policy, policy_config)
 
     print(
         f"estimating eta = (mu, rod x, rod y), true {eta_true}, over "
@@ -635,7 +642,7 @@ def run_estimation(
         show_belief(state.pushes, belief, state.obj, meshcat, dashboard)
 
     state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief)
-    outcome = run_probing(state, config, selector, pushes, none_reason, on_push=report)
+    outcome = run_probing(state, selector, pushes, on_push=report)
     print(f"stopped after {state.pushes} pushes: {outcome.reason}")
 
 
@@ -704,13 +711,8 @@ def simulate(args: argparse.Namespace) -> None:
 
     if args.mpc:
         eta_true = eta
-        push_sites = clear_sites(
-            obj.parts,
-            obj.surface_normals(args.push_density),
-            pusher.radius,
-            args.site_clearance,
-        )
-        actions = push_library(push_sites)
+        space = make_push_space(obj.parts, obj.height)
+        actions = space.grid(MPC_CANDIDATE_SPACING, 3, 3)
         print(format_placement_start(eta_true, obj, len(actions)))
         grid = make_grid(GridSpec(), obj.parts)
         with ParallelPushModel(args.workers, push_model_config(args)) as model:
@@ -743,7 +745,7 @@ def simulate(args: argparse.Namespace) -> None:
                 ),
                 belief=belief,
                 plan_eta=belief.map_eta if belief is not None else lambda: eta_true,
-                probe_config=make_probing_env_config(None, family_path=None),
+                push_space=space,
                 probe_pushes=args.probe_pushes,
                 max_pushes=args.max_pushes,
                 tolerance=GoalTolerance(
@@ -792,8 +794,8 @@ def simulate(args: argparse.Namespace) -> None:
             input("Press Enter to quit.")
         return
 
-    push_sites = obj.surface_normals(args.push_density)
-    action = demo_action(obj, push_sites)
+    space = make_push_space(obj.parts, obj.height)
+    action = demo_action(obj, space)
     q_traj = make_push_trajectory(
         build_iiwa_pusher_plant(pusher), pusher, obj, action, Q_HOME
     )
@@ -816,8 +818,8 @@ def simulate(args: argparse.Namespace) -> None:
         f"{np.array2string(obj.com_in_body_frame(), precision=3)}"
     )
     print(
-        f"push library: {len(push_sites)} contact sites "
-        f"({args.push_density} per m of outline, all at mid-height)"
+        f"push space: {len(space.faces)} faces, "
+        f"{space.usable_spans().sum() * 100:.1f} cm of usable outline"
     )
     print(
         f"demo push: {action.velocity:.2f} m/s along the contact's inward "

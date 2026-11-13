@@ -1,5 +1,5 @@
 """One placement episode: optional random probing, then the one-push MPC
-toward the goal, updating the estimator after every push.
+toward the goal, on one live ProbingState and one push budget.
 
 With no probe pushes this is the no-probing baseline: the MPC plans with
 the MAP eta from the first push, and the estimator learns from the
@@ -8,27 +8,48 @@ push budget, so probing has to earn back the pushes it spends.
 """
 
 import time
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-from pydrake.all import PiecewisePolynomial
 from pydrake.geometry import Meshcat
 
 from .action import Action
 from .belief_view import BeliefDashboard, show_belief
-from .env import ProbingEnvConfig
 from .estimator import GridBayesFilter
 from .mpc import Candidate, GoalTolerance, MpcController, at_goal, goal_error
 from .object import Object
 from .observation import PushObservation
 from .params import Eta
-from .probing import ProbingState, PushRecord, random_selector, run_probing
+from .probing import (
+    ProbingOutcome,
+    ProbingState,
+    PushRecord,
+    random_selector,
+    run_probing,
+)
+from .push_space import PushSpace
 from .recording import TruthSim
 from .scene import show_object_goal, show_prediction
 
-StopReason = Literal["at goal", "push budget", "stuck", "unreachable"]
+StopReason = Literal[
+    "at goal",
+    "push budget",
+    "stuck",
+    "unreachable",
+    "ik_exhausted",
+    "out_of_bounds",
+]
+
+_PLACEMENT_STOP_REASONS: dict[str, StopReason] = {
+    "at goal": "at goal",
+    "budget": "push budget",
+    "stuck": "stuck",
+    "unreachable": "unreachable",
+    "ik_exhausted": "ik_exhausted",
+    "out_of_bounds": "out_of_bounds",
+}
 
 
 @dataclass(frozen=True)
@@ -44,16 +65,6 @@ class EpisodeResult:
     sim_time: float  # s on the truth sim's clock, probing included
     planning_time: float  # s of wall time in MPC planning
     estimation_time: float  # s of wall time in estimator updates
-
-
-@dataclass(frozen=True)
-class Tally:
-    """What an episode has spent so far."""
-
-    pushes: int = 0
-    probes: int = 0
-    planning_time: float = 0.0  # s of wall time
-    estimation_time: float = 0.0  # s of wall time
 
 
 def push_line(number: int, label: str, obs: PushObservation, extra: str) -> str:
@@ -81,153 +92,97 @@ def goal_line(position_error: float, yaw_error: float) -> str:
     )
 
 
-def apply_push(
-    obs: PushObservation,
-    label: str,
-    extra: str,
-    obj: Object,
-    belief: GridBayesFilter | None,
-    meshcat: Meshcat | None,
-    dashboard: BeliefDashboard | None,
-    tally: Tally,
-) -> Tally:
-    """Update `belief` from an executed push, moving `obj` to where it left the
-    object, printing the outcome and drawing the belief in whichever views are
-    open, returning `tally` with the push counted."""
-    number = tally.pushes + 1
-    lines = [push_line(number, label, obs, extra)]
-    update_seconds = 0.0
-    if belief is not None:
-        started = time.time()
-        belief.update(obs)
-        update_seconds = time.time() - started
-        lines.append(belief_line(belief, update_seconds))
-    obj.pose = obs.final_pose()
-    lines.append(goal_line(*goal_error(obj.pose, obj.goal)))
-    print("\n".join(lines))
-    if belief is not None:
-        show_belief(number, belief, obj, meshcat, dashboard)
-    return replace(
-        tally,
-        pushes=number,
-        estimation_time=tally.estimation_time + update_seconds,
+def _same_push(a: Action, b: Action) -> bool:
+    """Whether `a` and `b` command the same push: contact position, speed and time."""
+    return bool(
+        np.array_equal(a.contact.position, b.contact.position)
+        and a.velocity == b.velocity
+        and a.time == b.time
     )
 
 
-def run_probes(
-    action_rng: np.random.Generator,
-    obj: Object,
-    truth_sim: TruthSim,
-    meshcat: Meshcat | None,
-    dashboard: BeliefDashboard | None,
-    belief: GridBayesFilter | None,
-    probe_config: ProbingEnvConfig,
-    count: int,
-) -> Tally:
-    """Run up to `count` random probing-library pushes through the shared
-    probing loop, stopping early when none is reachable."""
-    state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief)
+class MpcSelector:
+    """Chooses placement pushes by MPC on the shared probing state.
 
-    def report(state: ProbingState, record: PushRecord) -> None:
-        lines = [push_line(state.pushes, "probe", record.observation, "")]
-        if belief is not None:
-            lines.append(belief_line(belief, record.update_seconds))
-            show_belief(state.pushes, belief, obj, meshcat, dashboard)
-        lines.append(goal_line(*goal_error(obj.pose, obj.goal)))
-        print("\n".join(lines))
+    A decision is the span between two executed pushes, identified by
+    `state.pushes`.  Each decision is planned once and its ranked candidates are
+    kept, so re-selections after an arm-plan failure only scan them again.  The
+    latest decision's planning time, pre-push cost and chosen candidate are kept
+    as attributes for reporting; `on_choose` runs when a candidate is chosen,
+    before its arm plan and push.
+    """
 
-    outcome = run_probing(
-        state,
-        probe_config,
-        random_selector(probe_config, action_rng),
-        count,
-        "unreachable",
-        on_push=report,
-    )
-    if outcome.reason != "budget":
-        print(f"probing stopped early ({outcome.reason}); starting placement")
-    return Tally(
-        pushes=state.pushes,
-        probes=state.pushes,
-        estimation_time=sum(r.update_seconds for r in outcome.records),
-    )
+    def __init__(
+        self,
+        controller: MpcController,
+        plan_eta: Callable[[], Eta],
+        tolerance: GoalTolerance,
+        on_choose: Callable[[ProbingState, Candidate], None] | None = None,
+    ) -> None:
+        self.controller = controller
+        self.plan_eta = plan_eta
+        self.tolerance = tolerance
+        self.on_choose = on_choose
+        self.planning_seconds = 0.0  # s of wall time, summed over decisions
+        self.plan_seconds = 0.0  # s of wall time, latest decision
+        self.cost_before = 0.0  # pose cost before the latest decision's push
+        self.chosen: Candidate | None = None  # latest decision's candidate
+        self._decision_pushes: int | None = None
+        self._candidates: list[Candidate] = []
 
+    def __call__(self, state: ProbingState, failed: list[Action]) -> Action | str:
+        if at_goal(state.obj.pose, state.obj.goal, self.tolerance):
+            return "at goal"
+        if self._decision_pushes != state.pushes:
+            self._plan(state)
+        improving = [c for c in self._candidates if c.cost < self.cost_before]
+        if not improving:
+            return "stuck"
+        for candidate in improving:
+            if any(_same_push(candidate.action, f) for f in failed):
+                continue
+            self.chosen = candidate
+            if self.on_choose is not None:
+                self.on_choose(state, candidate)
+            return candidate.action
+        return "unreachable"
 
-def first_reachable_improvement(
-    candidates: Sequence[Candidate],
-    cost_now: float,
-    plan_push: Callable[[Action], PiecewisePolynomial],
-) -> tuple[Candidate, PiecewisePolynomial] | None:
-    """Get the first of the cheapest-first `candidates` that beats `cost_now`
-    and that `plan_push` can plan, with its plan, or None without one.
-    `plan_push` raises RuntimeError for a push out of the arm's reach."""
-    for candidate in candidates:
-        if candidate.cost >= cost_now:
-            return None
-        try:
-            return candidate, plan_push(candidate.action)
-        except RuntimeError:
-            continue  # out of the arm's reach; try the next best
-    return None
-
-
-def no_push_reason(candidates: Sequence[Candidate], cost_now: float) -> StopReason:
-    """Get why no push was chosen from the cheapest-first `candidates`."""
-    return "stuck" if candidates[0].cost >= cost_now else "unreachable"
-
-
-def run_placement(
-    obj: Object,
-    truth_sim: TruthSim,
-    meshcat: Meshcat | None,
-    dashboard: BeliefDashboard | None,
-    controller: MpcController,
-    belief: GridBayesFilter | None,
-    plan_eta: Callable[[], Eta],
-    max_pushes: int,
-    tolerance: GoalTolerance,
-    tally: Tally,
-) -> tuple[StopReason, Tally]:
-    """Push `obj` toward its goal with the MPC, replanning after every push,
-    returning why it stopped with `tally` brought up to date."""
-    while True:
-        if at_goal(obj.pose, obj.goal, tolerance):
-            return "at goal", tally
-        if tally.pushes >= max_pushes:
-            return "push budget", tally
+    def _plan(self, state: ProbingState) -> None:
         print(
-            f"planning push {tally.pushes + 1} over {len(controller.actions)} "
-            "candidates...",
+            f"planning push {state.pushes + 1} over "
+            f"{len(self.controller.actions)} candidates...",
             flush=True,
         )
-        started = time.time()
-        candidates = controller.plan(obj, plan_eta())
-        plan_time = time.time() - started
-        tally = replace(tally, planning_time=tally.planning_time + plan_time)
-        cost_now = controller.cost(obj)
-        choice = first_reachable_improvement(
-            candidates,
-            cost_now,
-            lambda action: truth_sim.plan_push(obj, action),
-        )
-        if choice is None:
-            return no_push_reason(candidates, cost_now), tally
-        chosen, q_traj = choice
-        if meshcat is not None:
-            show_object_goal(meshcat, obj)
-            show_prediction(meshcat, obj, chosen.predicted)
-        obs = truth_sim.record_push(obj, chosen.action, q_traj)
-        tally = apply_push(
-            obs,
-            "mpc",
-            f", plan {plan_time:.1f} s, cost {cost_now:.3f} -> predicted "
-            f"{chosen.cost:.3f}",
-            obj,
-            belief,
-            meshcat,
-            dashboard,
-            tally,
-        )
+        started = time.perf_counter()
+        self._candidates = self.controller.plan(state.obj, self.plan_eta())
+        self.plan_seconds = time.perf_counter() - started
+        self.planning_seconds += self.plan_seconds
+        self.cost_before = self.controller.cost(state.obj)
+        self.chosen = None
+        self._decision_pushes = state.pushes
+
+
+def placement_stop_reason(reason: str) -> StopReason:
+    """Map a probing outcome's reason to the episode's stop reason."""
+    return _PLACEMENT_STOP_REASONS[reason]
+
+
+def report_push(
+    state: ProbingState,
+    record: PushRecord,
+    label: str,
+    extra: str,
+    meshcat: Meshcat | None,
+    dashboard: BeliefDashboard | None,
+) -> None:
+    """Print push `record` as the state now stands, and draw the belief when
+    there is one."""
+    lines = [push_line(state.pushes, label, record.observation, extra)]
+    if state.belief is not None:
+        lines.append(belief_line(state.belief, record.update_seconds))
+        show_belief(state.pushes, state.belief, state.obj, meshcat, dashboard)
+    lines.append(goal_line(*goal_error(state.obj.pose, state.obj.goal)))
+    print("\n".join(lines))
 
 
 def run_episode(
@@ -239,15 +194,16 @@ def run_episode(
     controller: MpcController,
     belief: GridBayesFilter | None,
     plan_eta: Callable[[], Eta],
-    probe_config: ProbingEnvConfig,
+    push_space: PushSpace,
     probe_pushes: int,
     max_pushes: int,
     tolerance: GoalTolerance,
 ) -> EpisodeResult:
     """Push `obj` from its current pose toward its goal in `truth_sim`, which
     must hold the block where `obj.pose` says, moving `obj.pose` along.  The
-    first `probe_pushes` are random draws from `probe_config`'s library; the rest come
+    first `probe_pushes` are random draws from `push_space`; the rest come
     from `controller`, which asks `plan_eta` for its eta before each plan.
+    Both phases run on one ProbingState and share the `max_pushes` budget.
     `belief` (None skips estimation) is updated after every push and drawn
     in `meshcat` and `dashboard` when they're open."""
     if meshcat is not None:
@@ -255,37 +211,61 @@ def run_episode(
     if belief is not None:
         show_belief(0, belief, obj, meshcat, dashboard)
     started = truth_sim.context.get_time()
-    probed = run_probes(
-        action_rng,
-        obj,
-        truth_sim,
-        meshcat,
-        dashboard,
-        belief,
-        probe_config,
+    state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief)
+
+    def report_probe(current: ProbingState, record: PushRecord) -> None:
+        report_push(current, record, "probe", "", meshcat, dashboard)
+
+    probe_outcome = run_probing(
+        state,
+        random_selector(push_space, action_rng),
         min(probe_pushes, max_pushes),
+        on_push=report_probe,
     )
-    stop_reason, tally = run_placement(
-        obj,
-        truth_sim,
-        meshcat,
-        dashboard,
-        controller,
-        belief,
-        plan_eta,
-        max_pushes,
-        tolerance,
-        probed,
-    )
+    if probe_outcome.reason != "budget":
+        print(f"probing stopped early ({probe_outcome.reason})")
+
+    def show_choice(current: ProbingState, candidate: Candidate) -> None:
+        if meshcat is not None:
+            show_prediction(meshcat, current.obj, candidate.predicted)
+
+    selector = MpcSelector(controller, plan_eta, tolerance, on_choose=show_choice)
+
+    def report_mpc(current: ProbingState, record: PushRecord) -> None:
+        chosen = selector.chosen
+        assert chosen is not None, "a placement push has a chosen candidate"
+        report_push(
+            current,
+            record,
+            "mpc",
+            f", plan {selector.plan_seconds:.1f} s, cost {selector.cost_before:.3f}"
+            f" -> predicted {chosen.cost:.3f}",
+            meshcat,
+            dashboard,
+        )
+
+    # The goal check comes before the budget check, so a probe phase that
+    # uses up the budget while leaving the block at the goal still succeeds.
+    if at_goal(obj.pose, obj.goal, tolerance):
+        placement_outcome = ProbingOutcome("at goal", ())
+    elif probe_outcome.reason == "out_of_bounds":
+        placement_outcome = ProbingOutcome("out_of_bounds", ())
+    else:
+        placement_outcome = run_probing(state, selector, max_pushes, on_push=report_mpc)
+
+    stop_reason = placement_stop_reason(placement_outcome.reason)
     position_error, yaw_error = goal_error(obj.pose, obj.goal)
     return EpisodeResult(
         success=stop_reason == "at goal",
         stop_reason=stop_reason,
-        probe_pushes=tally.probes,
-        mpc_pushes=tally.pushes - tally.probes,
+        probe_pushes=len(probe_outcome.records),
+        mpc_pushes=len(placement_outcome.records),
         position_error=position_error,
         yaw_error=yaw_error,
         sim_time=truth_sim.context.get_time() - started,
-        planning_time=tally.planning_time,
-        estimation_time=tally.estimation_time,
+        planning_time=selector.planning_seconds,
+        estimation_time=sum(
+            record.update_seconds
+            for record in (*probe_outcome.records, *placement_outcome.records)
+        ),
     )
