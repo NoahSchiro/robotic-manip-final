@@ -45,7 +45,15 @@ from pydrake.all import (
 )
 
 from .action import Action
-from .iiwa import Pusher, hover_tip_pose, push_maneuver
+from .iiwa import (
+    LEG_DWELL,
+    LEG_LIFT,
+    LEG_PUSH,
+    LEG_RELEASE,
+    Pusher,
+    push_maneuver,
+    transfer_height,
+)
 from .object import Object, Table, add_object, add_table
 from .observation import ObjectState, PushObservation, measurement
 from .params import Eta
@@ -79,24 +87,26 @@ class PlanningModel(Protocol):
 def nominal_tip_path(obj: Object, action: Action) -> PiecewisePolynomial:
     """Get the tip's commanded path for `action` from `obj`'s current pose,
     as push_maneuver lays it out: from the standoff point, push at the
-    commanded speed, back off along the push line far enough to release the
-    contact, and rise clear of the block, each leg straight and at constant
-    speed.  Times start at 0 at the standoff, like a push window's.
+    commanded speed, release along the push line, and rise clear of the
+    block, each leg straight and at constant speed.  Times start at 0 at the
+    standoff, like a push window's.
 
-    The rise matters: backing off along the push line can strike a block
-    the push has rotated, and the stick drags it until it clears the top.
+    The rise matters: the release retraces the push line, which a block the
+    push has rotated can strike, so the stick rises clear of its top.
     """
-    maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
-    # Segment 1 lowers to the standoff; 2 pushes; 3 backs off; 4 rises.
-    (lowered, _), (push_end, t_push), (backed_off, t_back_off), (raised, t_rise) = (
-        maneuver[1:5]
+    maneuver = push_maneuver(obj.x_wo(), action, transfer_height(obj))
+    (standoff, _), (push_end, t_push), (released, t_release), (raised, t_rise) = (
+        maneuver[LEG_DWELL],
+        maneuver[LEG_PUSH],
+        maneuver[LEG_RELEASE],
+        maneuver[LEG_LIFT],
     )
-    times = list(np.cumsum([0.0, t_push, t_back_off, t_rise]))
+    times = list(np.cumsum([0.0, t_push, t_release, t_rise]))
     positions = np.column_stack(
         [
-            lowered.translation(),
+            standoff.translation(),
             push_end.translation(),
-            backed_off.translation(),
+            released.translation(),
             raised.translation(),
         ]
     )

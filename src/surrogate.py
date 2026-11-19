@@ -32,7 +32,7 @@ import numpy as np
 from pydrake.all import RigidTransform
 
 from .action import Action
-from .iiwa import HOLD_TIME, MOVE_TIME, STANDOFF
+from .iiwa import HOLD_TIME, LEG_DWELL, LEG_PUSH, push_maneuver
 from .observation import PushObservation, wrap_angle
 from .params import Eta
 
@@ -70,6 +70,7 @@ class SurrogateEnsemble:
 
 
 SAMPLE_PERIOD = 0.01  # s, nominal tip path sampling period
+TIME_DECIMALS = 9  # rounds maneuver event times so coincident events merge
 
 
 @dataclass(frozen=True)
@@ -97,109 +98,78 @@ class ActionTipPath:
 
 
 def nominal_tip_path(
-    pose: RigidTransform,
+    X_WO: RigidTransform,
     action: Action,
     settle_time: float,
+    transfer_height: float,
 ) -> TipPath:
-    """Construct the commanded tip path for `action`: push at constant
-    speed from the standoff point through the contact, back off one
-    standoff, window closes `settle_time` after the push segment.  The
-    executed-path deviation (arm tracking error) is added by the caller
-    from the calibrated path family."""
-    contact = pose @ action.contact.position
-    normal = pose.rotation() @ action.contact.normal
-    speed = action.velocity
-    approach = contact - STANDOFF * normal
-    push_end = contact + speed * action.time * normal
-    push_end_time = (STANDOFF + speed * action.time) / speed
-    back_off_end = push_end_time + STANDOFF / speed
-    window_end = push_end_time + settle_time
-
-    # Drop any arange sample within half a period of the window's end:
-    # with floating-point steps it can land on or past it, and the appended
-    # window_end would then duplicate it.
-    times = np.arange(0.0, window_end, SAMPLE_PERIOD)
-    times = times[times < window_end - SAMPLE_PERIOD / 2]
-    times = np.append(times, window_end)
-    pushing = times <= push_end_time
-    backing_off = (times > push_end_time) & (times < back_off_end)
-    positions = np.where(
-        pushing,
-        approach[:, None] + speed * times[None, :] * normal[:, None],
-        np.where(
-            backing_off,
-            push_end[:, None]
-            - speed * (times[None, :] - push_end_time) * normal[:, None],
-            np.repeat(approach[:, None], len(times), axis=1),
-        ),
-    )
-    velocities = np.where(
-        pushing,
-        speed * normal[:, None],
-        np.where(
-            backing_off,
-            -speed * normal[:, None],
-            np.zeros((3, len(times))),
-        ),
-    )
+    """The measurement window of `nominal_action_tip_path`: from the standoff
+    point through the push, closing `settle_time` after the push segment.  The
+    executed-path deviation (arm tracking error) is added by the caller from
+    the calibrated path family."""
+    path = nominal_action_tip_path(X_WO, action, settle_time, transfer_height)
+    n = path.window_samples
     return TipPath(
-        tip_times=times,
-        tip_positions=positions,
-        tip_velocities=velocities,
-        push_end_time=push_end_time,
-        window_end=window_end,
+        tip_times=path.tip_times[:n],
+        tip_positions=path.tip_positions[:, :n],
+        tip_velocities=path.tip_velocities[:, :n],
+        push_end_time=path.push_end_time,
+        window_end=path.window_end,
     )
+
+
+def _path_times(events: np.ndarray, end: float) -> np.ndarray:
+    """Sample times (s) from 0 to `end` on SAMPLE_PERIOD, with `events` (the
+    maneuver's break times and the window end) included exactly.  Grid samples
+    within half a period of an event are dropped, so no two times nearly
+    coincide and the spline's breaks stay distinct."""
+    events = np.unique(np.round(events, TIME_DECIMALS))
+    grid = np.arange(0.0, end, SAMPLE_PERIOD)
+    grid = grid[np.abs(grid[:, None] - events).min(axis=1) > SAMPLE_PERIOD / 2]
+    return np.sort(np.concatenate([grid, events]))
 
 
 def nominal_action_tip_path(
-    pose: RigidTransform,
+    X_WO: RigidTransform,
     action: Action,
     settle_time: float,
-    lift_height: float,
+    transfer_height: float,
 ) -> ActionTipPath:
-    """Extend the estimator window path through backoff, local lift, and hold."""
-    window = nominal_tip_path(pose, action, settle_time)
-    contact = pose @ action.contact.position
-    normal = pose.rotation() @ action.contact.normal
-    push_end = contact + action.velocity * action.time * normal
-    backed_off = push_end - STANDOFF * normal
-    backoff_end = window.push_end_time + STANDOFF / action.velocity
-    lift_end = backoff_end + MOVE_TIME
-    action_end = lift_end + HOLD_TIME
-    if window.window_end >= backoff_end:
-        raise ValueError("measurement window must end before backoff finishes")
-    events = np.array([backoff_end, lift_end, action_end])
-    regular_times = np.arange(
-        window.window_end + SAMPLE_PERIOD, action_end, SAMPLE_PERIOD
+    """Sample push_maneuver's tip path from the standoff point through the
+    push, the release, the lift, and the hold.  Each leg is straight at
+    constant speed and the tip rests during the hold.  Times are seconds from
+    the standoff; the measurement window closes `settle_time` after the push
+    segment, wherever that falls along the path."""
+    maneuver = push_maneuver(X_WO, action, transfer_height)
+    # From the standoff, where the dwell holds the tip: push, release, lift,
+    # then the hold at the lift's end.
+    poses = [pose for pose, _duration in maneuver[LEG_DWELL:]]
+    waypoints = np.column_stack(
+        [*(pose.translation() for pose in poses), poses[-1].translation()]
     )
-    regular_times = regular_times[
-        (np.abs(regular_times[:, None] - events).min(axis=1) > SAMPLE_PERIOD / 2)
-    ]
-    tail_times = np.sort(np.concatenate([regular_times, events]))
-    lift = np.array([0.0, 0.0, lift_height - backed_off[2]])
-    tail_positions = np.empty((3, len(tail_times)))
-    tail_velocities = np.zeros_like(tail_positions)
-    for index, at in enumerate(tail_times):
-        if at < backoff_end:
-            tail_positions[:, index] = (
-                push_end - action.velocity * (at - window.push_end_time) * normal
-            )
-            tail_velocities[:, index] = -action.velocity * normal
-        elif at < lift_end:
-            tail_positions[:, index] = (
-                backed_off + (at - backoff_end) / MOVE_TIME * lift
-            )
-            tail_velocities[:, index] = lift / MOVE_TIME
-        else:
-            tail_positions[:, index] = backed_off + lift
+    durations = np.array(
+        [duration for _pose, duration in maneuver[LEG_PUSH:]] + [HOLD_TIME]
+    )
+    breaks = np.concatenate([[0.0], np.cumsum(durations)])
+
+    push_end_time = float(breaks[1])
+    window_end = float(np.round(push_end_time + settle_time, TIME_DECIMALS))
+    times = _path_times(breaks, float(breaks[-1]))
+    positions = np.stack(
+        [np.interp(times, breaks, waypoints[axis]) for axis in range(3)]
+    )
+    leg = np.clip(
+        np.searchsorted(breaks, times, side="left") - 1, 0, len(durations) - 1
+    )
+    leg_velocities = np.diff(waypoints, axis=1) / durations
     return ActionTipPath(
-        tip_times=np.concatenate([window.tip_times, tail_times]),
-        tip_positions=np.column_stack([window.tip_positions, tail_positions]),
-        tip_velocities=np.column_stack([window.tip_velocities, tail_velocities]),
-        push_end_time=window.push_end_time,
-        window_end=window.window_end,
-        action_end=action_end,
-        window_samples=len(window.tip_times),
+        tip_times=times,
+        tip_positions=positions,
+        tip_velocities=leg_velocities[:, leg],
+        push_end_time=push_end_time,
+        window_end=window_end,
+        action_end=float(breaks[-1]),
+        window_samples=int(np.count_nonzero(times <= window_end)),
     )
 
 

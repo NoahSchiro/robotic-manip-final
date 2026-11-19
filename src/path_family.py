@@ -60,12 +60,16 @@ class PathFamily:
 
 
 def calibrate_path_family(
-    trials_path: Path, settle_time: float = 0.1, keep: int = KEEP_COMPONENTS
+    trials_path: Path,
+    transfer_height: float,
+    settle_time: float = 0.3,
+    keep: int = KEEP_COMPONENTS,
 ) -> tuple[PathFamily, float]:
     """Calibrate the family from a recorded-trials dataset: the deviations
     of each recorded push's measured xy path from its reconstructed nominal
-    path, decomposed by SVD.  Returns the family and the residual RMS after
-    the kept components (mm-scale diagnostics are the caller's job)."""
+    path (built at `transfer_height` m), decomposed by SVD.  Returns the family
+    and the residual RMS after the kept components (mm-scale diagnostics are
+    the caller's job)."""
     with np.load(trials_path, allow_pickle=True) as data:
         tip_times = data["tip_times"]
         tip_positions = data["tip_positions"]
@@ -83,7 +87,7 @@ def calibrate_path_family(
         action = _action_from_arrays(
             contacts[push], normals[push], float(speeds[push]), float(times_cmd[push])
         )
-        nominal = nominal_tip_path(pose, action, settle_time)
+        nominal = nominal_tip_path(pose, action, settle_time, transfer_height)
         measured = path_downsample(tip_times[push], tip_positions[push])[:2]
         nominal_xy = path_downsample(nominal.tip_times, nominal.tip_positions)[:2]
         rows.append((measured - nominal_xy).reshape(-1))

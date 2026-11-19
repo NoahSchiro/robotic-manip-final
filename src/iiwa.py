@@ -24,9 +24,24 @@ from .object import Object
 Q_HOME = np.array([0.0, 0.4, 0.0, -1.6, 0.0, 1.2, 0.0])
 
 # Maneuver knobs. This moves reasonably fast
-STANDOFF = 0.015
-MOVE_TIME = 0.35
-HOLD_TIME = 0.1
+STANDOFF = 0.015  # m, approach distance before the contact along the normal
+MOVE_TIME = 0.35  # s, nominal duration of a free-space leg
+HOLD_TIME = 0.1  # s
+# s, the tip rests at the standoff after lowering: the lowering overshoots
+# vertically by 1-1.5 cm about 0.17 s later, and the push must start after it.
+DWELL_TIME = 0.3
+HOVER_CLEARANCE = 0.04  # m, transfer height above the block top
+RELEASE_DISTANCE = 0.01  # m, retreat along the normal after the push
+RELEASE_SPEED = 0.05  # m/s
+# Free-space legs may use this share of each joint's velocity limit.
+JOINT_SPEED_FRACTION = 0.5
+# push_maneuver's legs, in order.  In a make_push_trajectory plan, break k + 1
+# ends leg k, and break 0 is the trajectory start.
+LEG_TRANSFER, LEG_LOWER, LEG_DWELL, LEG_PUSH, LEG_RELEASE, LEG_LIFT = range(6)
+# Legs that move through free space: the transfer, the lowering, and the lift.
+# The dwell is a zero-motion leg and keeps its nominal duration.
+FREE_SPACE_LEGS = (LEG_TRANSFER, LEG_LOWER, LEG_LIFT)
+TOOL_DOWN = RotationMatrix.MakeXRotation(np.pi)  # tool axis -> straight down
 
 
 class Pusher:
@@ -166,6 +181,11 @@ def solve_tip_ik(
     raise RuntimeError(f"no IK solution for stick tip pose\n{X_WT}")
 
 
+def transfer_height(obj: Object) -> float:
+    """The tip's world height (m) for transfer and lift legs over `obj`."""
+    return obj.height + HOVER_CLEARANCE
+
+
 def hover_tip_pose(obj: Object) -> RigidTransform:
     """The tip pose parked a few centimeters above the block, tool pointing
     straight down."""
@@ -173,11 +193,7 @@ def hover_tip_pose(obj: Object) -> RigidTransform:
     # obj.pose's x, y is a point directly over the block and its top face
     # is at z = obj.height.
     x_block, y_block = obj.pose[:2]
-    R_down = RotationMatrix.MakeXRotation(np.pi)  # tool axis -> straight down
-    hover_clearance = 0.04
-    return RigidTransform(
-        R_down, np.array([x_block, y_block, obj.height + hover_clearance])
-    )
+    return RigidTransform(TOOL_DOWN, np.array([x_block, y_block, transfer_height(obj)]))
 
 
 def clear_sites(
@@ -201,53 +217,53 @@ def clear_sites(
 
 
 def push_maneuver(
-    obj: Object, action: Action, hover: RigidTransform
+    X_WO: RigidTransform, action: Action, transfer_height: float
 ) -> list[tuple[RigidTransform, float]]:
-    """Compute the tip's world-frame maneuver for `action`: waypoints paired
-    with each straight segment's duration. The final waypoint is lifted
-    locally above the release point, with the tool pointing down."""
-    X_WO = obj.x_wo()
+    """Compute the tip's maneuver for `action` on a block at `X_WO` (m, rad):
+    waypoints paired with each leg's nominal duration (s), in the LEG_* order.
+    The legs are transfer over the standoff point, lowering to it, a dwell
+    there, the push, a release RELEASE_DISTANCE back along the normal, and a
+    vertical lift to `transfer_height` (m). The tool points down throughout."""
     contact = X_WO @ action.contact.position
     normal = X_WO.rotation() @ action.contact.normal
-
     approach = contact - STANDOFF * normal
-    tool_down = hover.rotation()
-    over = RigidTransform(
-        tool_down, np.array([approach[0], approach[1], hover.translation()[2]])
-    )
-    lowered = RigidTransform(tool_down, approach)
-    push_end = RigidTransform(
-        tool_down, contact + action.velocity * action.time * normal
-    )
+    push_end = contact + action.velocity * action.time * normal
+    released = push_end - RELEASE_DISTANCE * normal
     push_time = (STANDOFF + action.velocity * action.time) / action.velocity
-    # Back off only far enough to release the contact: the push has usually
-    # turned the block, so retracing it all can drag the T's other part along.
-    backed_off = RigidTransform(tool_down, push_end.translation() - STANDOFF * normal)
-    raised = RigidTransform(
-        tool_down,
-        np.array(
-            [
-                backed_off.translation()[0],
-                backed_off.translation()[1],
-                hover.translation()[2],
-            ]
-        ),
-    )
-
+    over = np.array([approach[0], approach[1], transfer_height])
+    lifted = np.array([released[0], released[1], transfer_height])
     return [
-        (over, MOVE_TIME),  # move over the standoff point
-        (lowered, MOVE_TIME),  # lower to the contact height
-        (push_end, push_time),  # push at the commanded speed and contact time
-        (backed_off, STANDOFF / action.velocity),  # back off at the same speed
-        (raised, MOVE_TIME),  # raise
+        (_tool_down(over), MOVE_TIME),
+        (_tool_down(approach), MOVE_TIME),
+        (_tool_down(approach), DWELL_TIME),
+        (_tool_down(push_end), push_time),
+        (_tool_down(released), RELEASE_DISTANCE / RELEASE_SPEED),
+        (_tool_down(lifted), MOVE_TIME),
     ]
 
 
+def _tool_down(position: np.ndarray) -> RigidTransform:
+    return RigidTransform(TOOL_DOWN, position)
+
+
 def maneuver_time(obj: Object, action: Action) -> float:
-    """Get the push trajectory's length for `action`: push_maneuver's
-    segments plus the final hold, as make_push_trajectory plans it."""
-    maneuver = push_maneuver(obj, action, hover_tip_pose(obj))
+    """Get `action`'s nominal maneuver time (s): push_maneuver's durations plus
+    the final hold. It ignores the joint-speed stretching make_push_trajectory
+    applies to free-space legs, since that depends on the IK solutions, which
+    planning cannot compute for candidates it has not scored."""
+    maneuver = push_maneuver(obj.x_wo(), action, transfer_height(obj))
     return sum(duration for _pose, duration in maneuver) + HOLD_TIME
+
+
+def free_space_duration(
+    q_from: np.ndarray, q_to: np.ndarray, nominal: float, velocity_limits: np.ndarray
+) -> float:
+    """Get a free-space leg's duration (s): `nominal`, or longer when its
+    slowest joint would otherwise run past JOINT_SPEED_FRACTION of its
+    velocity limit (rad/s)."""
+    # The IK can land on a far-off arm shape for a nearby tip pose.
+    fastest_need = np.abs(q_to - q_from) / (JOINT_SPEED_FRACTION * velocity_limits)
+    return max(nominal, float(fastest_need.max()))
 
 
 def make_push_trajectory(
@@ -257,16 +273,22 @@ def make_push_trajectory(
     action: Action,
     q_seed: np.ndarray,
 ) -> PiecewisePolynomial:
-    """Plan from the current arm posture through a push, local lift, and hold.
-    The first segment transfers at the hover clearance height."""
-    hover = hover_tip_pose(obj)
-    maneuver = push_maneuver(obj, action, hover)
+    """Plan from the arm posture `q_seed` at time 0 through the push maneuver,
+    its dwell, release, lift, and hold. Free-space legs (FREE_SPACE_LEGS) last
+    free_space_duration; the other legs keep their nominal durations."""
+    maneuver = push_maneuver(obj.x_wo(), action, transfer_height(obj))
 
     q_samples = [np.asarray(q_seed, dtype=float)]
     for pose, _duration in maneuver:
         q_samples.append(solve_tip_ik(ik_plant, pusher, pose, q_samples[-1]))
 
-    durations = [duration for _pose, duration in maneuver]
+    limits = ik_plant.GetVelocityUpperLimits()
+    durations = [
+        free_space_duration(q_samples[k], q_samples[k + 1], nominal, limits)
+        if k in FREE_SPACE_LEGS
+        else nominal
+        for k, (_pose, nominal) in enumerate(maneuver)
+    ]
     breaks = np.cumsum([0.0, *durations, HOLD_TIME])
     samples = np.column_stack([*q_samples, q_samples[-1]]).astype(float)
     return PiecewisePolynomial.FirstOrderHold(
@@ -281,31 +303,11 @@ def hold_trajectory(q: np.ndarray) -> PiecewisePolynomial:
     )
 
 
-def transit_time(
-    q_from: np.ndarray, q_to: np.ndarray, velocity_limits: np.ndarray
-) -> float:
-    """Get how long the arm takes between postures: MOVE_TIME, or longer when
-    that would run a joint past `velocity_limits`."""
-    # The IK can land on a far-off arm shape for a nearby tip pose, a move
-    # MOVE_TIME can't cover at any speed the arm is rated for.
-    return max(MOVE_TIME, float((np.abs(q_to - q_from) / velocity_limits).max()))
-
-
-def chain_from_parked(
-    q_parked: np.ndarray,
-    q_traj: PiecewisePolynomial,
-    start_time: float,
-    transit: float,
+def shift_trajectory(
+    q_traj: PiecewisePolynomial, start_time: float
 ) -> PiecewisePolynomial:
-    """Put `q_traj`, planned from time 0, on a running sim's clock: from
-    `start_time` the arm moves from `q_parked` to `q_traj`'s start over
-    `transit` seconds, then follows `q_traj`."""
-    q_start = q_traj.value(0.0).ravel()
-    chained = PiecewisePolynomial.FirstOrderHold(
-        [start_time, start_time + transit],
-        np.column_stack([q_parked, q_start]).tolist(),
-    )
+    """Copy `q_traj`, planned from time 0, to begin at `start_time` on a running
+    sim's clock. Its first posture must be where the arm is parked."""
     shifted = copy(q_traj)
-    shifted.shiftRight(chained.end_time())
-    chained.ConcatenateInTime(shifted)
-    return chained
+    shifted.shiftRight(start_time)
+    return shifted

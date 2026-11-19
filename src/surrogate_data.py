@@ -36,7 +36,7 @@ from pydrake.all import SpatialVelocity
 from .action import Action
 from .dynamics import DrakePushModel, PushModelConfig
 from .geometry import SurfaceNormal, SurfacePart
-from .iiwa import Pusher, clear_sites, hover_tip_pose
+from .iiwa import Pusher, clear_sites, transfer_height
 from .object import Object, Rod
 from .observation import ObjectState, wrap_angle
 from .params import GridSpec, sample_eta
@@ -113,7 +113,7 @@ def surrogate_sample(
     start_velocity = SpatialVelocity(np.zeros(3), rng.uniform(-1e-9, 1e-9, size=3))
 
     path = nominal_action_tip_path(
-        obj.x_wo(), action, setup.settle_time, hover_tip_pose(obj).translation()[2]
+        obj.x_wo(), action, setup.settle_time, transfer_height(obj)
     )
     path.tip_positions[:] = perturb_tip_positions(
         path.tip_positions, path.tip_times, path.window_end, setup.family, rng

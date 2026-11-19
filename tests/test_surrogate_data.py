@@ -5,9 +5,18 @@ import pytest
 
 from src.action import Action
 from src.geometry import SurfaceNormal
-from src.iiwa import HOLD_TIME, MOVE_TIME, STANDOFF, hover_tip_pose
+from src.iiwa import (
+    HOLD_TIME,
+    LEG_PUSH,
+    MOVE_TIME,
+    RELEASE_DISTANCE,
+    RELEASE_SPEED,
+    STANDOFF,
+    push_maneuver,
+    transfer_height,
+)
 from src.object import Object, Rod
-from src.surrogate import nominal_action_tip_path
+from src.surrogate import nominal_action_tip_path, nominal_tip_path
 from src.surrogate_data import assign_split
 from src.train_surrogate import dataset_arrays, world_frame_errors
 
@@ -56,7 +65,7 @@ def test_one_seed_cannot_cross_splits(tmp_path: Path) -> None:
         dataset_arrays(path)
 
 
-def test_action_path_events_and_local_lift() -> None:
+def make_push() -> tuple[Object, Action]:
     obj = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.2))
     obj.pose = (0.55, 0.0, 0.4)
     action = Action(
@@ -67,19 +76,54 @@ def test_action_path_events_and_local_lift() -> None:
         velocity=0.1,
         time=0.2,
     )
-    lift_height = hover_tip_pose(obj).translation()[2]
-    path = nominal_action_tip_path(obj.x_wo(), action, 0.1, lift_height)
+    return obj, action
+
+
+def test_action_path_events_and_local_lift() -> None:
+    obj, action = make_push()
+    X_WO = obj.x_wo()
+    path = nominal_action_tip_path(X_WO, action, 0.3, transfer_height(obj))
+    push_end_time = STANDOFF / action.velocity + action.time
+    assert path.push_end_time == pytest.approx(push_end_time)
     assert path.tip_times[path.window_samples - 1] == pytest.approx(path.window_end)
     assert path.action_end == pytest.approx(
-        path.push_end_time + STANDOFF / action.velocity + MOVE_TIME + HOLD_TIME
+        push_end_time + RELEASE_DISTANCE / RELEASE_SPEED + MOVE_TIME + HOLD_TIME
     )
     assert np.diff(path.tip_times).min() > 0.0
-    assert path.tip_positions[2, -1] == pytest.approx(lift_height)
-    push_end = obj.x_wo() @ action.contact.position + action.velocity * action.time * (
-        obj.x_wo().rotation() @ action.contact.normal
-    )
-    backed_off = push_end - STANDOFF * (obj.x_wo().rotation() @ action.contact.normal)
-    assert path.tip_positions[:2, -1] == pytest.approx(backed_off[:2])
+    assert path.tip_positions[2, -1] == pytest.approx(transfer_height(obj))
+    normal = X_WO.rotation() @ action.contact.normal
+    push_end = X_WO @ action.contact.position + action.velocity * action.time * normal
+    released = push_end - RELEASE_DISTANCE * normal
+    assert path.tip_positions[:2, -1] == pytest.approx(released[:2])
+
+
+def test_surrogate_paths_pass_through_the_maneuver_waypoints() -> None:
+    obj, action = make_push()
+    X_WO = obj.x_wo()
+    maneuver = push_maneuver(X_WO, action, transfer_height(obj))
+    # The window starts at the standoff, where the dwell ends: waypoints are
+    # push end, release end, lift end.
+    waypoints = [pose.translation() for pose, _ in maneuver[LEG_PUSH:]]
+    breaks = np.cumsum([0.0, *(d for _pose, d in maneuver[LEG_PUSH:])])[1:]
+    action_path = nominal_action_tip_path(X_WO, action, 0.3, transfer_height(obj))
+    for t, waypoint in zip(breaks, waypoints):
+        index = int(np.argmin(np.abs(action_path.tip_times - t)))
+        assert action_path.tip_times[index] == pytest.approx(t, abs=1e-9)
+        assert action_path.tip_positions[:, index] == pytest.approx(waypoint, abs=1e-9)
+    assert action_path.tip_positions[:, -1] == pytest.approx(waypoints[-1])
+
+
+def test_window_path_is_the_action_path_cut_at_the_window_end() -> None:
+    obj, action = make_push()
+    X_WO = obj.x_wo()
+    height = transfer_height(obj)
+    window = nominal_tip_path(X_WO, action, 0.3, height)
+    full = nominal_action_tip_path(X_WO, action, 0.3, height)
+    n = full.window_samples
+    assert window.window_end == pytest.approx(full.window_end)
+    assert window.tip_times == pytest.approx(full.tip_times[:n])
+    assert window.tip_positions == pytest.approx(full.tip_positions[:, :n])
+    assert window.tip_times[-1] == pytest.approx(window.window_end)
 
 
 def test_training_residuals_rotate_from_start_frame_to_world() -> None:

@@ -21,17 +21,17 @@ from pydrake.geometry import Meshcat
 
 from .action import Action
 from .iiwa import (
-    HOLD_TIME,
+    LEG_DWELL,
+    LEG_PUSH,
+    LEG_TRANSFER,
     Q_HOME,
     Pusher,
     build_iiwa_pusher_plant,
-    chain_from_parked,
     hold_trajectory,
     hover_tip_pose,
     make_push_trajectory,
-    push_maneuver,
+    shift_trajectory,
     solve_tip_ik,
-    transit_time,
 )
 from .object import Object, Table
 from .observation import ObjectState, PushObservation
@@ -54,23 +54,29 @@ class PushWindow(NamedTuple):
     """Named push events on the simulation clock (s)."""
 
     start: float
+    transfer_end: float
     push_end: float
     end: float
     action_end: float
 
 
 def push_window(
-    obj: Object, action: Action, settle_time: float, trajectory_start: float
+    q_traj: PiecewisePolynomial, settle_time: float, trajectory_start: float
 ) -> PushWindow:
-    """Get the push window of `action`'s trajectory, begun at `trajectory_start`:
-    from the tip parked at its standoff point, through the push segment's end,
-    to `settle_time` after it."""
-    durations = [d for _pose, d in push_maneuver(obj, action, hover_tip_pose(obj))]
-    # Segments 0-1 move over and lower to the standoff; segment 2 pushes.
-    start = trajectory_start + durations[0] + durations[1]
-    push_end = start + durations[2]
-    action_end = trajectory_start + sum(durations) + HOLD_TIME
-    return PushWindow(start, push_end, push_end + settle_time, action_end)
+    """Get the push window of a push trajectory planned from time 0 and begun
+    at `trajectory_start`: from the tip at rest at its standoff point (the
+    dwell's end), through the push segment's end, to `settle_time` after it.
+    Read from the planned trajectory's breaks, where break k + 1 ends the
+    push_maneuver leg k (the LEG_* indices) and break 0 is the start."""
+    breaks = np.asarray(q_traj.get_segment_times()) + trajectory_start
+    push_end = float(breaks[LEG_PUSH + 1])
+    return PushWindow(
+        start=float(breaks[LEG_DWELL + 1]),
+        transfer_end=float(breaks[LEG_TRANSFER + 1]),
+        push_end=push_end,
+        end=push_end + settle_time,
+        action_end=float(breaks[-1]),
+    )
 
 
 def read_object_state(
@@ -176,14 +182,8 @@ class TruthSim:
     ) -> PushObservation:
         """Run `action`, leaving the arm lifted near release and the sim paused."""
         now = self.context.get_time()
-        transit = transit_time(
-            self.q_current,
-            q_traj.value(0.0).ravel(),
-            self.ik_plant.GetVelocityUpperLimits(),
-        )
-        commanded = chain_from_parked(self.q_current, q_traj, now, transit)
-        window = push_window(obj, action, self.settle_time, now + transit)
-        self.reference.UpdateTrajectory(commanded)
+        window = push_window(q_traj, self.settle_time, now)
+        self.reference.UpdateTrajectory(shift_trajectory(q_traj, now))
         # Wall time since the last push isn't the sim falling behind: left
         # counted, the pacer would race through it instead of tracking real time.
         self.simulator.ResetStatistics()
@@ -214,6 +214,7 @@ class TruthSim:
             end=end,
             final=final,
             push_end_time=window.push_end - window.start,
+            transfer_end_time=window.transfer_end - window.start,
             tip_times=np.concatenate(
                 [[0.0], inside_times - window.start, [window.end - window.start]]
             ),

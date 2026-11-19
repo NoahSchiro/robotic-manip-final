@@ -37,7 +37,7 @@ from sb3_contrib import MaskablePPO
 from .action import SPEEDS, TIMES, Action
 from .estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
 from .geometry import SurfaceNormal, SurfacePart
-from .iiwa import STANDOFF, Pusher, clear_sites
+from .iiwa import STANDOFF, Pusher, clear_sites, transfer_height
 from .object import Object, Rod
 from .observation import wrap_angle
 from .params import Eta, GridSpec, grid_spans, make_grid, sample_eta
@@ -56,7 +56,7 @@ N_PROBE_SITES = 32  # the pruned library's site count (MPC keeps all)
 # is per centimeter; converted (x100) it is 200/m.
 PUSH_DENSITY = 200.0
 SITE_CLEARANCE = 0.001  # m, as in the dataset
-SETTLE_TIME = 0.1  # s, matching the dataset's windows
+SETTLE_TIME = 0.3  # s, matching the dataset's windows
 ROD_MASS = 0.2  # kg, as everywhere
 
 WORKSPACE_CENTER = (0.55, 0.0)
@@ -83,6 +83,7 @@ class ProbingEnvConfig:
     tip_body_xy: np.ndarray  # (A, 2) approach-point body xy per push action
     normal_body_xy: np.ndarray  # (A, 2) inward normal xy per push action
     forward: np.ndarray  # (A,) approach + v*T distance per push action
+    transfer_height: float  # m, the tip's height for transfer and lift legs
     max_pushes: int = MAX_PUSHES
     entropy_weight: float = ENTROPY_WEIGHT
     step_cost: float = STEP_COST
@@ -144,6 +145,7 @@ def make_probing_env_config(
             STANDOFF + np.repeat(SPEEDS, n_times) * np.tile(TIMES, n_speeds),
             len(picked_sites),
         ),
+        transfer_height=transfer_height(reference),
     )
 
 
@@ -180,7 +182,7 @@ def member_spread(
             velocity=speed,
             time=time,
         )
-        path = nominal_tip_path(pose, action, SETTLE_TIME)
+        path = nominal_tip_path(pose, action, SETTLE_TIME, config.transfer_height)
         start = np.zeros(6)
         start[:2] = pose.translation()[:2]
         start[2] = np.arctan2(
@@ -478,7 +480,12 @@ class ProbingEnv(gymnasium.Env):
             velocity=speed,
             time=time,
         )
-        path = nominal_tip_path(planar_transform(self._pose), body_action, SETTLE_TIME)
+        path = nominal_tip_path(
+            planar_transform(self._pose),
+            body_action,
+            SETTLE_TIME,
+            self.config.transfer_height,
+        )
         path.tip_positions[:] = perturb_tip_positions(
             path.tip_positions,
             path.tip_times,

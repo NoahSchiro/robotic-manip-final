@@ -2,7 +2,7 @@
 after, plus the pusher tip's measured path in between.  Also where the push
 leaves the object, for chaining pushes.
 
-The push window opens when the tip has lowered to its standoff point
+The push window opens once the tip has dwelt at rest at its standoff point
 (before contact) and closes `settle_time` after the push segment ends.
 
 The estimator's measurement is the object's pose at the window's end and
@@ -63,6 +63,8 @@ class PushObservation:
     tip_positions: np.ndarray  # (3, n) world frame
     tip_velocities: np.ndarray  # (3, n) world frame
     action_end_time: float | None = None  # s, from window start; absent in old trials
+    # s, from window start (negative): the transfer ends and lowering begins.
+    transfer_end_time: float | None = None
 
     @property
     def duration(self) -> float:
