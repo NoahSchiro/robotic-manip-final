@@ -40,7 +40,7 @@ def add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--settle-time",
         type=float,
-        default=0.1,
+        default=0.3,
         help="measurement delay after each push segment ends (s)",
     )
     parser.add_argument(

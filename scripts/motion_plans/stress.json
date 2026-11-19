@@ -1,0 +1,11 @@
+{
+  "friction": 0.5,
+  "yaw": 0.0,
+  "pushes": [
+    {"face": 7, "s": 0.5, "speed": 0.2, "duration": 0.5},
+    {"face": 3, "s": 0.5, "speed": 0.2, "duration": 0.5},
+    {"face": 6, "s": 1.0, "speed": 0.2, "duration": 0.1},
+    {"face": 7, "s": 0.5, "speed": 0.15, "duration": 1.0},
+    {"face": 3, "s": 0.5, "speed": 0.15, "duration": 1.0}
+  ]
+}

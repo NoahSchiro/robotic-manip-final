@@ -32,6 +32,7 @@ from src.pdcontroller import ArmPdController
 
 _STATE_LOGGER = "state_logger"
 _ARM_REFERENCE = "arm_reference"
+_MESHCAT_VISUALIZER = "meshcat_visualizer"
 
 # Color of the ghost showing where the MPC predicts its push leaves the block.
 PREDICTION_COLOR = (0.95, 0.80, 0.15)
@@ -108,7 +109,8 @@ def build_diagram(
         logger.set_name(_STATE_LOGGER)
 
     if meshcat is not None:
-        MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
+        visualizer = MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
+        visualizer.set_name(_MESHCAT_VISUALIZER)
 
     return builder.Build(), plant
 
@@ -121,6 +123,17 @@ def state_logger(diagram: Diagram) -> VectorLogSink:
     logger = diagram.GetSubsystemByName(_STATE_LOGGER)
     assert isinstance(logger, VectorLogSink)
     return logger
+
+
+def meshcat_visualizer(diagram: Diagram) -> MeshcatVisualizer:
+    """Get the Meshcat visualizer of a diagram built with `meshcat`, for
+    recording.
+
+    Raises RuntimeError when `diagram` was built without one.
+    """
+    visualizer = diagram.GetSubsystemByName(_MESHCAT_VISUALIZER)
+    assert isinstance(visualizer, MeshcatVisualizer)
+    return visualizer
 
 
 def arm_reference(diagram: Diagram) -> TrajectorySource:
