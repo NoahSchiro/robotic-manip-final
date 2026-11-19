@@ -31,6 +31,7 @@ SPACE = PushSpace(
     ),
     speed_range=(0.03, 0.12),
     duration_range=(0.1, 0.5),
+    max_distance=0.1,
 )
 
 

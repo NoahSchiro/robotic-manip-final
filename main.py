@@ -34,9 +34,10 @@ from src.iiwa import (
     Pusher,
     build_iiwa_pusher_plant,
     make_push_trajectory,
+    transfer_height,
 )
 from src.mpc import GoalTolerance, MpcController, PoseCostWeights, goal_error
-from src.object import Object, Table
+from src.object import Object, Rod, Table
 from src.observation import PushObservation
 from src.params import Eta, GridSpec, make_grid
 from src.path_family import (
@@ -946,7 +947,8 @@ def evaluation_report_command(args: argparse.Namespace) -> str:
 def calibrate_path_family_command(args: argparse.Namespace) -> None:
     """Calibrate the executed-path deviation family from the recorded
     trials and save it for data generation and the environment."""
-    family, residual = calibrate_path_family(args.trials)
+    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.0))
+    family, residual = calibrate_path_family(args.trials, transfer_height(reference))
     save_path_family(args.out, family)
     print(
         f"path family: {family.n_components} components, "

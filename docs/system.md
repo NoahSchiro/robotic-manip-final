@@ -17,21 +17,27 @@ A push is a contact point on one of the T's 8 sides with the side's inward norma
 | Parameter | Range |
 | --- | --- |
 | Contact position | Along each side, inset 1.2 cm from inner corners (the lowered stick clears the other part of the T) and 0.5 cm from outer corners; 45 of 56 cm of outline usable |
-| Speed | 0.03–0.12 m/s |
-| Contact time | 0.1–0.5 s |
+| Speed | 0.03–0.15 m/s |
+| Contact time | 0.1–1.0 s |
+| Push distance (speed × contact time) | at most 0.10 m |
 
-Random pushes are uniform: a side in proportion to its usable length, then position, speed, and time uniformly. A push is reachable when the approach point and the push end lie 0.39–0.78 m from the arm base. The MPC's candidates are a grid: contacts about 1.2 cm apart, 3 speeds, 3 contact times (396 pushes).
+Random pushes are uniform: a side in proportion to its usable length, then position uniformly, and speed and time uniformly over their ranges, redrawn together until their product is within 0.10 m. A push is reachable when the approach point and the push end lie 0.39–0.78 m from the arm base. The MPC's candidates are a grid: contacts about 1.2 cm apart, 3 speeds (0.03, 0.09, 0.15 m/s), and for each speed 3 push distances from speed × 0.1 s up to the smaller of speed × 1.0 s and 0.10 m; each distance sets its contact time (396 pushes).
 
 ## Arm maneuver and timing
 
-From its current posture the arm moves the tip over the standoff point at block top + 4 cm, lowers to the standoff (0.015 m before the contact), pushes at the commanded speed through the contact for the contact time, backs off 0.015 m at the same speed, lifts back to transfer height (0.35 s), and holds (0.1 s). The next push starts from the measured joint positions.
+From its current posture the arm moves the tip over the standoff point at block top + 4 cm, lowers to the standoff (0.015 m before the contact), dwells there at rest for 0.3 s so the lowering's vertical overshoot dies out, pushes at the commanded speed through the contact for the contact time, releases 1 cm back along the normal at 0.05 m/s, and lifts straight up to transfer height, then holds (0.1 s). The next push starts from the measured joint positions.
+
+The transfer over the standoff, the lowering, and the lift are free-space legs. Each lasts at least its nominal duration (0.35 s), longer when its slowest joint would exceed half its velocity limit. The dwell, push, and release keep their nominal durations. The planner's time cost (MPC) uses the nominal durations, since the IK solutions that set the stretched legs are unknown before planning.
 
 | Event | Meaning |
 | --- | --- |
-| Start | Tip at the standoff; start of the recorded tip path and of predictions |
+| Transfer end | End of the transfer over the standoff; lowering begins |
+| Start | Tip at rest at the standoff (end of the dwell); start of the recorded tip path and of predictions |
 | Push end | End of the commanded push segment |
-| Measurement end | `settle_time` (0.1 s) after push end |
-| Action end | Back-off, lift, and hold done; the next decision's state |
+| Measurement end | `settle_time` (0.3 s) after push end |
+| Action end | Release, lift, and hold done; the next decision's state |
+
+The surrogate's nominal tip paths sample this same maneuver from the standoff (push, release, lift, hold) at straight constant-speed legs with nominal durations, so the window's paths match the commanded geometry used by the Drake predictions.
 
 ## Measurement and estimator
 
@@ -49,7 +55,7 @@ A placement episode runs optional random probes, then MPC pushes, on one state a
 
 `V = |r − r_goal|² / l² + λ_yaw · wrap(yaw − yaw_goal)² + w_t · T_maneuver`
 
-with `l = 0.07 m`, `λ_yaw = 1 rad⁻²`, `w_t = 0.005 s⁻¹`. It takes the cheapest candidate the arm can reach that improves on the current pose cost. An episode succeeds within 1 cm and 10° of the goal; otherwise it stops as "stuck" (no improving candidate), "unreachable" (none reachable), or "push budget".
+with `l = 0.07 m`, `λ_yaw = 1 rad⁻²`, `w_t = 0.005 s⁻¹`. It takes the cheapest candidate the arm can reach that improves on the current pose cost. An episode succeeds within 1 cm and 10° of the goal; otherwise it stops as "stuck" (no improving candidate), "unreachable" (none reachable), "push budget", "ik_exhausted" (40 consecutive arm-plan failures), or "out_of_bounds".
 
 ## Surrogate
 

@@ -266,7 +266,7 @@ def run_evaluation(
     write the report.  `predictor` picks the filter's prediction model:
     the Drake plant (gold-standard accuracy), or the surrogate (online
     speed, calibrated to CALIBRATED_R_SURROGATE)."""
-    truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.1, log_period=1e-3)
+    truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.3, log_period=1e-3)
     started = time.perf_counter()
     if random_only:
         if predictor != "drake":

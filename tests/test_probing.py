@@ -206,6 +206,7 @@ def test_random_selector_draws_only_reachable_pushes() -> None:
         ),
         speed_range=(0.03, 0.12),
         duration_range=(0.1, 0.5),
+        max_distance=0.1,
     )
     rng = np.random.default_rng(3)
     selector = random_selector(space, rng)

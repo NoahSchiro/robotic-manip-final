@@ -92,6 +92,29 @@ uv run python main.py demo
 Reports give each episode's parameter errors, reward, push count, and stop
 reason.
 
+### Check the arm motion
+
+```sh
+# Random pushes: transfer clearance, joint speeds, tracking, release
+uv run python -m scripts.diagnose_motion --seed 123 --pushes 2 --out data/motion.json
+# The validation push sets, with a Meshcat replay to open in a browser
+uv run python -m scripts.diagnose_motion --plan scripts/motion_plans/extremes.json --friction 0.1 --out data/extremes_mu01.json --html data/extremes_mu01.html
+uv run python -m scripts.diagnose_motion --plan scripts/motion_plans/stress.json --out data/stress.json
+```
+
+A plan file lists pushes by side index (0–7 counterclockwise around the outline,
+starting with the crossbar's bottom end), position `s` along the side's usable
+span (0–1), speed (m/s), and contact time (s); `--friction` overrides the
+plan's table friction. `scripts/motion_plans/extremes.json` covers the corners
+of the push space (fastest and slowest, shortest and longest, every corner
+inset, cross-T transfers), run at friction 0.1, 0.5, and 0.9;
+`scripts/motion_plans/stress.json` goes beyond the speed and distance limits.
+
+Each push reports its peak joint speed as a fraction of the joint's limit, its
+sideways, along-track, and vertical tracking errors, when the stick clears the
+block after the push and whether it touches it again, and how far the block
+moves after the measurement ends.
+
 ### Data, calibration, and training
 
 | Command | What it does |
@@ -123,7 +146,8 @@ reason.
 | `src/surrogate.py`, `src/surrogate_data.py`, `src/train_surrogate.py`, `src/path_family.py`, `src/dataset_file.py` | Surrogate model, data generation, training, tip-path deviations, dataset files |
 | `src/env.py`, `src/train_ppo.py` | The surrogate-world PPO environment and training |
 | `src/evaluation.py`, `src/evaluation_report.py` | Drake-world evaluation and its report |
-| `scripts/diagnose_motion.py` | Tip clearance, joint speed, and residual-motion check for consecutive pushes |
+| `scripts/diagnose_motion.py` | Motion checks for random or listed pushes: joint speeds, tracking, release, post-measurement motion; optional Meshcat replay |
+| `scripts/motion_plans/` | Push lists for the motion checks (extreme pushes, stress pushes) |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
 
 ## Implementation notes
@@ -131,14 +155,14 @@ reason.
 - **Simulation time.** Pushes run one after another in one continuous
   simulation; nothing resets between them. The simulation clock and the views
   stop while the filter updates or the MPC plans.
-- **Run times.** One truth-simulation push takes about 20 s of wall time. A Drake
-  belief update over all 405 hypotheses takes about 50–115 s, and an MPC
+- **Run times.** One truth-simulation push takes about 20–35 s of wall time. A Drake
+  belief update over all 405 hypotheses takes roughly 1–2 min, and an MPC
   decision about 35–45 s, on 12 workers (`--workers`).
 - **Workspace.** The seed draws start and goal poses within 10 cm of
   (0.55, 0) m. The arm reaches the push height for x between about 0.40 and
   0.75 m, so set wider custom layouts along y.
-- **Recalibration.** After changing the prediction model, the measurement, the
-  hypothesis grid, or the push space, rerun `calibrate` and paste its constant
+- **Recalibration.** After changing the prediction model, the measurement (including
+  `--settle-time`), the hypothesis grid, or the push space, rerun `calibrate` and paste its constant
   into `src/estimator.py`; re-record trials after changing the arm motion or
   the push space.
 - **Likelihood.** `--nu` sets the Student-t likelihood's degrees of freedom

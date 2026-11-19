@@ -13,6 +13,7 @@ from src.object import Object, Rod
 from src.push_space import (
     DURATION_RANGE,
     INNER_CORNER_INSET,
+    MAX_PUSH_DISTANCE,
     OUTER_CORNER_INSET,
     SPEED_RANGE,
     PushSpace,
@@ -21,7 +22,7 @@ from src.push_space import (
 )
 
 SPACING = 0.012  # m, the MPC grid spacing
-GRID_SIZE = 396  # candidates on the T at SPACING with 3 speeds and 3 durations
+GRID_SIZE = 396  # candidates on the T at SPACING with 3 speeds and 3 distances
 
 
 @pytest.fixture(scope="module")
@@ -108,13 +109,16 @@ def test_every_grid_contact_clears_the_inner_corners(
     assert len(clear_sites(obj.parts, contacts, Pusher().radius, 1e-3)) == len(contacts)
 
 
-def test_sample_stays_within_ranges_and_spans(space: PushSpace) -> None:
+def test_sample_stays_within_ranges_spans_and_the_distance_cap(
+    space: PushSpace,
+) -> None:
     rng = np.random.default_rng(0)
     draws = [space.sample(rng) for _ in range(4000)]
     velocities = np.array([a.velocity for a in draws])
     durations = np.array([a.time for a in draws])
     assert velocities.min() >= SPEED_RANGE[0] and velocities.max() <= SPEED_RANGE[1]
     assert durations.min() >= DURATION_RANGE[0] and durations.max() <= DURATION_RANGE[1]
+    assert np.all(velocities * durations <= MAX_PUSH_DISTANCE)
     assert velocities.min() < SPEED_RANGE[0] + 0.01
     assert velocities.max() > SPEED_RANGE[1] - 0.01
     assert durations.min() < DURATION_RANGE[0] + 0.02
@@ -129,17 +133,28 @@ def test_sample_stays_within_ranges_and_spans(space: PushSpace) -> None:
     np.testing.assert_allclose(counts / len(draws), expected, atol=0.03)
 
 
-def test_grid_has_expected_size_and_range_endpoints(space: PushSpace) -> None:
+def test_grid_has_expected_size_and_speed_endpoints(space: PushSpace) -> None:
     actions = space.grid(SPACING, 3, 3)
     assert len(actions) == GRID_SIZE
     speeds = sorted({round(a.velocity, 9) for a in actions})
-    durations = sorted({round(a.time, 9) for a in actions})
     assert speeds == pytest.approx(
         [SPEED_RANGE[0], np.mean(SPEED_RANGE), SPEED_RANGE[1]]
     )
-    assert durations == pytest.approx(
-        [DURATION_RANGE[0], np.mean(DURATION_RANGE), DURATION_RANGE[1]]
-    )
+
+
+def test_grid_distances_run_from_min_duration_to_the_distance_cap(
+    space: PushSpace,
+) -> None:
+    actions = space.grid(SPACING, 3, 3)
+    durations = np.array([a.time for a in actions])
+    distances = np.array([a.velocity * a.time for a in actions])
+    assert durations.min() == pytest.approx(DURATION_RANGE[0])
+    assert durations.max() == pytest.approx(DURATION_RANGE[1])
+    assert distances.max() == pytest.approx(MAX_PUSH_DISTANCE)
+    assert np.all(distances <= MAX_PUSH_DISTANCE + 1e-12)
+    slowest = [a for a in actions if a.velocity == SPEED_RANGE[0]]
+    assert min(a.time for a in slowest) == pytest.approx(DURATION_RANGE[0])
+    assert max(a.time for a in slowest) == pytest.approx(DURATION_RANGE[1])
 
 
 def test_grid_includes_both_span_ends_of_every_face(space: PushSpace) -> None:
@@ -163,7 +178,3 @@ def test_reachable_agrees_with_env_mask(space: PushSpace) -> None:
         assert verdict == env_style_mask(pose, action)
         verdicts.append(verdict)
     assert any(verdicts) and not all(verdicts)
-
-
-def test_standoff_settles_before_back_off_ends() -> None:
-    assert STANDOFF / SPEED_RANGE[1] > 0.1

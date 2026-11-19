@@ -213,7 +213,7 @@ def record_episode(args: argparse.Namespace) -> BeliefRecord:
     )
     obj = episode_object(eta, start_pose, ROD_MASS)
     grid = make_grid(GridSpec(), obj.parts)
-    truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.1, log_period=1e-3)
+    truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.3, log_period=1e-3)
     model_config = PushModelConfig(time_step=2e-3, rod_mass=ROD_MASS)
 
     with ParallelPushModel(args.workers, model_config) as model:

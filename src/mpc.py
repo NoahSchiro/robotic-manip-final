@@ -11,7 +11,7 @@ push the arm can reach, updates the estimator, and replans.
 
 The candidates are a lattice on the push space (push_space.PushSpace.grid):
 contacts along each face inset from its corners, so the lowered stick clears
-the other part of the T, at a grid of speeds and contact times.  A contact
+the other part of the T, at a grid of speeds and push distances.  A contact
 at an inner corner would start the nominal tip path with the stick inside the
 block.
 """

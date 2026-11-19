@@ -27,8 +27,11 @@ from .geometry import (
 )
 from .iiwa import STANDOFF
 
-SPEED_RANGE = (0.03, 0.12)  # m/s, commanded tip speed
-DURATION_RANGE = (0.1, 0.5)  # s, contact time
+# m/s, commanded tip speed.  Above about 0.15 m/s, joints reach their velocity
+# limits at some corners.
+SPEED_RANGE = (0.03, 0.15)
+DURATION_RANGE = (0.1, 1.0)  # s, contact time
+MAX_PUSH_DISTANCE = 0.10  # m, speed times contact time
 # m; the inner inset exceeds the stick radius (0.01 m) plus 1 mm clearance.
 INNER_CORNER_INSET = 0.012
 OUTER_CORNER_INSET = 0.005
@@ -62,11 +65,13 @@ class Face:
 @dataclass(frozen=True)
 class PushSpace:
     """The faces a push may contact and the commanded speed (m/s) and contact
-    time (s) ranges.  Faces are indexed in outline order."""
+    time (s) ranges, with pushes capped at `max_distance` (m) of speed times
+    contact time.  Faces are indexed in outline order."""
 
     faces: tuple[Face, ...]
     speed_range: tuple[float, float]  # m/s
     duration_range: tuple[float, float]  # s
+    max_distance: float  # m
 
     def usable_spans(self) -> np.ndarray:
         """Each face's usable length (m), (F,)."""
@@ -85,30 +90,43 @@ class PushSpace:
 
     def sample(self, rng: np.random.Generator) -> Action:
         """A uniform push: the face is chosen in proportion to its usable span,
-        the position, speed and contact time uniformly over their ranges."""
+        the position uniformly along it.  Speed and contact time are uniform
+        over their ranges, redrawn together until their product is within
+        `max_distance`."""
         spans = self.usable_spans()
         face = int(rng.choice(len(self.faces), p=spans / spans.sum()))
         s = float(rng.uniform())
-        velocity = float(rng.uniform(*self.speed_range))
-        duration = float(rng.uniform(*self.duration_range))
+        while True:
+            velocity = float(rng.uniform(*self.speed_range))
+            duration = float(rng.uniform(*self.duration_range))
+            if velocity * duration <= self.max_distance:
+                break
         return Action(contact=self.contact(face, s), velocity=velocity, time=duration)
 
-    def grid(self, spacing: float, n_speeds: int, n_durations: int) -> list[Action]:
+    def grid(self, spacing: float, n_speeds: int, n_distances: int) -> list[Action]:
         """Every push on a regular lattice: contact positions about `spacing` m
         apart along each usable span, both ends included (at least two per
-        face), and speeds and durations evenly spaced over their ranges, both
-        range endpoints included."""
+        face).  Speeds are evenly spaced over the speed range, both endpoints
+        included.  For each speed, push distances (m) are evenly spaced from
+        speed times the minimum duration to the smaller of speed times the
+        maximum duration and `max_distance`; each push's duration is its
+        distance over the speed."""
         speeds = np.linspace(*self.speed_range, n_speeds)
-        durations = np.linspace(*self.duration_range, n_durations)
+        min_duration, max_duration = self.duration_range
         actions: list[Action] = []
         for face, span in enumerate(self.usable_spans()):
             positions = np.linspace(0.0, 1.0, max(2, round(span / spacing) + 1))
             for s in positions:
                 contact = self.contact(face, float(s))
                 for velocity in speeds:
-                    for duration in durations:
+                    distances = np.linspace(
+                        velocity * min_duration,
+                        min(velocity * max_duration, self.max_distance),
+                        n_distances,
+                    )
+                    for distance in distances:
                         actions.append(
-                            Action(contact, float(velocity), float(duration))
+                            Action(contact, float(velocity), float(distance / velocity))
                         )
         return actions
 
@@ -145,7 +163,10 @@ def make_push_space(
         if face.span > 0.0:
             faces.append(face)
     return PushSpace(
-        faces=tuple(faces), speed_range=SPEED_RANGE, duration_range=DURATION_RANGE
+        faces=tuple(faces),
+        speed_range=SPEED_RANGE,
+        duration_range=DURATION_RANGE,
+        max_distance=MAX_PUSH_DISTANCE,
     )
 
 
