@@ -128,6 +128,18 @@ rod y. It reports how far apart the two predictions are relative to the
 estimator's noise (`CALIBRATED_R`): about 1 or more means one push noticeably
 shifts the belief between them. Planning-only, about 3 minutes on 12 workers.
 
+### Check the prediction model against the truth sim
+
+```sh
+uv run python -m scripts.model_bias --out data/model_bias.npz
+```
+
+Re-predicts every recorded replay push at the true parameters (at the model's
+timestep and at the truth sim's), at the nearest grid hypothesis, and over a
+friction sweep, then prints the mismatch by friction band, the mean residual
+per measurement component, and the friction each trial's pushes favour. About
+12 minutes on 12 workers.
+
 ### Data, calibration, and training
 
 | Command | What it does |
@@ -161,6 +173,7 @@ shifts the belief between them. Planning-only, about 3 minutes on 12 workers.
 | `src/evaluation.py`, `src/evaluation_report.py` | Drake-world evaluation and its report |
 | `scripts/diagnose_motion.py` | Motion checks for random or listed pushes: joint speeds, tracking, release, post-measurement motion; optional Meshcat replay |
 | `scripts/motion_plans/` | Push lists for the motion checks (extreme pushes, stress pushes) |
+| `scripts/model_bias.py` | Prediction model against the truth sim on recorded pushes: mismatch, timestep effect, best-fit friction |
 | `scripts/push_informativeness.py` | How well pushes of each speed and distance separate neighbouring hypotheses |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
 
