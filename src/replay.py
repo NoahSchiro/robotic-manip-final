@@ -9,6 +9,11 @@ hypothesis feeds two filters that differ only in likelihood, the Student-t
 (nu = 3) the estimator ships with and the proposal's Gaussian.  Metrics per
 likelihood, scored against the true parameters:
 
+The report also lists every trial: its true parameters, each push's action
+and how far its measurement lies from the prediction at the true parameters
+(Mahalanobis distance under R, so model mismatch shows apart from weak pushes),
+and each likelihood's final estimate and entropy after every push.
+
 Trials recorded with zero pushes carry no signal (their MAP is an arbitrary
 tie-break), so they are dropped from the metrics and counted in the report.
 """
@@ -23,6 +28,7 @@ import numpy as np
 from .dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
 from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE, GridBayesFilter
 from .object import Object, Rod
+from .observation import PushObservation, planar_error
 from .params import Eta, GridSpec, grid_spans, grid_step, make_grid
 from .surrogate import SurrogatePredictor, load_ensemble
 from .trials import TrialData, load_dataset
@@ -50,10 +56,14 @@ class StepRecord:
 
 @dataclass(frozen=True)
 class TrialTracks:
-    """One trial's per-likelihood step records, prior included."""
+    """One trial's per-likelihood step records, prior included, with each
+    push's observation and its measurement's Mahalanobis distance under R from
+    the prediction at the true parameters."""
 
     eta: Eta
     steps: dict[str, list[StepRecord]]
+    observations: list[PushObservation]
+    true_eta_distance: list[float]
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,7 @@ class ReplayReport:
     hypotheses: int
     metadata: dict[str, float | int | str]
     likelihoods: dict[str, LikelihoodReport]
+    trials: list[dict[str, object]]
 
 
 def nearest_index(grid: list[Eta], eta: Eta) -> int:
@@ -140,13 +151,58 @@ def replay_trial(
         for name, nu in LIKELIHOODS.items()
     }
     steps = {name: [filter_step(belief)] for name, belief in filters.items()}
+    r_inv = np.linalg.inv(r_matrix)
+    distances = []
     for obs in trial.observations:
-        predicted = model.predict(grid, obs)
+        # The true parameters ride along as one extra hypothesis.
+        predicted = model.predict([*grid, trial.eta], obs)
         measured = obs.measured()
+        residual = planar_error(measured, predicted[-1])
+        distances.append(float(np.sqrt(residual @ r_inv @ residual)))
         for name, belief in filters.items():
-            belief.update_from_predictions(measured, predicted)
+            belief.update_from_predictions(measured, predicted[:-1])
             steps[name].append(filter_step(belief))
-    return TrialTracks(eta=trial.eta, steps=steps)
+    return TrialTracks(
+        eta=trial.eta,
+        steps=steps,
+        observations=list(trial.observations),
+        true_eta_distance=distances,
+    )
+
+
+def trial_record(index: int, track: TrialTracks, grid: list[Eta]) -> dict[str, object]:
+    """One trial's entry in the report: truth, pushes, and per-likelihood
+    final estimate.  Units: m, m/s, s; eta as (mu, bx, by)."""
+    pushes = [
+        {
+            "speed_m_per_s": obs.action.velocity,
+            "contact_time_s": obs.action.time,
+            "distance_m": obs.action.velocity * obs.action.time,
+            "contact_position_m": obs.action.contact.position.tolist(),
+            "contact_normal": obs.action.contact.normal.tolist(),
+            "true_eta_mahalanobis": distance,
+        }
+        for obs, distance in zip(
+            track.observations, track.true_eta_distance, strict=True
+        )
+    ]
+    likelihoods = {}
+    for name, steps in track.steps.items():
+        final = final_metrics(steps[-1], grid, track.eta)
+        likelihoods[name] = {
+            "map_eta": grid[steps[-1].map_index].as_array().tolist(),
+            "final_max_p": steps[-1].max_p,
+            "within_one_grid_step": final.within_one_grid_step,
+            "confidently_wrong": final.confidently_wrong,
+            "map_error_scaled": final.map_error_scaled,
+            "entropy_per_step": [step.entropy for step in steps],
+        }
+    return {
+        "trial": index,
+        "eta": track.eta.as_array().tolist(),
+        "pushes": pushes,
+        "likelihoods": likelihoods,
+    }
 
 
 def final_metrics(step: StepRecord, grid: list[Eta], eta: Eta) -> FinalMetrics:
@@ -231,6 +287,7 @@ def build_report(
         likelihoods={
             name: likelihood_report(tracks, grid, name) for name in LIKELIHOODS
         },
+        trials=[trial_record(i, track, grid) for i, track in enumerate(tracks)],
     )
 
 
