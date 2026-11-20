@@ -148,8 +148,8 @@ per measurement component, and the friction each trial's pushes favour. About
 | `record-trials` | Records multi-push trials in the truth simulation to `data/replay_trials.npz` |
 | `replay` | Scores the estimator on recorded trials and writes `data/replay_report.json`; `--save-predictions` caches the grid predictions so `--load-predictions` can rescore them (for example with another `--subcells`) in seconds |
 | `calibrate-path-family` | Fits how the arm's executed tip path deviates from the commanded one, from recorded trials |
-| `gen-surrogate-data` | Generates surrogate training data from the Drake prediction model |
-| `train-surrogate` | Trains the surrogate's MLP ensemble |
+| `gen-surrogate-data` | Generates one shard of surrogate training data from the Drake prediction model, with pushes drawn uniformly from the push space (about 10 samples/s on 12 workers); give each shard its own `--seed` and `--out` |
+| `train-surrogate` | Trains the surrogate's MLP ensemble on one or more shards (`--dataset a.npz b.npz ...`); `--device cuda` trains on the GPU |
 | `train-ppo` | Trains the probing policy in the surrogate world |
 
 ## Code layout

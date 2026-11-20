@@ -51,35 +51,6 @@ def add_shared_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_surrogate_contact_options(parser: argparse.ArgumentParser) -> None:
-    """Add the push-contact options of the surrogate dataset's sampled pushes."""
-    parser.add_argument(
-        "--push-density",
-        type=float,
-        default=2.0,
-        help="push-contact density: surface normals per cm of object outline",
-    )
-    parser.add_argument(
-        "--site-clearance",
-        type=float,
-        default=1e-3,
-        help="gap the lowered stick must leave to the block at a push site (m)",
-    )
-
-
-def finish_surrogate_contact_options(args: argparse.Namespace) -> None:
-    """Validate the push-contact options in `args`, converting --push-density
-    from count/cm to count/m in place.
-
-    Raises SystemExit when an option is out of range.
-    """
-    if args.push_density <= 0.0:
-        raise SystemExit("--push-density must be positive")
-    if args.site_clearance < 0.0:
-        raise SystemExit("--site-clearance must be nonnegative")
-    args.push_density *= 100  # count/cm -> count/m
-
-
 def finish_shared_options(args: argparse.Namespace) -> None:
     """Validate the shared options in `args`.
 

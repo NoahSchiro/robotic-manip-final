@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from src.action import Action
+from src.dynamics import DrakePushModel, PushModelConfig
 from src.geometry import SurfaceNormal
 from src.iiwa import (
     HOLD_TIME,
@@ -16,9 +17,16 @@ from src.iiwa import (
     transfer_height,
 )
 from src.object import Object, Rod
-from src.surrogate import nominal_action_tip_path, nominal_tip_path
-from src.surrogate_data import assign_split
-from src.train_surrogate import dataset_arrays, world_frame_errors
+from src.path_family import PathFamily
+from src.surrogate import PATH_SAMPLES, nominal_action_tip_path, nominal_tip_path
+from src.surrogate_data import (
+    assign_split,
+    coverage_summary,
+    make_surrogate_setup,
+    stack_samples,
+    surrogate_sample,
+)
+from src.train_surrogate import dataset_arrays, shard_arrays, world_frame_errors
 
 
 def sample_arrays(seeds: np.ndarray) -> dict[str, np.ndarray]:
@@ -130,3 +138,42 @@ def test_training_residuals_rotate_from_start_frame_to_world() -> None:
     residual = np.array([[1.0, 0.0, 0.0, 2.0, 0.0, 0.0]])
     world = world_frame_errors(residual, np.zeros((1, 6)), np.array([np.pi / 2]))
     assert world[0] == pytest.approx([0.0, 1.0, 0.0, 0.0, 2.0, 0.0])
+
+
+def zero_family() -> PathFamily:
+    return PathFamily(
+        mean=np.zeros((2, PATH_SAMPLES)),
+        components=np.zeros((1, 2, PATH_SAMPLES)),
+        sigmas=np.zeros(1),
+    )
+
+
+def test_samples_are_drawn_from_the_push_space() -> None:
+    setup = make_surrogate_setup(
+        rod_mass=0.2,
+        settle_time=0.3,
+        family=zero_family(),
+        model=PushModelConfig(time_step=2e-3, rod_mass=0.2),
+    )
+    model = DrakePushModel(setup.model)
+    space = setup.push_space
+    samples = [surrogate_sample(seed, setup, model) for seed in (3, 4)]
+    for sample in samples:
+        speed, time = float(sample["speed"]), float(sample["time"])
+        assert space.speed_range[0] <= speed <= space.speed_range[1]
+        assert space.duration_range[0] <= time <= space.duration_range[1]
+        assert speed * time <= space.max_distance + 1e-12
+        assert np.isfinite(sample["displacement"]).all()
+    dataset = stack_samples(samples)
+    assert "samples per push speed" in coverage_summary(dataset, setup)
+
+
+def test_shards_concatenate_and_drop_repeated_seeds(tmp_path: Path) -> None:
+    first, second = tmp_path / "a.npz", tmp_path / "b.npz"
+    np.savez(first, allow_pickle=False, **sample_arrays(np.arange(10, dtype=np.uint64)))
+    np.savez(
+        second, allow_pickle=False, **sample_arrays(np.arange(5, 20, dtype=np.uint64))
+    )
+    x, y, split = shard_arrays([first, second])
+    assert len(x) == len(y) == len(split) == 20
+    assert np.bincount(split, minlength=3).tolist() == [16, 2, 2]

@@ -13,6 +13,8 @@ against both the Drake and historical surrogate residual scales. It does
 not score or select on the held-out split.
 """
 
+import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -106,6 +108,34 @@ def dataset_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         return inputs, outputs, split
 
 
+def shard_arrays(paths: Sequence[Path]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load and concatenate dataset shards (see dataset_arrays).  A sample
+    seed drawn by two shards gives the same sample twice; only its first
+    row is kept, so no sample counts double."""
+    inputs, outputs, splits, seeds = [], [], [], []
+    for path in paths:
+        x, y, split = dataset_arrays(path)
+        with np.load(path, allow_pickle=True) as data:
+            seeds.append(
+                data["sample_seed"].astype(np.uint64)
+                if "sample_seed" in data
+                else np.full(len(x), np.iinfo(np.uint64).max, dtype=np.uint64)
+            )
+        inputs.append(x)
+        outputs.append(y)
+        splits.append(split)
+    all_seeds = np.concatenate(seeds)
+    _, first = np.unique(all_seeds, return_index=True)
+    keep = np.zeros(len(all_seeds), dtype=bool)
+    keep[first] = True
+    keep |= all_seeds == np.iinfo(np.uint64).max  # schema-1 rows carry no seed
+    return (
+        np.concatenate(inputs)[keep],
+        np.concatenate(outputs)[keep],
+        np.concatenate(splits)[keep],
+    )
+
+
 def loss_weights(output_std: np.ndarray) -> np.ndarray:
     """Get per-output loss weights that make the standardized MSE measure
     what the acceptance gate measures: each component's raw error against
@@ -126,8 +156,11 @@ def train_member(
     hidden: int = 512,
     layers: int = 3,
 ) -> tuple[MLPWeights, float]:
-    """Train one member, returning its best weights (by validation loss)
-    and that loss.  Weights come back as float64 numpy for numpy inference."""
+    """Train one member on the device its tensors live on, returning its
+    best weights (by validation loss) and that loss.  Weights come back as
+    float64 numpy for numpy inference."""
+    device = x_train.device
+    torch.manual_seed(seed)
     generator = torch.Generator().manual_seed(seed)
     hidden_layers: list[nn.Module] = []
     for _ in range(layers):
@@ -135,7 +168,7 @@ def train_member(
             nn.Linear(N_INPUTS if not hidden_layers else hidden, hidden),
             nn.ReLU(),
         ]
-    model = nn.Sequential(*hidden_layers, nn.Linear(hidden, N_OUTPUTS))
+    model = nn.Sequential(*hidden_layers, nn.Linear(hidden, N_OUTPUTS)).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=epochs, eta_min=1e-5
@@ -148,7 +181,7 @@ def train_member(
     best_state: dict[str, torch.Tensor] | None = None
     stale = 0
     for _epoch in range(epochs):
-        order = torch.randperm(len(x_train), generator=generator)
+        order = torch.randperm(len(x_train), generator=generator).to(device)
         for start in range(0, len(order), BATCH_SIZE):
             batch = order[start : start + BATCH_SIZE]
             optimizer.zero_grad()
@@ -176,8 +209,8 @@ def train_member(
         linear = cast_linear(model[i])
         extracted.append(
             (
-                linear.weight.detach().numpy().astype(np.float64),
-                linear.bias.detach().numpy().astype(np.float64),
+                linear.weight.detach().cpu().numpy().astype(np.float64),
+                linear.bias.detach().cpu().numpy().astype(np.float64),
             )
         )
     return tuple(extracted), best_loss
@@ -243,7 +276,7 @@ def _train_member_worker(
 
 
 def train_ensemble(
-    dataset_path: Path,
+    dataset_paths: Sequence[Path],
     out_path: Path,
     members: int,
     epochs: int,
@@ -251,10 +284,14 @@ def train_ensemble(
     seed: int,
     hidden: int = 512,
     layers: int = 3,
+    device: str = "cpu",
 ) -> str:
-    """Train the ensemble on the dataset, save it, and return the summary:
-    validation RMSE against the estimator's tolerated prediction error."""
-    x, y, split = dataset_arrays(dataset_path)
+    """Train the ensemble on the dataset shards, save it, and return the
+    summary: validation RMSE against the estimator's tolerated prediction
+    error.  On "cpu" the members train in parallel processes, one thread
+    each; on "cuda" they train one after another on the GPU."""
+    x, y, split = shard_arrays(dataset_paths)
+    print(f"{len(x)} samples from {len(dataset_paths)} shard(s)", flush=True)
     train, val = split == 0, split == 1
     input_mean, input_std = x[train].mean(axis=0), x[train].std(axis=0)
     output_mean, output_std = y[train].mean(axis=0), y[train].std(axis=0)
@@ -285,12 +322,36 @@ def train_ensemble(
         for i in range(members)
     ]
     weights = []
-    with ProcessPoolExecutor(members) as pool:
-        for i, (member_weights, best_loss) in enumerate(
-            pool.map(_train_member_worker, *zip(*member_args))
-        ):
+    if device == "cpu":
+        with ProcessPoolExecutor(members) as pool:
+            results = pool.map(_train_member_worker, *zip(*member_args))
+            for i, (member_weights, best_loss) in enumerate(results):
+                weights.append(member_weights)
+                print(f"member {i}: best weighted val MSE {best_loss:.6f}", flush=True)
+    else:
+        if not torch.cuda.is_available():
+            raise SystemExit(f"--device {device}: torch sees no CUDA device")
+        x_tr, y_tr, x_v, y_v, lw = (
+            torch.tensor(a, dtype=torch.float32, device=device)
+            for a in (
+                x_train_np,
+                y_train_np,
+                x_val_np,
+                y_val_np,
+                loss_weights(output_std),
+            )
+        )
+        for i in range(members):
+            started = time.time()
+            member_weights, best_loss = train_member(
+                seed + i, x_tr, y_tr, x_v, y_v, lw, epochs, patience, hidden, layers
+            )
             weights.append(member_weights)
-            print(f"member {i}: best weighted val MSE {best_loss:.6f}", flush=True)
+            print(
+                f"member {i}: best weighted val MSE {best_loss:.6f} "
+                f"({time.time() - started:.0f} s)",
+                flush=True,
+            )
 
     ensemble = SurrogateEnsemble(
         input_mean=input_mean,

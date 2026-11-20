@@ -7,8 +7,8 @@ Dataset schema (one .npz):
   ~1e-9 m/s seeded noise (see above)
 - site_position, site_normal: (N, 3) contact point and inward normal in
   the object's body frame
-- site_index: (N,) index into the setup's clear sites
-- speed, time: (N,) commanded push speed (m/s) and contact time (s)
+- speed, time: (N,) commanded push speed (m/s) and contact time (s); each
+  push is a uniform draw from the push space (push_space.PushSpace.sample)
 - tip_path: (N, 3, PATH_SAMPLES) executed tip positions at uniform window
   times, world frame — the surrogate's path conditioning
 - action_tip_path: (N, 3, PATH_SAMPLES) constructed tip positions through
@@ -33,17 +33,18 @@ from dataclasses import dataclass
 import numpy as np
 from pydrake.all import SpatialVelocity
 
-from .action import Action
 from .dynamics import DrakePushModel, PushModelConfig
-from .geometry import SurfaceNormal, SurfacePart
-from .iiwa import Pusher, clear_sites, transfer_height
+from .geometry import SurfacePart
+from .iiwa import transfer_height
 from .object import Object, Rod
 from .observation import ObjectState, wrap_angle
 from .params import GridSpec, sample_eta
 from .path_family import PathFamily, perturb_tip_positions
+from .push_space import PushSpace, make_push_space
 from .surrogate import nominal_action_tip_path, path_downsample
 
 MU_DECADES = 10  # coverage bins along the friction range
+COVERAGE_BINS = 3  # coverage bins along push speed and push distance
 SPLIT_MODULUS = 10
 
 
@@ -53,10 +54,8 @@ class SurrogateSetup:
 
     spec: GridSpec
     parts: list[SurfacePart]
-    sites: list[SurfaceNormal]
+    push_space: PushSpace
     rod_mass: float
-    speeds: tuple[float, ...]
-    times: tuple[float, ...]
     settle_time: float
     family: PathFamily
     model: PushModelConfig
@@ -64,31 +63,19 @@ class SurrogateSetup:
 
 def make_surrogate_setup(
     rod_mass: float,
-    push_density: float,
-    site_clearance: float,
     settle_time: float,
     family: PathFamily,
     model: PushModelConfig,
-    speeds: tuple[float, ...] = (0.05, 0.1),
-    times: tuple[float, ...] = (0.2, 0.4),
 ) -> SurrogateSetup:
     """Collect what every surrogate sample shares.  The footprint, and with
-    it the push library, is the same for every eta."""
-    spec = GridSpec()
+    it the push space, is the same for every eta."""
     reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
     return SurrogateSetup(
-        spec=spec,
+        spec=GridSpec(),
         parts=reference.parts,
+        push_space=make_push_space(reference.parts, reference.height),
         family=family,
-        sites=clear_sites(
-            reference.parts,
-            reference.surface_normals(push_density),
-            Pusher().radius,
-            site_clearance,
-        ),
         rod_mass=rod_mass,
-        speeds=speeds,
-        times=times,
         settle_time=settle_time,
         model=model,
     )
@@ -101,12 +88,7 @@ def surrogate_sample(
     rng = np.random.default_rng(seed)
     eta = sample_eta(rng, setup.spec, setup.parts)
     obj = eta.to_object(rng, setup.rod_mass)
-    site_index = int(rng.integers(len(setup.sites)))
-    action = Action(
-        contact=setup.sites[site_index],
-        velocity=float(rng.choice(setup.speeds)),
-        time=float(rng.choice(setup.times)),
-    )
+    action = setup.push_space.sample(rng)
     # An exactly-zero start velocity is a degenerate contact state the
     # discrete solver rejects; the truth sim's states always carry ~1e-10
     # of numerical dust, so match that here.
@@ -156,7 +138,6 @@ def surrogate_sample(
         ),
         "site_position": action.contact.position,
         "site_normal": action.contact.normal,
-        "site_index": np.array(site_index, dtype=int),
         "speed": np.array(action.velocity),
         "time": np.array(action.time),
         "tip_path": path_downsample(window_tip_times, window_tip_positions),
@@ -225,24 +206,36 @@ def check_finite(dataset: dict[str, np.ndarray]) -> None:
 
 
 def coverage_summary(dataset: dict[str, np.ndarray], setup: SurrogateSetup) -> str:
-    """Render per-cell counts over speeds, contact times, friction decades
-    and sites."""
-    cell_count = len(setup.sites) * len(setup.speeds) * len(setup.times)
-    header = (
-        f"sites {len(setup.sites)} x speeds {len(setup.speeds)} "
-        f"x times {len(setup.times)} = {cell_count} cells"
+    """Render sample counts over push speed x push distance bins and over
+    friction decades."""
+    space = setup.push_space
+    distance = dataset["speed"] * dataset["time"]
+    min_distance = space.speed_range[0] * space.duration_range[0]
+    speed_edges = np.linspace(*space.speed_range, COVERAGE_BINS + 1)
+    distance_edges = np.linspace(min_distance, space.max_distance, COVERAGE_BINS + 1)
+    speed_bin = np.clip(
+        np.digitize(dataset["speed"], speed_edges) - 1, 0, COVERAGE_BINS - 1
     )
-    lines = [header]
-    for speed in setup.speeds:
-        for time in setup.times:
-            in_cell = (dataset["speed"] == speed) & (dataset["time"] == time)
-            per_site = np.bincount(
-                dataset["site_index"][in_cell], minlength=len(setup.sites)
-            )
-            lines.append(
-                f"speed {speed:.2f} time {time:.1f}: {int(in_cell.sum())} samples, "
-                f"{int((per_site == 0).sum())} empty sites, min per site {int(per_site.min())}"
-            )
+    distance_bin = np.clip(
+        np.digitize(distance, distance_edges) - 1, 0, COVERAGE_BINS - 1
+    )
+    lines = ["samples per push speed (rows, m/s) x push distance (columns, m):"]
+    lines.append(
+        " " * 14
+        + "".join(
+            f"{distance_edges[j]:.3f}-{distance_edges[j + 1]:.3f}  "
+            for j in range(COVERAGE_BINS)
+        )
+    )
+    for i in range(COVERAGE_BINS):
+        counts = [
+            int(((speed_bin == i) & (distance_bin == j)).sum())
+            for j in range(COVERAGE_BINS)
+        ]
+        lines.append(
+            f"{speed_edges[i]:.3f}-{speed_edges[i + 1]:.3f}  "
+            + "".join(f"{c:>13d}  " for c in counts)
+        )
     decade_width = (setup.spec.mu_range[1] - setup.spec.mu_range[0]) / MU_DECADES
     decades = np.minimum(
         np.floor((dataset["eta"][:, 0] - setup.spec.mu_range[0]) / decade_width).astype(

@@ -13,9 +13,7 @@ from src.belief_view import BeliefDashboard, show_belief
 from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
-    add_surrogate_contact_options,
     finish_shared_options,
-    finish_surrogate_contact_options,
     push_model_config,
     truth_sim_config,
 )
@@ -184,11 +182,15 @@ def parse_args() -> argparse.Namespace:
         parents=[shared],
         help="generate the surrogate's training dataset (Drake-predicted pushes)",
     )
-    add_surrogate_contact_options(surrogate_parser)
     surrogate_parser.add_argument(
-        "--samples", type=int, default=300000, help="samples to generate"
+        "--samples", type=int, default=10000, help="samples to generate"
     )
-    surrogate_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
+    surrogate_parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="PRNG seed; give each shard its own so their samples are independent",
+    )
     surrogate_parser.add_argument(
         "--path-family",
         type=Path,
@@ -198,8 +200,8 @@ def parse_args() -> argparse.Namespace:
     surrogate_parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/surrogate_dataset.npz"),
-        help="dataset output path",
+        default=Path("data/surrogate/shard_0.npz"),
+        help="dataset (shard) output path",
     )
 
     train_parser = commands.add_parser(
@@ -222,10 +224,17 @@ def parse_args() -> argparse.Namespace:
     )
     train_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
     train_parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="cpu: members in parallel processes; cuda: members in turn on the GPU",
+    )
+    train_parser.add_argument(
         "--dataset",
         type=Path,
-        default=Path("data/surrogate_dataset.npz"),
-        help="training dataset from gen-surrogate-data",
+        nargs="+",
+        default=[Path("data/surrogate/shard_0.npz")],
+        help="one or more dataset shards from gen-surrogate-data",
     )
     train_parser.add_argument(
         "--out",
@@ -562,10 +571,8 @@ def parse_args() -> argparse.Namespace:
             raise SystemExit("--policy ppo requires --estimate")
     if args.command == "record-trials" and (args.trials < 1 or args.pushes < 1):
         raise SystemExit("--trials and --pushes must be at least 1")
-    if args.command == "gen-surrogate-data":
-        finish_surrogate_contact_options(args)
-        if args.samples < 1:
-            raise SystemExit("--samples must be at least 1")
+    if args.command == "gen-surrogate-data" and args.samples < 1:
+        raise SystemExit("--samples must be at least 1")
     if args.command == "train-surrogate" and (
         args.members < 1 or args.epochs < 1 or args.patience < 1
     ):
@@ -902,8 +909,6 @@ def generate_surrogate_data_command(args: argparse.Namespace) -> None:
     action) tuples replayed through the Drake prediction model."""
     setup = make_surrogate_setup(
         rod_mass=args.rod_mass,
-        push_density=args.push_density,
-        site_clearance=args.site_clearance,
         settle_time=args.settle_time,
         family=load_path_family(args.path_family),
         model=push_model_config(args),
@@ -921,8 +926,11 @@ def generate_surrogate_data_command(args: argparse.Namespace) -> None:
             "seed": args.seed,
             "samples": args.samples,
             "rod_mass": args.rod_mass,
-            "push_density": args.push_density,
-            "site_clearance": args.site_clearance,
+            "speed_min": setup.push_space.speed_range[0],
+            "speed_max": setup.push_space.speed_range[1],
+            "duration_min": setup.push_space.duration_range[0],
+            "duration_max": setup.push_space.duration_range[1],
+            "max_push_distance": setup.push_space.max_distance,
             "model_time_step": push_model_config(args).time_step,
             "settle_time": args.settle_time,
             "sample_period": SAMPLE_PERIOD,
@@ -940,7 +948,7 @@ def train_surrogate_command(args: argparse.Namespace) -> None:
     against the estimator's tolerated prediction error."""
     print(
         train_ensemble(
-            dataset_path=args.dataset,
+            dataset_paths=args.dataset,
             out_path=args.out,
             members=args.members,
             epochs=args.epochs,
@@ -948,6 +956,7 @@ def train_surrogate_command(args: argparse.Namespace) -> None:
             seed=args.seed,
             hidden=args.hidden,
             layers=args.layers,
+            device=args.device,
         )
     )
 
