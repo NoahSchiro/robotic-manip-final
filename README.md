@@ -115,6 +115,19 @@ sideways, along-track, and vertical tracking errors, when the stick clears the
 block after the push and whether it touches it again, and how far the block
 moves after the measurement ends.
 
+### Compare how informative pushes are
+
+```sh
+uv run python -m scripts.push_informativeness --out data/push_informativeness.json
+```
+
+For every contact on the MPC grid, at matched push distances (1.5, 4.5, and
+9 cm) and several speeds, this predicts the estimator's measurement under a
+hypothesis and under its neighbour one grid step away in friction, rod x, or
+rod y. It reports how far apart the two predictions are relative to the
+estimator's noise (`CALIBRATED_R`): about 1 or more means one push noticeably
+shifts the belief between them. Planning-only, about 3 minutes on 12 workers.
+
 ### Data, calibration, and training
 
 | Command | What it does |
@@ -148,6 +161,7 @@ moves after the measurement ends.
 | `src/evaluation.py`, `src/evaluation_report.py` | Drake-world evaluation and its report |
 | `scripts/diagnose_motion.py` | Motion checks for random or listed pushes: joint speeds, tracking, release, post-measurement motion; optional Meshcat replay |
 | `scripts/motion_plans/` | Push lists for the motion checks (extreme pushes, stress pushes) |
+| `scripts/push_informativeness.py` | How well pushes of each speed and distance separate neighbouring hypotheses |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
 
 ## Implementation notes
