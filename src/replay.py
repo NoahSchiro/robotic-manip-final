@@ -26,7 +26,12 @@ from pathlib import Path
 import numpy as np
 
 from .dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
-from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE, GridBayesFilter
+from .estimator import (
+    BELIEF_SMOOTHING,
+    CALIBRATED_R,
+    CALIBRATED_R_SURROGATE,
+    GridBayesFilter,
+)
 from .object import Object, Rod
 from .observation import PushObservation, planar_error
 from .params import Eta, GridSpec, grid_spans, grid_step, make_grid
@@ -138,24 +143,41 @@ def filter_step(belief: GridBayesFilter) -> StepRecord:
     )
 
 
+class PredictionsSupplied:
+    """Stands in for the filter's model in replay, which passes every
+    push's predictions in directly."""
+
+    def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
+        raise RuntimeError("replay supplies predictions; the filter never predicts")
+
+
+def predict_trial(
+    trial: TrialData, grid: list[Eta], model: DynamicsModel
+) -> np.ndarray:
+    """Predict each push of `trial` under every grid hypothesis and, last,
+    under the true parameters: (pushes, len(grid) + 1, 6)."""
+    return np.array(
+        [model.predict([*grid, trial.eta], obs) for obs in trial.observations]
+    ).reshape(len(trial.observations), len(grid) + 1, 6)
+
+
 def replay_trial(
     trial: TrialData,
     grid: list[Eta],
-    model: DynamicsModel,
+    predictions: np.ndarray,
     r_matrix: np.ndarray,
+    smoothing: float = BELIEF_SMOOTHING,
 ) -> TrialTracks:
-    """Replay one trial's pushes through one filter per likelihood, sharing
-    each push's single prediction pass between them."""
+    """Replay one trial's pushes through one filter per likelihood, from
+    `predictions` (see predict_trial)."""
     filters = {
-        name: GridBayesFilter(grid, model, r_matrix, nu)
+        name: GridBayesFilter(grid, PredictionsSupplied(), r_matrix, nu, smoothing)
         for name, nu in LIKELIHOODS.items()
     }
     steps = {name: [filter_step(belief)] for name, belief in filters.items()}
     r_inv = np.linalg.inv(r_matrix)
     distances = []
-    for obs in trial.observations:
-        # The true parameters ride along as one extra hypothesis.
-        predicted = model.predict([*grid, trial.eta], obs)
+    for obs, predicted in zip(trial.observations, predictions, strict=True):
         measured = obs.measured()
         residual = planar_error(measured, predicted[-1])
         distances.append(float(np.sqrt(residual @ r_inv @ residual)))
@@ -168,6 +190,35 @@ def replay_trial(
         observations=list(trial.observations),
         true_eta_distance=distances,
     )
+
+
+def save_predictions(
+    path: Path, predictions: Sequence[np.ndarray], grid: list[Eta], predictor: str
+) -> None:
+    """Write every scored trial's predictions (see predict_trial) with the
+    grid they were made on."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        predictions=np.concatenate(predictions),
+        pushes_per_trial=np.array([len(p) for p in predictions]),
+        grid=np.array([g.as_array() for g in grid]),
+        predictor=np.array(predictor),
+    )
+
+
+def load_predictions(
+    path: Path, trials: Sequence[TrialData], grid: list[Eta]
+) -> list[np.ndarray]:
+    """Read predictions saved by save_predictions, checking they match
+    `trials` and `grid`."""
+    with np.load(path) as data:
+        if not np.allclose(data["grid"], [g.as_array() for g in grid]):
+            raise ValueError(f"{path} was predicted on a different grid")
+        counts = data["pushes_per_trial"]
+        if counts.tolist() != [len(t.observations) for t in trials]:
+            raise ValueError(f"{path} does not match the trials' push counts")
+        return np.split(data["predictions"], np.cumsum(counts)[:-1])
 
 
 def trial_record(index: int, track: TrialTracks, grid: list[Eta]) -> dict[str, object]:
@@ -326,35 +377,53 @@ def run_replay(
     report_path: Path,
     predictor: str = "drake",
     ensemble_path: Path | None = None,
+    smoothing: float = BELIEF_SMOOTHING,
+    predictions_out: Path | None = None,
+    predictions_in: Path | None = None,
 ) -> None:
     """Replay the recorded trials and write the report JSON next to a
     printed summary.  `predictor` picks the filter's prediction model: the
-    Drake plant, or the trained surrogate."""
+    Drake plant, or the trained surrogate.  `predictions_in` replays saved
+    predictions instead of predicting; `predictions_out` saves them."""
     trials, metadata = load_dataset(trials_path)
     scored = [trial for trial in trials if trial.observations]
     rod_mass = float(metadata["rod_mass"])
     grid = make_grid(
         GridSpec(), Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass)).parts
     )
+    source = (
+        f"saved predictions {predictions_in}"
+        if predictions_in
+        else f"the {predictor} predictor"
+    )
     print(
         f"replaying {len(scored)}/{len(trials)} trials over {len(grid)} "
-        f"hypotheses with the {predictor} predictor"
+        f"hypotheses with {source}, smoothing {smoothing:g}"
     )
     r_matrix = CALIBRATED_R_SURROGATE if predictor == "surrogate" else CALIBRATED_R
-    if predictor == "surrogate":
+    if predictions_in is not None:
+        predictions = load_predictions(predictions_in, scored, grid)
+    elif predictor == "surrogate":
         assert ensemble_path is not None
         model: DynamicsModel = SurrogatePredictor(load_ensemble(ensemble_path))
-        tracks = [replay_trial(trial, grid, model, r_matrix) for trial in scored]
+        predictions = [predict_trial(trial, grid, model) for trial in scored]
     else:
         model_config = PushModelConfig(
             time_step=float(metadata["model_time_step"]), rod_mass=rod_mass
         )
-        with ParallelPushModel(workers, model_config) as model:
-            tracks = [replay_trial(trial, grid, model, r_matrix) for trial in scored]
+        with ParallelPushModel(workers, model_config) as parallel:
+            predictions = [predict_trial(trial, grid, parallel) for trial in scored]
+    if predictions_out is not None:
+        save_predictions(predictions_out, predictions, grid, predictor)
+        print(f"wrote {predictions_out}")
+    tracks = [
+        replay_trial(trial, grid, predicted, r_matrix, smoothing)
+        for trial, predicted in zip(scored, predictions, strict=True)
+    ]
     report = build_report(
         tracks,
         grid,
-        {**metadata, "predictor": predictor},
+        {**metadata, "predictor": predictor, "smoothing": smoothing},
         dropped_empty=len(trials) - len(scored),
     )
     print(format_report(report))

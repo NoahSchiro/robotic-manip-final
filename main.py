@@ -27,7 +27,7 @@ from src.env import (
     make_probing_env_config,
 )
 from src.episode import EpisodeResult, run_episode
-from src.estimator import CALIBRATED_R, GridBayesFilter
+from src.estimator import BELIEF_SMOOTHING, CALIBRATED_R, GridBayesFilter
 from src.evaluation import run_evaluation
 from src.iiwa import (
     Q_HOME,
@@ -155,6 +155,23 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/surrogate_ensemble.npz"),
         help="trained surrogate ensemble (--predictor surrogate)",
+    )
+    replay_parser.add_argument(
+        "--smoothing",
+        type=float,
+        default=BELIEF_SMOOTHING,
+        help="share of each hypothesis's probability passed to its grid "
+        "neighbours after every update",
+    )
+    replay_parser.add_argument(
+        "--save-predictions",
+        type=Path,
+        help="save every push's grid predictions here for later replays",
+    )
+    replay_parser.add_argument(
+        "--load-predictions",
+        type=Path,
+        help="replay predictions saved by --save-predictions instead of predicting",
     )
 
     surrogate_parser = commands.add_parser(
@@ -1017,6 +1034,9 @@ def main(args: argparse.Namespace) -> None:
             report_path=args.report,
             predictor=args.predictor,
             ensemble_path=args.ensemble,
+            smoothing=args.smoothing,
+            predictions_out=args.save_predictions,
+            predictions_in=args.load_predictions,
         )
     elif args.command == "gen-surrogate-data":
         generate_surrogate_data_command(args)
