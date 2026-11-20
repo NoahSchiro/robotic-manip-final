@@ -10,6 +10,8 @@ one push noticeably shifts the belief between them.  Planning-only; no truth
 simulation.
 
     uv run python -m scripts.push_informativeness --out data/push_informativeness.json
+    # Plot saved results without re-simulating
+    uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures/push_informativeness.png
 """
 
 import argparse
@@ -164,16 +166,125 @@ def run(workers: int) -> list[Separation]:
     return rows
 
 
+DISTANCE_COLORS = ("#86b6ef", "#3987e5", "#0d366b")  # short to long pushes
+PARAMETER_TITLES = {
+    "mu": "Friction (one step: 0.1)",
+    "rod_x": "Rod x (one step: 1.65 cm)",
+    "rod_y": "Rod y (one step: 1.65 cm)",
+}
+
+
+def plot(rows: Sequence[Separation], out: Path) -> None:
+    """Median separation against push speed, one panel per parameter, one
+    line per push distance; solid at the low base friction, dashed at the
+    high one."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from matplotlib.lines import Line2D
+
+    figure = Figure(figsize=(12, 4.2), facecolor="#fcfcfb")
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(1, len(PARAMETER_TITLES), sharey=True)
+    distances = sorted({row.distance_m for row in rows})
+    base_mus = sorted({row.base_mu for row in rows})
+    styles = dict(zip(base_mus, ("-", "--"), strict=False))
+    top = max(row.median for row in rows) * 1.12
+    for ax, (parameter, title) in zip(axes, PARAMETER_TITLES.items(), strict=True):
+        for distance, color in zip(distances, DISTANCE_COLORS, strict=False):
+            for base_mu in base_mus:
+                line = sorted(
+                    (r.speed_m_per_s, r.median)
+                    for r in rows
+                    if r.parameter == parameter
+                    and r.distance_m == distance
+                    and r.base_mu == base_mu
+                )
+                speeds, medians = zip(*line, strict=True)
+                ax.plot(
+                    np.array(speeds) * 100,
+                    medians,
+                    styles[base_mu],
+                    color=color,
+                    lw=2,
+                    marker="o",
+                    ms=6,
+                    markeredgecolor="#fcfcfb",
+                )
+        ax.axhline(1.0, color="#898781", lw=1, ls=":")
+        ax.set_title(title, fontsize=11, loc="left", color="#0b0b0b")
+        ax.set_xlabel("push speed (cm/s)")
+        ax.set_xlim(2, 16)
+        ax.set_ylim(0, top)
+        ax.set_facecolor("#fcfcfb")
+        ax.grid(axis="y", color="#e1e0d9", lw=0.8)
+        ax.set_axisbelow(True)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+    axes[0].set_ylabel(
+        "separation of neighbouring hypotheses\n(median over contacts, in units of R)"
+    )
+    handles = (
+        [
+            Line2D([], [], color=c, lw=2, marker="o", label=f"{d * 100:g} cm push")
+            for d, c in zip(distances, DISTANCE_COLORS, strict=False)
+        ]
+        + [
+            Line2D(
+                [],
+                [],
+                color="#52514e",
+                lw=2,
+                ls=styles[m],
+                label=f"true friction near {m:g}",
+            )
+            for m in base_mus
+        ]
+        + [
+            Line2D(
+                [],
+                [],
+                color="#898781",
+                lw=1,
+                ls=":",
+                label="1 = noticeable in one push",
+            )
+        ]
+    )
+    figure.legend(
+        handles=handles,
+        loc="lower center",
+        ncol=len(handles),
+        frameon=False,
+        fontsize=9,
+    )
+    figure.suptitle(
+        "How much one push tells the estimator: fast pushes reveal friction (if it is low), long pushes reveal the rod",
+        fontsize=12,
+    )
+    figure.tight_layout(rect=(0, 0.08, 1, 0.95))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(out, dpi=150)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument(
         "--out", type=Path, default=Path("data/push_informativeness.json")
     )
+    parser.add_argument(
+        "--from-json", type=Path, help="reuse saved results instead of simulating"
+    )
+    parser.add_argument("--plot", type=Path, help="also save the figure here")
     args = parser.parse_args()
-    rows = run(args.workers)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps([asdict(row) for row in rows], indent=1) + "\n")
+    if args.from_json is not None:
+        rows = [Separation(**row) for row in json.loads(args.from_json.read_text())]
+    else:
+        rows = run(args.workers)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps([asdict(row) for row in rows], indent=1) + "\n")
+    if args.plot is not None:
+        plot(rows, args.plot)
     for row in rows:
         print(
             f"mu {row.base_mu:.1f} {row.parameter:6} {row.distance_m * 100:4.1f} cm "

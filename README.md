@@ -119,6 +119,8 @@ moves after the measurement ends.
 
 ```sh
 uv run python -m scripts.push_informativeness --out data/push_informativeness.json
+# Plot saved results without re-simulating
+uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures/push_informativeness.png
 ```
 
 For every contact on the MPC grid, at matched push distances (1.5, 4.5, and
