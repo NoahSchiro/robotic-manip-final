@@ -38,26 +38,22 @@ from .dynamics import DynamicsModel
 from .observation import PushObservation, planar_error
 from .params import Eta
 
-# Prediction-error covariance R of the measurement (x, y, yaw, vx, vy, wz),
-# in m, rad, m/s, rad/s.  It describes the prediction model's errors, so
-# rerun main.py calibrate and paste its output here after changing the
-# prediction model, the measurement, or the grid.
 # Prediction-error covariances of the measurement (x, y, yaw, vx, vy, wz),
-# in m, rad, m/s, rad/s — one per prediction model, each calibrated by
-# main.py calibrate (48 truth pushes, seed 0, truth timestep 0.0001,
-# settle time 0.1 s, site clearance 0.001 m).  Rerun the matching command
-# after changing the prediction model, the measurement, or the grid.
+# in m, rad, m/s, rad/s, one per prediction model.  Rerun main.py calibrate
+# and paste its output here after changing the prediction model, the
+# measurement, the grid, the push space, or the arm maneuver.
 #
-# CALIBRATED_R covers the Drake plant replays of measured tip paths — the
-# paper-numbers world.
+# CALIBRATED_R covers the Drake plant replays of measured tip paths.
+# Calibrated by main.py calibrate: 192 truth pushes, seed 20000,
+# truth timestep 0.0001, model timestep 0.002, settle time 0.3 s.
 CALIBRATED_R = np.array(
     [
-        [2.999e-07, -3.691e-08, 2.328e-06, 7.134e-07, 5.013e-09, 5.954e-06],
-        [-3.691e-08, 1.680e-07, -1.453e-06, -4.476e-07, 2.605e-07, -1.320e-06],
-        [2.328e-06, -1.453e-06, 1.158e-04, 8.639e-06, 1.434e-06, 2.670e-04],
-        [7.134e-07, -4.476e-07, 8.639e-06, 7.403e-06, 7.517e-07, 2.695e-06],
-        [5.013e-09, 2.605e-07, 1.434e-06, 7.517e-07, 2.046e-06, 3.655e-07],
-        [5.954e-06, -1.320e-06, 2.670e-04, 2.695e-06, 3.655e-07, 9.172e-04],
+        [8.958e-07, -5.951e-08, -1.755e-06, 1.599e-06, -2.785e-07, 9.758e-07],
+        [-5.951e-08, 9.205e-07, 3.652e-06, -1.225e-08, 1.608e-06, 3.516e-06],
+        [-1.755e-06, 3.652e-06, 4.465e-04, 3.415e-07, 1.008e-05, 7.358e-04],
+        [1.599e-06, -1.225e-08, 3.415e-07, 5.333e-06, -2.943e-07, 1.496e-05],
+        [-2.785e-07, 1.608e-06, 1.008e-05, -2.943e-07, 5.096e-06, 1.859e-05],
+        [9.758e-07, 3.516e-06, 7.358e-04, 1.496e-05, 1.859e-05, 1.912e-03],
     ]
 )
 
