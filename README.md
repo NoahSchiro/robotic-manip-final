@@ -146,7 +146,7 @@ per measurement component, and the friction each trial's pushes favour. About
 | --- | --- |
 | `calibrate` | Measures the estimator's prediction-error covariance R from truth-simulation pushes and prints the constant for `estimator.CALIBRATED_R` |
 | `record-trials` | Records multi-push trials in the truth simulation to `data/replay_trials.npz` |
-| `replay` | Scores the estimator on recorded trials and writes `data/replay_report.json`; `--save-predictions` caches the grid predictions so `--load-predictions` can rescore them (for example with another `--smoothing`) in seconds |
+| `replay` | Scores the estimator on recorded trials and writes `data/replay_report.json`; `--save-predictions` caches the grid predictions so `--load-predictions` can rescore them (for example with another `--subcells`) in seconds |
 | `calibrate-path-family` | Fits how the arm's executed tip path deviates from the commanded one, from recorded trials |
 | `gen-surrogate-data` | Generates surrogate training data from the Drake prediction model |
 | `train-surrogate` | Trains the surrogate's MLP ensemble |

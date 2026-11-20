@@ -27,9 +27,9 @@ import numpy as np
 
 from .dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
 from .estimator import (
-    BELIEF_SMOOTHING,
     CALIBRATED_R,
     CALIBRATED_R_SURROGATE,
+    SUBCELLS,
     GridBayesFilter,
 )
 from .object import Object, Rod
@@ -166,12 +166,12 @@ def replay_trial(
     grid: list[Eta],
     predictions: np.ndarray,
     r_matrix: np.ndarray,
-    smoothing: float = BELIEF_SMOOTHING,
+    n_subcells: int = SUBCELLS,
 ) -> TrialTracks:
     """Replay one trial's pushes through one filter per likelihood, from
     `predictions` (see predict_trial)."""
     filters = {
-        name: GridBayesFilter(grid, PredictionsSupplied(), r_matrix, nu, smoothing)
+        name: GridBayesFilter(grid, PredictionsSupplied(), r_matrix, nu, n_subcells)
         for name, nu in LIKELIHOODS.items()
     }
     steps = {name: [filter_step(belief)] for name, belief in filters.items()}
@@ -377,7 +377,7 @@ def run_replay(
     report_path: Path,
     predictor: str = "drake",
     ensemble_path: Path | None = None,
-    smoothing: float = BELIEF_SMOOTHING,
+    n_subcells: int = SUBCELLS,
     predictions_out: Path | None = None,
     predictions_in: Path | None = None,
 ) -> None:
@@ -398,7 +398,7 @@ def run_replay(
     )
     print(
         f"replaying {len(scored)}/{len(trials)} trials over {len(grid)} "
-        f"hypotheses with {source}, smoothing {smoothing:g}"
+        f"hypotheses with {source}, {n_subcells}^3 sub-cells"
     )
     r_matrix = CALIBRATED_R_SURROGATE if predictor == "surrogate" else CALIBRATED_R
     if predictions_in is not None:
@@ -417,13 +417,13 @@ def run_replay(
         save_predictions(predictions_out, predictions, grid, predictor)
         print(f"wrote {predictions_out}")
     tracks = [
-        replay_trial(trial, grid, predicted, r_matrix, smoothing)
+        replay_trial(trial, grid, predicted, r_matrix, n_subcells)
         for trial, predicted in zip(scored, predictions, strict=True)
     ]
     report = build_report(
         tracks,
         grid,
-        {**metadata, "predictor": predictor, "smoothing": smoothing},
+        {**metadata, "predictor": predictor, "n_subcells": n_subcells},
         dropped_empty=len(trials) - len(scored),
     )
     print(format_report(report))

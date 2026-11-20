@@ -27,7 +27,7 @@ from src.env import (
     make_probing_env_config,
 )
 from src.episode import EpisodeResult, run_episode
-from src.estimator import BELIEF_SMOOTHING, CALIBRATED_R, GridBayesFilter
+from src.estimator import CALIBRATED_R, SUBCELLS, GridBayesFilter
 from src.evaluation import run_evaluation
 from src.iiwa import (
     Q_HOME,
@@ -104,6 +104,12 @@ def parse_args() -> argparse.Namespace:
         help="prediction model the calibration measures errors of",
     )
     calibrate_parser.add_argument(
+        "--subcells",
+        type=int,
+        default=SUBCELLS,
+        help="belief points per axis inside each grid cell the R is for",
+    )
+    calibrate_parser.add_argument(
         "--ensemble",
         type=Path,
         default=Path("data/surrogate_ensemble.npz"),
@@ -157,11 +163,10 @@ def parse_args() -> argparse.Namespace:
         help="trained surrogate ensemble (--predictor surrogate)",
     )
     replay_parser.add_argument(
-        "--smoothing",
-        type=float,
-        default=BELIEF_SMOOTHING,
-        help="share of each hypothesis's probability passed to its grid "
-        "neighbours after every update",
+        "--subcells",
+        type=int,
+        default=SUBCELLS,
+        help="belief points per axis inside each grid cell (1: grid points only)",
     )
     replay_parser.add_argument(
         "--save-predictions",
@@ -1023,6 +1028,7 @@ def main(args: argparse.Namespace) -> None:
                 model=push_model_config(args),
                 predictor=args.predictor,
                 ensemble_path=args.ensemble,
+                n_subcells=args.subcells,
             ),
         )
     elif args.command == "record-trials":
@@ -1034,7 +1040,7 @@ def main(args: argparse.Namespace) -> None:
             report_path=args.report,
             predictor=args.predictor,
             ensemble_path=args.ensemble,
-            smoothing=args.smoothing,
+            n_subcells=args.subcells,
             predictions_out=args.save_predictions,
             predictions_in=args.load_predictions,
         )

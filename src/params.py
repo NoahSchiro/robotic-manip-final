@@ -134,20 +134,88 @@ def grid_step(grid: list[Eta]) -> np.ndarray:
     return step
 
 
-def grid_neighbors(grid: list[Eta]) -> np.ndarray:
-    """Get every pair of hypotheses one grid step apart along exactly one
-    parameter, as an (E, 2) array of indices into `grid` with i < j."""
+@dataclass(frozen=True)
+class Subcells:
+    """Points spread evenly inside each grid cell (the box within half a grid
+    step of a hypothesis), with interpolation weights over the grid: point
+    k's value of any smooth per-hypothesis quantity (the estimator uses the
+    wrapped measurement errors) is weights[k] @ (the grid's values)."""
+
+    points: np.ndarray  # (M, 3) (mu, bx, by)
+    owner: np.ndarray  # (M,) index of the grid hypothesis whose cell holds each point
+    weights: np.ndarray  # (M, len(grid)) interpolation weights, rows summing to 1
+
+
+def subcells(grid: list[Eta], n: int) -> Subcells:
+    """Split every grid cell into n x n x n equal boxes and place a point at
+    each box's centre; n = 1 gives the grid itself.
+
+    A point's weights multilinearly interpolate the eight grid hypotheses
+    around it.  Along an axis where one of those is missing (the outline's
+    edge, the end of a parameter range), the value is held constant at the
+    owning hypothesis's on that axis."""
     points = np.array([g.as_array() for g in grid])
-    lattice = np.rint((points - points.min(axis=0)) / grid_step(grid)).astype(int)
+    step = grid_step(grid)
+    lattice = np.rint((points - points.min(axis=0)) / step).astype(int)
     index = {tuple(cell): i for i, cell in enumerate(lattice)}
-    pairs = [
-        (i, index[neighbor])
-        for i, cell in enumerate(lattice)
-        for axis in range(lattice.shape[1])
-        if (neighbor := tuple(cell + np.eye(lattice.shape[1], dtype=int)[axis]))
-        in index
-    ]
-    return np.array(pairs, dtype=int).reshape(-1, 2)
+    offsets = (np.arange(n) + 0.5) / n - 0.5
+    owners, positions, rows = [], [], []
+    for i, cell in enumerate(lattice):
+        for offset in itertools.product(offsets, repeat=3):
+            position = cell + np.array(offset)
+            owners.append(i)
+            positions.append(position)
+            rows.append(_clamped_weights(position, cell, index))
+    weights = np.zeros((len(rows), len(grid)))
+    for k, row in enumerate(rows):
+        for node, weight in row.items():
+            weights[k, node] = weight
+    return Subcells(
+        points=points.min(axis=0) + np.array(positions) * step,
+        owner=np.array(owners),
+        weights=weights,
+    )
+
+
+def _corner_weights(
+    position: np.ndarray, index: dict[tuple[int, ...], int]
+) -> dict[int, float] | None:
+    """Multilinear weights of the lattice nodes around `position` (lattice
+    units), or None when a node with nonzero weight is missing."""
+    base = np.floor(position + 1e-9).astype(int)
+    frac = position - base
+    weights: dict[int, float] = {}
+    for corner in itertools.product((0, 1), repeat=len(position)):
+        weight = float(np.prod([f if c else 1.0 - f for c, f in zip(corner, frac)]))
+        if weight < 1e-12:
+            continue
+        node = index.get(tuple(base + np.array(corner)))
+        if node is None:
+            return None
+        weights[node] = weight
+    return weights
+
+
+def _clamped_weights(
+    position: np.ndarray, cell: np.ndarray, index: dict[tuple[int, ...], int]
+) -> dict[int, float]:
+    """Interpolation weights at `position`, snapping the fewest axes to the
+    owning `cell` that leaves every needed node on the grid."""
+    for count in range(len(position) + 1):
+        for axes in itertools.combinations(range(len(position)), count):
+            snapped = position.copy()
+            snapped[list(axes)] = cell[list(axes)]
+            weights = _corner_weights(snapped, index)
+            if weights is not None:
+                return weights
+    raise AssertionError("the owning cell is always on the grid")
+
+
+def nearest_subcell(cells: Subcells, grid: list[Eta], eta: Eta) -> int:
+    """Index of the sub-cell point nearest `eta`, each parameter scaled by
+    its grid step."""
+    scaled = (cells.points - eta.as_array()) / grid_step(grid)
+    return int(np.argmin((scaled**2).sum(axis=1)))
 
 
 def nearest_hypothesis(grid: list[Eta], eta: Eta) -> Eta:

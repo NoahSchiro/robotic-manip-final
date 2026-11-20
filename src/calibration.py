@@ -2,8 +2,10 @@
 
 Each sample is one episode's first push: off-grid true parameters and a start
 pose from episode_conditions, a random push from the push space, run in the
-truth sim.  The push is predicted with the *nearest* grid hypothesis, so R
-covers both the prediction model's mismatch and the grid's discretization.  R
+truth sim.  The push is predicted at the belief point nearest the true
+parameters (`n_subcells` points per axis in each grid cell, its error
+interpolated from the grid's; match estimator.SUBCELLS), so R covers the prediction
+model's mismatch, the interpolation, and the remaining discretization.  R
 is the errors' second moment about zero (the likelihood assumes zero-mean
 errors) plus a diagonal floor.
 
@@ -26,7 +28,7 @@ from .dynamics import DrakePushModel, DynamicsModel, PushModelConfig
 from .iiwa import Pusher
 from .object import Object, Rod
 from .observation import planar_error
-from .params import Eta, GridSpec, make_grid, nearest_hypothesis
+from .params import Eta, GridSpec, Subcells, make_grid, nearest_subcell, subcells
 from .probing import (
     ProbingState,
     episode_conditions,
@@ -54,6 +56,8 @@ class SampleSetup:
 
     push_space: PushSpace
     grid: list[Eta]
+    cells: Subcells
+    n_subcells: int
     rod_mass: float
     truth: TruthSimConfig
     model: PushModelConfig
@@ -75,12 +79,16 @@ def make_sample_setup(
     model: PushModelConfig,
     predictor: str = "drake",
     ensemble_path: Path | None = None,
+    n_subcells: int = 1,
 ) -> SampleSetup:
     """Collect what every calibration sample shares."""
     reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
+    grid = make_grid(GridSpec(), reference.parts)
     return SampleSetup(
         push_space=make_push_space(reference.parts, reference.height),
-        grid=make_grid(GridSpec(), reference.parts),
+        grid=grid,
+        cells=subcells(grid, n_subcells),
+        n_subcells=n_subcells,
         rod_mass=rod_mass,
         truth=truth,
         model=model,
@@ -93,7 +101,7 @@ def calibration_sample(
     seed: int, setup: SampleSetup
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Run one truth push at the seed's episode conditions, returning its
-    prediction errors under the nearest grid hypothesis and under the true
+    prediction errors at the nearest belief point and under the true
     parameters (or None when no push was reachable)."""
     eta_true, start_pose, action_rng = episode_conditions(seed)
     obj = episode_object(eta_true, start_pose, setup.rod_mass)
@@ -109,11 +117,12 @@ def calibration_sample(
         return None
     obs = outcome.records[0].observation
     predictor = setup.build_predictor()
-    nearest, true = predictor.predict(
-        [nearest_hypothesis(setup.grid, eta_true), eta_true], obs
-    )
+    weights = setup.cells.weights[nearest_subcell(setup.cells, setup.grid, eta_true)]
+    (corners,) = np.nonzero(weights)
+    predicted = predictor.predict([*(setup.grid[i] for i in corners), eta_true], obs)
     measured = obs.measured()
-    return planar_error(measured, nearest), planar_error(measured, true)
+    errors = planar_error(measured, predicted)
+    return weights[corners] @ errors[:-1], errors[-1]
 
 
 def second_moment_R(errors: np.ndarray, floor_std: np.ndarray) -> np.ndarray:
@@ -143,6 +152,7 @@ def format_constant(
     seed: int,
     truth: TruthSimConfig,
     model: PushModelConfig,
+    n_subcells: int,
 ) -> str:
     """Render R as the CALIBRATED_R source block for src/estimator.py.  Four
     significant figures is well inside the estimate's sampling error."""
@@ -152,7 +162,8 @@ def format_constant(
     return (
         f"# Calibrated by main.py calibrate: {samples} truth pushes, seed {seed},\n"
         f"# truth timestep {truth.time_step:g}, model timestep "
-        f"{model.time_step:g}, settle time {truth.settle_time:g} s.\n"
+        f"{model.time_step:g}, settle time {truth.settle_time:g} s,\n"
+        f"# {n_subcells}^3 sub-cells.\n"
         f"CALIBRATED_R = np.array(\n    [\n{rows}\n    ]\n)"
     )
 
@@ -174,9 +185,9 @@ def calibrate(samples: int, seed: int, workers: int, setup: SampleSetup) -> None
     true = np.array([e for _, e in results])
     print(
         f"{len(results)}/{samples} samples in {time.time() - started:.0f} s "
-        f"({len(setup.grid)} hypotheses)"
+        f"({len(setup.grid)} hypotheses, {setup.n_subcells}^3 sub-cells)"
     )
-    for name, errors in (("nearest grid", nearest), ("true eta", true)):
+    for name, errors in (("nearest point", nearest), ("true eta", true)):
         rms = np.sqrt((errors**2).mean(axis=0))
         print(f"rms error, {name:>12}: {labeled(rms)}")
 
@@ -190,5 +201,6 @@ def calibrate(samples: int, seed: int, workers: int, setup: SampleSetup) -> None
             seed,
             setup.truth,
             setup.model,
+            setup.n_subcells,
         )
     )

@@ -44,7 +44,8 @@ OBS = cast(PushObservation, FakeObservation())
 
 
 def make_filter(x_errors: Sequence[float], nu: float | None = 3.0) -> GridBayesFilter:
-    return GridBayesFilter(GRID, FixedPredictions(x_errors), R, nu)
+    """A filter on the grid points alone, so its updates are plain Bayes rule."""
+    return GridBayesFilter(GRID, FixedPredictions(x_errors), R, nu, n_subcells=1)
 
 
 def test_squared_mahalanobis_scales_by_the_covariance() -> None:
@@ -141,24 +142,54 @@ def test_bad_arguments_are_rejected(
         GridBayesFilter(grid, FixedPredictions([]), covariance, nu)
 
 
-def test_smoothing_passes_probability_to_grid_neighbors() -> None:
-    # On the three-point friction line, the middle hypothesis has two
-    # neighbours and each end has one.
-    belief = GridBayesFilter(GRID, FixedPredictions([0.0, 0.0, 0.0]), R, 3.0, 0.2)
-    assert belief.smoothed(np.array([1.0, 0.0, 0.0])) == pytest.approx([0.8, 0.2, 0.0])
-    assert belief.smoothed(np.array([0.0, 1.0, 0.0])) == pytest.approx([0.1, 0.8, 0.1])
+def test_one_subcell_is_the_grid_itself() -> None:
+    belief = make_filter([1.0, 0.0, 0.5])
+    belief.update(OBS)
+    product = np.exp(student_t_log_likelihood(np.array([4.0, 0.0, 1.0]), 3.0, 6))
+    assert belief.probs == pytest.approx(product / product.sum())
 
 
-def test_smoothing_keeps_a_ruled_out_neighbor_alive() -> None:
-    sharp = make_filter([0.0, 6.0, 6.0], nu=None)
-    smooth = GridBayesFilter(GRID, FixedPredictions([0.0, 6.0, 6.0]), R, None, 0.05)
-    for belief in (sharp, smooth):
-        belief.update(OBS)
-    assert smooth.probs.sum() == pytest.approx(1.0)
-    assert smooth.probs[1] > 100 * sharp.probs[1]
-    assert smooth.map_eta() == sharp.map_eta() == GRID[0]
+def test_subcell_belief_sums_the_posterior_over_interpolated_points() -> None:
+    grid = [Eta(mu, 0.0, 0.0) for mu in (0.2, 0.4, 0.6, 0.8, 1.0)]
+    errors = [-1.5, -0.5, 0.5, 1.5, 2.5]
+    belief = GridBayesFilter(grid, FixedPredictions(errors), R, 3.0, 2)
+    belief.update(OBS)
+    belief.update(OBS)
+    # Interior points sit a quarter step from their hypothesis, so their x
+    # errors move by 0.25; at the ends the prediction is held constant.
+    point_errors = np.array(
+        [[-1.5, -1.25], [-0.75, -0.25], [0.25, 0.75], [1.25, 1.75], [2.25, 2.5]]
+    )
+    q = point_errors**2 / 0.25
+    likelihood = np.exp(2 * student_t_log_likelihood(q.ravel(), 3.0, 6))
+    expected = likelihood.reshape(5, 2).sum(axis=1)
+    assert belief.probs == pytest.approx(expected / expected.sum())
 
 
-def test_smoothing_outside_zero_to_one_is_rejected() -> None:
-    with pytest.raises(ValueError, match="smoothing"):
-        GridBayesFilter(GRID, FixedPredictions([]), R, 3.0, 1.5)
+def test_too_few_subcells_are_rejected() -> None:
+    with pytest.raises(ValueError, match="n_subcells"):
+        GridBayesFilter(GRID, FixedPredictions([]), R, 3.0, 0)
+
+
+class YawPredictions(DynamicsModel):
+    """Hypotheses predicting yaws on either side of +-pi."""
+
+    def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
+        predicted = np.zeros((len(etas), 6))
+        predicted[:, 2] = [np.pi - 0.02, -np.pi + 0.02, -np.pi + 0.06]
+        return predicted
+
+
+def test_subcells_interpolate_yaw_errors_across_pi() -> None:
+    class AtPi:
+        def measured(self) -> np.ndarray:
+            measured = np.zeros(6)
+            measured[2] = np.pi
+            return measured
+
+    belief = GridBayesFilter(GRID, YawPredictions(), R, None, 2)
+    belief.update(cast(PushObservation, AtPi()))
+    # The first two hypotheses straddle the measured yaw; interpolating raw
+    # yaws would put their in-between points near 0 rad, far from it.
+    assert belief.probs[2] < belief.probs[0]
+    assert belief.probs[0] == pytest.approx(belief.probs[1], rel=0.05)
