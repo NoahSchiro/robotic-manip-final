@@ -25,6 +25,18 @@ confidently wrong final beliefs (0% against 5%), a margin of one or two
 trials.  Live runs since end within one grid step in 17 or 18 of 19, with up
 to one confidently wrong.
 
+After each update the belief is optionally smoothed: every hypothesis passes
+a share `smoothing` of its probability, split equally, to its grid neighbours
+(one step along one parameter):
+
+    p'_i = (1 - s) p_i + s sum_(j ~ i) p_j / deg_j
+
+The true parameters lie between grid points, so the cell nearest them can
+score worse than a neighbour for several pushes in a row; without smoothing
+the filter can then rule it out for good.  Smoothing keeps neighbours of the
+leading hypotheses alive so later pushes can move the belief back.  It is a
+heuristic, not a model of the (static) parameters.
+
 Probabilities are kept as logs so long push sequences don't underflow.  A
 wait (no push) yields no observation, so it makes no update.
 """
@@ -36,7 +48,7 @@ import numpy as np
 
 from .dynamics import DynamicsModel
 from .observation import PushObservation, planar_error
-from .params import Eta
+from .params import Eta, grid_neighbors
 
 # Prediction-error covariances of the measurement (x, y, yaw, vx, vy, wz),
 # in m, rad, m/s, rad/s, one per prediction model.  Rerun main.py calibrate
@@ -56,6 +68,10 @@ CALIBRATED_R = np.array(
         [9.758e-07, 3.516e-06, 7.358e-04, 1.496e-05, 1.859e-05, 1.912e-03],
     ]
 )
+
+# Share of each hypothesis's probability passed to its grid neighbours after
+# every update (see the module docstring); 0 turns smoothing off.
+BELIEF_SMOOTHING = 0.0
 
 # CALIBRATED_R_SURROGATE covers the trained surrogate predicting from
 # measured tip paths.  Its errors carry the arm's force- and
@@ -110,18 +126,24 @@ class GridBayesFilter:
         model: DynamicsModel,
         R: np.ndarray,
         nu: float | None,
+        smoothing: float = BELIEF_SMOOTHING,
     ) -> None:
         """Start uniform over `grid`.  `R` is the prediction-error covariance;
         `nu` is the Student-t likelihood's degrees of freedom, and None uses
-        the Gaussian likelihood instead.
+        the Gaussian likelihood instead.  `smoothing` is the share of each
+        hypothesis's probability passed to its grid neighbours after every
+        update.
 
-        Raises ValueError when `grid` is empty, `nu` is not positive or `R` is
-        not 6x6, and LinAlgError when `R` is not positive-definite.
+        Raises ValueError when `grid` is empty, `nu` is not positive,
+        `smoothing` is outside [0, 1] or `R` is not 6x6, and LinAlgError when
+        `R` is not positive-definite.
         """
         if not grid:
             raise ValueError("the hypothesis grid is empty")
         if nu is not None and nu <= 0.0:
             raise ValueError(f"nu must be positive, got {nu}")
+        if not 0.0 <= smoothing <= 1.0:
+            raise ValueError(f"smoothing must be in [0, 1], got {smoothing}")
         if R.shape != (6, 6):
             raise ValueError(f"R must be 6x6, got {R.shape}")
         # Cholesky fails unless R is symmetric positive-definite.
@@ -130,6 +152,9 @@ class GridBayesFilter:
         self.model = model
         self.nu = nu
         self.R_inv = np.linalg.inv(R)
+        self.smoothing = smoothing
+        self.neighbors = grid_neighbors(self.grid)
+        self.degree = np.bincount(self.neighbors.ravel(), minlength=len(self.grid))
         self.log_probs = np.full(len(self.grid), -np.log(len(self.grid)))
 
     @property
@@ -155,6 +180,22 @@ class GridBayesFilter:
             else student_t_log_likelihood(q, self.nu, errors.shape[1])
         )
         self.log_probs = normalized_log_probs(self.log_probs + log_likelihood)
+        if self.smoothing > 0.0:
+            # Hypotheses whose whole neighbourhood underflowed stay at log 0.
+            with np.errstate(divide="ignore"):
+                self.log_probs = np.log(self.smoothed(self.probs))
+
+    def smoothed(self, probs: np.ndarray) -> np.ndarray:
+        """Pass each hypothesis's `smoothing` share of `probs`, split
+        equally, to its grid neighbours; total probability is unchanged."""
+        sent = np.where(
+            self.degree > 0, self.smoothing * probs / np.maximum(self.degree, 1), 0.0
+        )
+        result = probs - sent * self.degree
+        i, j = self.neighbors.T
+        np.add.at(result, i, sent[j])
+        np.add.at(result, j, sent[i])
+        return result
 
     def map_eta(self) -> Eta:
         """Get the maximum-probability hypothesis (what MPC plans with)."""

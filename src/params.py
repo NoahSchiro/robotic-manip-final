@@ -134,6 +134,22 @@ def grid_step(grid: list[Eta]) -> np.ndarray:
     return step
 
 
+def grid_neighbors(grid: list[Eta]) -> np.ndarray:
+    """Get every pair of hypotheses one grid step apart along exactly one
+    parameter, as an (E, 2) array of indices into `grid` with i < j."""
+    points = np.array([g.as_array() for g in grid])
+    lattice = np.rint((points - points.min(axis=0)) / grid_step(grid)).astype(int)
+    index = {tuple(cell): i for i, cell in enumerate(lattice)}
+    pairs = [
+        (i, index[neighbor])
+        for i, cell in enumerate(lattice)
+        for axis in range(lattice.shape[1])
+        if (neighbor := tuple(cell + np.eye(lattice.shape[1], dtype=int)[axis]))
+        in index
+    ]
+    return np.array(pairs, dtype=int).reshape(-1, 2)
+
+
 def nearest_hypothesis(grid: list[Eta], eta: Eta) -> Eta:
     """Get the grid hypothesis nearest `eta`, each parameter scaled by the
     grid's span so friction and position compare evenly."""

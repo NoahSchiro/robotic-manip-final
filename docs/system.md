@@ -41,7 +41,7 @@ The surrogate's nominal tip paths sample this same maneuver from the standoff (p
 
 ## Measurement and estimator
 
-The measurement is `(x, y, yaw)` at measurement end with `(vx, vy, wz)` at push end. The filter is a grid Bayes filter over 405 hypotheses: 9 values each of `mu`, `bx`, `by`, keeping rod positions inside the T. Each hypothesis's measurement is predicted by a Drake model that drives a lone stick tip along the measured tip path (time step 2e-3 s). The likelihood is a Student-t with `nu = 3` on the residual, scaled by the calibrated covariance `estimator.CALIBRATED_R`.
+The measurement is `(x, y, yaw)` at measurement end with `(vx, vy, wz)` at push end. The filter is a grid Bayes filter over 405 hypotheses: 9 values each of `mu`, `bx`, `by`, keeping rod positions inside the T. Each hypothesis's measurement is predicted by a Drake model that drives a lone stick tip along the measured tip path (time step 2e-3 s). The likelihood is a Student-t with `nu = 3` on the residual, scaled by the calibrated covariance `estimator.CALIBRATED_R`. Optionally, after each update every hypothesis passes a share `s` (`estimator.BELIEF_SMOOTHING`, currently 0) of its probability, split equally, to its grid neighbours one step away in one parameter: `p'_i = (1 - s) p_i + s * sum_(j ~ i) p_j / deg_j`. This keeps cells next to the leading hypotheses from being ruled out when the off-grid truth makes its nearest cell score worse than a neighbour.
 
 The MAP estimate is the most probable hypothesis. Its range-normalized error is `sqrt(sum_i ((eta_MAP_i − eta_true_i) / span_i)^2)`, with `span_i` the grid's range for parameter i.
 

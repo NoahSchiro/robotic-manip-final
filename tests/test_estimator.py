@@ -139,3 +139,26 @@ def test_bad_arguments_are_rejected(
 ) -> None:
     with pytest.raises(error):
         GridBayesFilter(grid, FixedPredictions([]), covariance, nu)
+
+
+def test_smoothing_passes_probability_to_grid_neighbors() -> None:
+    # On the three-point friction line, the middle hypothesis has two
+    # neighbours and each end has one.
+    belief = GridBayesFilter(GRID, FixedPredictions([0.0, 0.0, 0.0]), R, 3.0, 0.2)
+    assert belief.smoothed(np.array([1.0, 0.0, 0.0])) == pytest.approx([0.8, 0.2, 0.0])
+    assert belief.smoothed(np.array([0.0, 1.0, 0.0])) == pytest.approx([0.1, 0.8, 0.1])
+
+
+def test_smoothing_keeps_a_ruled_out_neighbor_alive() -> None:
+    sharp = make_filter([0.0, 6.0, 6.0], nu=None)
+    smooth = GridBayesFilter(GRID, FixedPredictions([0.0, 6.0, 6.0]), R, None, 0.05)
+    for belief in (sharp, smooth):
+        belief.update(OBS)
+    assert smooth.probs.sum() == pytest.approx(1.0)
+    assert smooth.probs[1] > 100 * sharp.probs[1]
+    assert smooth.map_eta() == sharp.map_eta() == GRID[0]
+
+
+def test_smoothing_outside_zero_to_one_is_rejected() -> None:
+    with pytest.raises(ValueError, match="smoothing"):
+        GridBayesFilter(GRID, FixedPredictions([]), R, 3.0, 1.5)
