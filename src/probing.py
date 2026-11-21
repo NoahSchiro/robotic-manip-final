@@ -25,7 +25,6 @@ from .env import (
     select_push_action,
 )
 from .estimator import GridBayesFilter
-from .geometry import SurfaceNormal
 from .object import Object
 from .observation import PushObservation
 from .params import Eta
@@ -138,19 +137,17 @@ def random_selector(
 
 
 def policy_selector(model: MaskablePPO, config: ProbingEnvConfig) -> Selector:
-    """The trained policy's masked choice from the pruned library, returning
-    "stop" when it stops.  Library sites whose arm plan failed at this decision
-    are masked."""
+    """The trained policy's masked choice from the probing lattice, returning
+    "stop" when it stops.  Every lattice push sharing a contact point with a
+    push whose arm plan failed at this decision is masked."""
 
     def select(state: ProbingState, failed: list[Action]) -> Action | str:
         assert state.belief is not None, "the policy chooses from the belief"
-        failed_sites = {
-            int(site)
-            for action in failed
-            for site in np.flatnonzero(
-                np.all(config.site_positions == action.contact.position, axis=1)
+        excluded = np.zeros(config.n_push_actions, dtype=bool)
+        for action in failed:
+            excluded |= np.all(
+                np.isclose(config.contact_positions, action.contact.position), axis=1
             )
-        }
         chosen = select_push_action(
             model,
             state.belief,
@@ -159,19 +156,9 @@ def policy_selector(model: MaskablePPO, config: ProbingEnvConfig) -> Selector:
             state.last_action,
             state.pushes,
             config,
-            failed_sites,
+            excluded,
         )
-        if chosen is None:
-            return "stop"
-        site, speed, contact_time = chosen
-        return Action(
-            contact=SurfaceNormal(
-                position=config.site_positions[site],
-                normal=config.site_normals[site],
-            ),
-            velocity=speed,
-            time=contact_time,
-        )
+        return "stop" if chosen is None else config.actions[chosen]
 
     return select
 

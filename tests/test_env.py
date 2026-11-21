@@ -8,7 +8,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.env import ProbingEnv, ProbingEnvConfig, make_probing_env_config
+from src.env import (
+    ProbingEnv,
+    ProbingEnvConfig,
+    make_probing_env_config,
+    reachability_mask,
+)
+from src.push_space import reachable
 
 ENSEMBLE = Path(__file__).resolve().parents[1] / "data" / "surrogate_ensemble.npz"
 
@@ -55,11 +61,6 @@ def test_reset_is_deterministic(config: ProbingEnvConfig) -> None:
     assert a._pose.tolist() == b._pose.tolist()
 
 
-@pytest.mark.xfail(
-    reason="the surrogate ensemble predates the current motion, push space, "
-    "measurement window, and path family; it is retrained in package S",
-    strict=False,
-)
 def test_entropy_collapses_across_pushes(config: ProbingEnvConfig) -> None:
     env = ProbingEnv(config)
     env.reset(seed=3)
@@ -111,3 +112,26 @@ def test_episodes_terminate_within_the_push_bound(config: ProbingEnvConfig) -> N
     assert terminated
     # "stop" happens when the block slides out of every site's reach.
     assert info["reason"] in ("max_pushes", "out_of_bounds", "stop")
+
+
+def test_actions_are_the_push_space_lattice() -> None:
+    lattice = make_probing_env_config(None, family_path=None)
+    assert lattice.n_push_actions == 396
+    assert lattice.n_actions == 397
+    assert np.all((lattice.times >= 0.1 - 1e-9) & (lattice.times <= 1.0 + 1e-9))
+    assert np.all(lattice.speeds * lattice.times <= 0.1 + 1e-9)
+    assert lattice.action_vector(5).tolist() == [
+        *lattice.contact_positions[5],
+        *lattice.contact_normals[5],
+        lattice.speeds[5],
+        lattice.times[5],
+    ]
+
+
+def test_reachability_mask_matches_push_space_reachable() -> None:
+    lattice = make_probing_env_config(None, family_path=None)
+    pose = np.array([0.42, 0.18, 2.1])
+    mask = reachability_mask(pose, lattice)
+    expected = [reachable(pose, action) for action in lattice.actions]
+    assert mask.tolist() == expected
+    assert 0 < mask.sum() < len(mask)

@@ -185,14 +185,33 @@ def reachable(pose: np.ndarray, action: Action) -> bool:
     velocity * time along the normal), for a block at `pose` (x m, y m, yaw
     rad) in the world.  The arm base is the world origin, so each tip's radius
     must lie in [REACH_MIN, REACH_MAX]."""
+    return bool(
+        reachable_mask(
+            pose,
+            action.contact.position[None, :2],
+            action.contact.normal[None, :2],
+            np.array([action.velocity * action.time]),
+        )[0]
+    )
+
+
+def reachable_mask(
+    pose: np.ndarray,
+    contact_xy: np.ndarray,
+    normal_xy: np.ndarray,
+    distance: np.ndarray,
+) -> np.ndarray:
+    """`reachable` for many pushes at once: body-frame contact points and
+    inward normals (A, 2) and push distances (A,) m, for a block at `pose`."""
     c, s = np.cos(pose[2]), np.sin(pose[2])
     rot = np.array([[c, -s], [s, c]])
-    tip = action.contact.position[:2]
-    normal = action.contact.normal[:2]
-    approach = tip - STANDOFF * normal
-    push_end = tip + action.velocity * action.time * normal
-    radii = [np.linalg.norm(pose[:2] + rot @ point) for point in (approach, push_end)]
-    return all(REACH_MIN <= r <= REACH_MAX for r in radii)
+    approach = pose[:2] + (contact_xy - STANDOFF * normal_xy) @ rot.T
+    push_end = pose[:2] + (contact_xy + distance[:, None] * normal_xy) @ rot.T
+    inside = np.ones(len(contact_xy), dtype=bool)
+    for point in (approach, push_end):
+        radius = np.linalg.norm(point, axis=1)
+        inside &= (radius >= REACH_MIN) & (radius <= REACH_MAX)
+    return inside
 
 
 def _step(edge: SurfaceEdge) -> tuple[int, int]:

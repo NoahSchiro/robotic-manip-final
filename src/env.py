@@ -5,7 +5,7 @@ only).
 
 One episode: a true eta and a start pose are sampled, the filter starts
 uniform over the grid, and the agent repeatedly picks a push from the
-pruned library or `stop`.  Each push executes a sampled arm-lag path, whose
+push-space lattice (the MPC's candidates) or `stop`.  Each push executes a sampled arm-lag path, whose
 outcome a sampled ensemble member predicts with deployment-scale
 measurement noise (`CALIBRATED_R_SURROGATE` minus the members' own
 spread).  The filter updates from the noisy measurement, and the block
@@ -18,10 +18,10 @@ Rewards:
   error, what MPC consumes
 - leaving the workspace: the stop reward minus `out_of_bounds_penalty`
 
-Action space: Discrete(n_sites * n_speeds * n_times + 1).  The last
-action is `stop` and is never masked; sites are masked when their tip
-targets fall outside the radial reach band the recorded reachable pushes
-spanned.
+Action space: Discrete(len(actions) + 1) over the push space's lattice
+(`PushSpace.grid(PROBE_SPACING, PROBE_SPEEDS, PROBE_DISTANCES)`).  The last
+action is `stop` and is never masked; pushes are masked when the arm cannot
+reach their approach or end point (push_space.reachable).
 """
 
 import typing
@@ -34,28 +34,30 @@ from gymnasium import spaces
 from pydrake.all import RigidTransform, RotationMatrix
 from sb3_contrib import MaskablePPO
 
-from .action import SPEEDS, TIMES, Action
+from .action import Action
 from .estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
-from .geometry import SurfaceNormal, SurfacePart
-from .iiwa import STANDOFF, Pusher, clear_sites, transfer_height
+from .geometry import SurfacePart
+from .iiwa import transfer_height
 from .object import Object, Rod
 from .observation import wrap_angle
 from .params import Eta, GridSpec, grid_spans, make_grid, sample_eta
 from .path_family import PathFamily, load_path_family, perturb_tip_positions
-from .push_space import REACH_MAX, REACH_MIN
+from .push_space import make_push_space, reachable_mask
 from .surrogate import (
     SurrogateEnsemble,
     SurrogatePredictor,
     load_ensemble,
     nominal_tip_path,
     path_downsample,
+    surrogate_inputs,
+    world_measurement,
 )
 
-N_PROBE_SITES = 32  # the pruned library's site count (MPC keeps all)
-# Sites per meter of outline.  The dataset generator’s --push-density 2.0
-# is per centimeter; converted (x100) it is 200/m.
-PUSH_DENSITY = 200.0
-SITE_CLEARANCE = 0.001  # m, as in the dataset
+# The probing lattice: the MPC's candidates (contacts about 1.2 cm apart,
+# 3 speeds x 3 distances per contact).
+PROBE_SPACING = 0.012  # m
+PROBE_SPEEDS = 3
+PROBE_DISTANCES = 3
 SETTLE_TIME = 0.3  # s, matching the dataset's windows
 ROD_MASS = 0.2  # kg, as everywhere
 
@@ -71,18 +73,18 @@ OUT_OF_BOUNDS_PENALTY = 1.0
 @dataclass(frozen=True)
 class ProbingEnvConfig:
     """Everything one environment instance runs on.  Built once by
-    make_probing_env_config; the env's steps are pure numpy."""
+    make_probing_env_config; the env's steps are pure numpy.  Push action i
+    is actions[i]; the arrays hold its body-frame contact point and inward
+    normal (A, 3), speed (A,) m/s and contact time (A,) s."""
 
     ensemble: SurrogateEnsemble | None
     grid: list[Eta]
-    site_positions: np.ndarray  # (S, 3) body frame
-    site_normals: np.ndarray  # (S, 3) body frame
-    speeds: tuple[float, ...]
-    times: tuple[float, ...]
+    actions: tuple[Action, ...]
+    contact_positions: np.ndarray
+    contact_normals: np.ndarray
+    speeds: np.ndarray
+    times: np.ndarray
     family: PathFamily | None
-    tip_body_xy: np.ndarray  # (A, 2) approach-point body xy per push action
-    normal_body_xy: np.ndarray  # (A, 2) inward normal xy per push action
-    forward: np.ndarray  # (A,) approach + v*T distance per push action
     transfer_height: float  # m, the tip's height for transfer and lift legs
     max_pushes: int = MAX_PUSHES
     entropy_weight: float = ENTROPY_WEIGHT
@@ -91,60 +93,43 @@ class ProbingEnvConfig:
 
     @property
     def n_push_actions(self) -> int:
-        return len(self.site_positions) * len(self.speeds) * len(self.times)
+        return len(self.actions)
 
     @property
     def n_actions(self) -> int:
         return self.n_push_actions + 1  # the last action is stop
 
-
-def prune_sites(positions: np.ndarray, keep: int = N_PROBE_SITES) -> np.ndarray:
-    """Pick `keep` evenly spaced indices along the (outline-ordered) clear
-    sites, so the pruned library stays spread over the footprint."""
-    return np.linspace(0, len(positions) - 1, keep).astype(int)
+    def action_vector(self, index: int) -> np.ndarray:
+        """Push `index` as the observation's (8,) last-action vector: contact
+        point (3), inward normal (3), speed m/s, contact time s."""
+        return np.concatenate(
+            [
+                self.contact_positions[index],
+                self.contact_normals[index],
+                [self.speeds[index], self.times[index]],
+            ]
+        )
 
 
 def make_probing_env_config(
     ensemble_path: Path | None,
-    keep: int = N_PROBE_SITES,
     rod_mass: float = ROD_MASS,
     family_path: Path | None = Path("data/path_family.npz"),
 ) -> ProbingEnvConfig:
-    """Build the hypothesis grid and pruned clear-site library. Optional
-    ensemble and path-family assets are needed for surrogate execution."""
-    spec = GridSpec()
+    """Build the hypothesis grid and the probing lattice.  The ensemble and
+    path family are needed only to run the environment."""
     reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
-    clear = clear_sites(
-        reference.parts,
-        reference.surface_normals(PUSH_DENSITY),
-        Pusher().radius,
-        SITE_CLEARANCE,
-    )
-    picked = prune_sites(np.array([site.position for site in clear]), keep)
-    picked_sites = [clear[i] for i in picked]
-    n_speeds, n_times = len(SPEEDS), len(TIMES)
+    space = make_push_space(reference.parts, reference.height)
+    actions = tuple(space.grid(PROBE_SPACING, PROBE_SPEEDS, PROBE_DISTANCES))
     return ProbingEnvConfig(
         ensemble=load_ensemble(ensemble_path) if ensemble_path is not None else None,
-        grid=make_grid(spec, reference.parts),
-        site_positions=np.array([site.position for site in picked_sites]),
-        site_normals=np.array([site.normal for site in picked_sites]),
-        speeds=SPEEDS,
-        times=TIMES,
+        grid=make_grid(GridSpec(), reference.parts),
+        actions=actions,
+        contact_positions=np.array([a.contact.position for a in actions]),
+        contact_normals=np.array([a.contact.normal for a in actions]),
+        speeds=np.array([a.velocity for a in actions]),
+        times=np.array([a.time for a in actions]),
         family=load_path_family(family_path) if family_path is not None else None,
-        tip_body_xy=np.repeat(
-            np.array([site.position[:2] for site in picked_sites]),
-            n_speeds * n_times,
-            axis=0,
-        ),
-        normal_body_xy=np.repeat(
-            np.array([site.normal[:2] for site in picked_sites]),
-            n_speeds * n_times,
-            axis=0,
-        ),
-        forward=np.tile(
-            STANDOFF + np.repeat(SPEEDS, n_times) * np.tile(TIMES, n_speeds),
-            len(picked_sites),
-        ),
         transfer_height=transfer_height(reference),
     )
 
@@ -156,64 +141,45 @@ def member_spread(
     rows: int = 64,
 ) -> np.ndarray:
     """Estimate the (6,) std of the members' disagreement over the
-    measurement, on random in-distribution pushes.  The env's injected
-    noise is R minus this spread squared, since the truth-vs-predictor
-    mismatch already contributes it."""
+    measurement, on random lattice pushes from random workspace poses.  The
+    env's injected noise is R minus this spread squared, since the
+    truth-vs-predictor mismatch already contributes it."""
     rng = np.random.default_rng(0)
-    shared = []
+    inputs = []
     for _ in range(rows):
-        site = int(rng.integers(len(config.site_positions)))
-        speed = float(rng.choice(config.speeds))
-        time = float(rng.choice(config.times))
-        pose = planar_transform(
-            np.array(
-                [
-                    rng.uniform(0.45, 0.65),
-                    rng.uniform(-0.1, 0.1),
-                    rng.uniform(-np.pi, np.pi),
-                ]
+        index = int(rng.integers(config.n_push_actions))
+        pose = np.array(
+            [
+                rng.uniform(0.45, 0.65),
+                rng.uniform(-0.1, 0.1),
+                rng.uniform(-np.pi, np.pi),
+            ]
+        )
+        path = nominal_tip_path(
+            planar_transform(pose),
+            config.actions[index],
+            SETTLE_TIME,
+            config.transfer_height,
+        )
+        inputs.append(
+            surrogate_inputs(
+                grid,
+                np.array([*pose, 0.0, 0.0, 0.0]),
+                config.contact_positions[index],
+                config.contact_normals[index],
+                float(config.speeds[index]),
+                float(config.times[index]),
+                path_downsample(path.tip_times, path.tip_positions)[:2].reshape(-1),
             )
         )
-        action = Action(
-            contact=SurfaceNormal(
-                position=config.site_positions[site],
-                normal=config.site_normals[site],
-            ),
-            velocity=speed,
-            time=time,
-        )
-        path = nominal_tip_path(pose, action, SETTLE_TIME, config.transfer_height)
-        start = np.zeros(6)
-        start[:2] = pose.translation()[:2]
-        start[2] = np.arctan2(
-            pose.rotation().matrix()[1, 0], pose.rotation().matrix()[0, 0]
-        )
-        shared.append(
-            np.concatenate(
-                [
-                    [
-                        rng.uniform(0.45, 0.65),
-                        rng.uniform(-0.1, 0.1),
-                        rng.uniform(-np.pi, np.pi),
-                        0.0,
-                        0.0,
-                        0.0,
-                    ],
-                    config.site_positions[site],
-                    config.site_normals[site],
-                    [speed, time],
-                    path_downsample(path.tip_times, path.tip_positions)[:2].reshape(-1),
-                ]
-            )
-        )
-    eta_rows = np.tile(np.array([e.as_array() for e in grid]), (rows, 1))
-    inputs = np.concatenate(
-        [eta_rows, np.repeat(np.array(shared), len(grid), axis=0)], axis=1
-    )
-    per_member = np.stack(
-        [ensemble.predict(inputs, member=m) for m in range(len(ensemble.members))]
-    )
-    return per_member.std(axis=0).mean(axis=0)
+    # One push's 405 rows at a time keeps the peak memory to one batch.
+    spreads = [
+        np.stack(
+            [ensemble.predict(rows_in, member=m) for m in range(len(ensemble.members))]
+        ).std(axis=0)
+        for rows_in in inputs
+    ]
+    return np.concatenate(spreads).mean(axis=0)
 
 
 def sample_episode_conditions(
@@ -267,17 +233,12 @@ def observation_vector(
 def reachability_mask(pose: np.ndarray, config: ProbingEnvConfig) -> np.ndarray:
     """Mask over push actions: approach and push-end tip targets inside the
     reach band.  The stop action is handled by the callers."""
-    c, s = np.cos(pose[2]), np.sin(pose[2])
-    rot = np.array([[c, -s], [s, c]])
-    approach_body = config.tip_body_xy - STANDOFF * config.normal_body_xy
-    push_end_body = approach_body + config.forward[:, None] * config.normal_body_xy
-    approach = pose[:2] + approach_body @ rot.T
-    push_end = pose[:2] + push_end_body @ rot.T
-    r_approach = np.linalg.norm(approach, axis=1)
-    r_push_end = np.linalg.norm(push_end, axis=1)
-    inside = (r_approach >= REACH_MIN) & (r_approach <= REACH_MAX)
-    inside &= (r_push_end >= REACH_MIN) & (r_push_end <= REACH_MAX)
-    return np.asarray(inside, dtype=bool)
+    return reachable_mask(
+        pose,
+        config.contact_positions[:, :2],
+        config.contact_normals[:, :2],
+        config.speeds * config.times,
+    )
 
 
 def select_push_action(
@@ -288,30 +249,18 @@ def select_push_action(
     last_action: np.ndarray,
     pushes: int,
     config: ProbingEnvConfig,
-    failed_sites: set[int],
-) -> tuple[int, float, float] | None:
+    excluded: np.ndarray,
+) -> int | None:
     """The deployment action selection: the trained policy picks the next
-    push from the pruned library under the reachability mask, excluding
-    sites whose IK failed.  None when the policy stops."""
+    push index from the lattice under the reachability mask, never one of
+    the `excluded` (A,) pushes.  None when the policy stops."""
     obs = observation_vector(belief, pose, last_measurement, last_action, pushes)
-    mask = reachability_mask(pose, config).copy()
-    per_site = len(config.speeds) * len(config.times)
-    for site in failed_sites:
-        mask[site * per_site : (site + 1) * per_site] = False
-    full_mask = np.append(mask, True)
-    action, _ = model.predict(obs, action_masks=full_mask, deterministic=True)
+    mask = reachability_mask(pose, config) & ~excluded
+    action, _ = model.predict(
+        obs, action_masks=np.append(mask, True), deterministic=True
+    )
     chosen = int(action)
-    if chosen == config.n_actions - 1:
-        return None
-    return split_action(chosen, config)
-
-
-def split_action(action: int, config: ProbingEnvConfig) -> tuple[int, float, float]:
-    """Split a push action index into (site index, speed, contact time)."""
-    per_site = len(config.speeds) * len(config.times)
-    site, rest = divmod(action, per_site)
-    speed_idx, time_idx = divmod(rest, len(config.times))
-    return site, config.speeds[speed_idx], config.times[time_idx]
+    return None if chosen == config.n_actions - 1 else chosen
 
 
 def env_parts() -> list[tuple[float, float, float, float]]:
@@ -345,20 +294,6 @@ class ProbingEnv(gymnasium.Env):
         self.ensemble = config.ensemble
         self.family = config.family
         self.predictor = SurrogatePredictor(config.ensemble)
-
-        # Per (site, speed, time) body-frame tip targets: the approach and
-        # push-end points, flattened in the action's index order.
-        n_speeds, n_times = len(config.speeds), len(config.times)
-        per_site_forward = STANDOFF + np.repeat(config.speeds, n_times) * np.tile(
-            config.times, n_speeds
-        )
-        self._tip_body_xy = np.repeat(
-            config.site_positions[:, :2], n_speeds * n_times, axis=0
-        )
-        self._normal_body_xy = np.repeat(
-            config.site_normals[:, :2], n_speeds * n_times, axis=0
-        )
-        self._forward = np.tile(per_site_forward, len(config.site_positions))
 
         # Measurement noise: the deployment error minus the members' own
         # spread, shrunk along R's correlation structure so the result
@@ -467,22 +402,15 @@ class ProbingEnv(gymnasium.Env):
                 self._info("stop"),
             )
 
-        site, speed, time = split_action(int(action), self.config)
+        index = int(action)
+        push = self.config.actions[index]
         entropy_before = self.belief.entropy()
 
         # The executed path: the commanded maneuver run with this push's
         # sampled arm lag.
-        body_action = Action(
-            contact=SurfaceNormal(
-                position=self.config.site_positions[site],
-                normal=self.config.site_normals[site],
-            ),
-            velocity=speed,
-            time=time,
-        )
         path = nominal_tip_path(
             planar_transform(self._pose),
-            body_action,
+            push,
             SETTLE_TIME,
             self.config.transfer_height,
         )
@@ -494,58 +422,37 @@ class ProbingEnv(gymnasium.Env):
             self.np_random,
         )
         path_block = path_downsample(path.tip_times, path.tip_positions)[:2].reshape(-1)
+        start = np.array([*self._pose, 0.0, 0.0, 0.0])
+        parts = (
+            self.config.contact_positions[index],
+            self.config.contact_normals[index],
+            float(self.config.speeds[index]),
+            float(self.config.times[index]),
+            path_block,
+        )
 
-        # Truth outcome: the sampled member's prediction of the executed
-        # path, plus deployment-scale measurement noise (world frame).
-        start = np.array([*self._pose[:2], self._pose[2], 0.0, 0.0, 0.0])
-        shared = np.concatenate(
-            [
-                start,
-                self.config.site_positions[site],
-                self.config.site_normals[site],
-                [speed, time],
-                path_block,
-            ]
-        )
-        truth_inputs = np.concatenate([self._true_eta.as_array(), shared])[None, :]
+        # Truth outcome: a sampled member's prediction of the executed path,
+        # plus deployment-scale measurement noise (world frame).
         member = int(self.np_random.integers(len(self.ensemble.members)))
-        truth = self.ensemble.predict(truth_inputs, member=member)[0]
+        truth = world_measurement(
+            start,
+            self.ensemble.predict(
+                surrogate_inputs([self._true_eta], start, *parts), member=member
+            ),
+        )[0]
         noise = self._noise_chol @ self.np_random.standard_normal(6)
-        c, s = np.cos(self._pose[2]), np.sin(self._pose[2])
-        to_world = np.array([[c, s], [-s, c]])
-        measured = np.concatenate(
-            [
-                start[:2] + truth[:2] @ to_world + noise[:2],
-                [wrap_angle(self._pose[2] + truth[2] + noise[2])],
-                truth[3:5] @ to_world + noise[3:5],
-                [truth[5] + noise[5]],
-            ]
-        )
+        measured = truth + noise
+        measured[2] = wrap_angle(measured[2])
 
         # The filter predicts under every grid hypothesis from the same
         # measured path, then updates from the noisy measurement.
-        predicted = self.predictor.predict_from_parts(
-            self.config.grid,
-            start,
-            self.config.site_positions[site],
-            self.config.site_normals[site],
-            speed,
-            time,
-            path_block,
-        )
+        predicted = self.predictor.predict_from_parts(self.config.grid, start, *parts)
         self.belief.update_from_predictions(measured, predicted)
 
         self._pose = np.array(measured[:3])
         self._pushes += 1
         self._last_measurement = measured
-        self._last_action = np.array(
-            [
-                *self.config.site_positions[site],
-                *self.config.site_normals[site],
-                speed,
-                time,
-            ]
-        )
+        self._last_action = self.config.action_vector(index)
         reward = (
             self.config.entropy_weight * (entropy_before - self.belief.entropy())
             - self.config.step_cost

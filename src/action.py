@@ -22,9 +22,3 @@ class Action:
             raise ValueError(f"velocity must be positive, got {self.velocity}")
         if self.time <= 0.0:
             raise ValueError(f"time must be positive, got {self.time}")
-
-
-# The discrete library's commanded tip speeds (m/s) and contact times (s), used
-# by the PPO environment and the surrogate data.
-SPEEDS = (0.05, 0.1)
-TIMES = (0.2, 0.4)

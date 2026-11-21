@@ -20,6 +20,13 @@ from .env import ProbingEnv, ProbingEnvConfig, make_probing_env_config
 from .params import grid_spans
 
 
+def usage_by(values: np.ndarray, counts: np.ndarray) -> str:
+    """How many chosen pushes fall on each distinct value of a per-action
+    quantity (speed, distance), as "value: count" pairs."""
+    keys = np.unique(values)
+    return ", ".join(f"{key:g}: {int(counts[values == key].sum())}" for key in keys)
+
+
 def _plot_curve(curve_path: Path, out: Path) -> None:
     d = np.load(curve_path)
     t = d["timesteps"] / 1000
@@ -115,6 +122,8 @@ def _behavioral_probe(
     pushes_arr, errors_arr = np.array(pushes_list), np.array(errors)
 
     sites = np.nonzero(action_counts)[0]
+    all_contacts = {tuple(c) for c in config.contact_positions.round(6)}
+    used_contacts = {tuple(config.contact_positions[i].round(6)) for i in sites}
     push_line = (
         f"- pushes: mean {pushes_arr.mean():.2f}, histogram "
         f"{np.bincount(pushes_arr).tolist()}"
@@ -129,7 +138,15 @@ def _behavioral_probe(
         "",
         push_line,
         error_line,
-        f"- distinct sites used: {len(sites)}/{config.n_push_actions // (len(config.speeds) * len(config.times))}",
+        (
+            f"- distinct pushes used: {len(sites)}/{config.n_push_actions}, "
+            f"distinct contact points {len(used_contacts)}/{len(all_contacts)}"
+        ),
+        f"- pushes by speed (m/s): {usage_by(config.speeds, action_counts)}",
+        (
+            f"- pushes by distance (m): "
+            f"{usage_by(np.round(config.speeds * config.times, 3), action_counts)}"
+        ),
         f"- distinct follow-up sequences: {len(set(follow_sets))}/{episodes}",
         f"- entropy at stop: mean {np.mean(stop_ent):.2f} nats",
     ]

@@ -1,14 +1,11 @@
 """Push-space geometry, sampling and reach, checked against the T's outline and
 the env's reach mask (no physics)."""
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
-from src.env import reachability_mask
 from src.geometry import boundary_edges
-from src.iiwa import STANDOFF, Pusher, clear_sites
+from src.iiwa import Pusher, clear_sites
 from src.object import Object, Rod
 from src.push_space import (
     DURATION_RANGE,
@@ -19,6 +16,7 @@ from src.push_space import (
     PushSpace,
     make_push_space,
     reachable,
+    reachable_mask,
 )
 
 SPACING = 0.012  # m, the MPC grid spacing
@@ -45,16 +43,6 @@ def nearest_face(space: PushSpace, xy: np.ndarray) -> tuple[int, float]:
     distances = [segment_distance(xy, f.start, f.end) for f in space.faces]
     face = int(np.argmin(distances))
     return face, distances[face]
-
-
-def env_style_mask(pose: np.ndarray, space_action) -> bool:
-    """The env's vectorized reach mask applied to one push."""
-    config = SimpleNamespace(
-        tip_body_xy=space_action.contact.position[None, :2],
-        normal_body_xy=space_action.contact.normal[None, :2],
-        forward=np.array([STANDOFF + space_action.velocity * space_action.time]),
-    )
-    return bool(reachability_mask(pose, config)[0])
 
 
 def test_faces_are_the_eight_sides_of_the_t(obj: Object, space: PushSpace) -> None:
@@ -166,15 +154,21 @@ def test_grid_includes_both_span_ends_of_every_face(space: PushSpace) -> None:
             assert tuple(np.round(space.contact(face, s).position[:2], 9)) in positions
 
 
-def test_reachable_agrees_with_env_mask(space: PushSpace) -> None:
+def test_vectorized_reach_agrees_with_single_pushes(space: PushSpace) -> None:
     rng = np.random.default_rng(1)
     verdicts = []
-    for _ in range(300):
+    for _ in range(100):
         pose = np.array(
             [rng.uniform(0.3, 0.8), rng.uniform(-0.3, 0.3), rng.uniform(-np.pi, np.pi)]
         )
-        action = space.sample(rng)
-        verdict = reachable(pose, action)
-        assert verdict == env_style_mask(pose, action)
-        verdicts.append(verdict)
+        actions = [space.sample(rng) for _ in range(5)]
+        mask = reachable_mask(
+            pose,
+            np.array([a.contact.position[:2] for a in actions]),
+            np.array([a.contact.normal[:2] for a in actions]),
+            np.array([a.velocity * a.time for a in actions]),
+        )
+        single = [reachable(pose, a) for a in actions]
+        assert mask.tolist() == single
+        verdicts += single
     assert any(verdicts) and not all(verdicts)
