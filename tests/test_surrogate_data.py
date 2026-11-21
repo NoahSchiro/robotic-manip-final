@@ -17,8 +17,17 @@ from src.iiwa import (
     transfer_height,
 )
 from src.object import Object, Rod
+from src.params import Eta
 from src.path_family import PathFamily
-from src.surrogate import PATH_SAMPLES, nominal_action_tip_path, nominal_tip_path
+from src.surrogate import (
+    N_INPUTS,
+    N_OUTPUTS,
+    PATH_SAMPLES,
+    SurrogateEnsemble,
+    SurrogatePredictor,
+    nominal_action_tip_path,
+    nominal_tip_path,
+)
 from src.surrogate_data import (
     assign_split,
     coverage_summary,
@@ -177,3 +186,24 @@ def test_shards_concatenate_and_drop_repeated_seeds(tmp_path: Path) -> None:
     x, y, split = shard_arrays([first, second])
     assert len(x) == len(y) == len(split) == 20
     assert np.bincount(split, minlength=3).tolist() == [16, 2, 2]
+
+
+def test_predictions_do_not_depend_on_the_yaw_convention() -> None:
+    rng = np.random.default_rng(0)
+    ensemble = SurrogateEnsemble(
+        input_mean=np.zeros(N_INPUTS),
+        input_std=np.ones(N_INPUTS),
+        output_mean=np.zeros(N_OUTPUTS),
+        output_std=np.ones(N_OUTPUTS),
+        members=(((rng.normal(size=(N_OUTPUTS, N_INPUTS)), np.zeros(N_OUTPUTS)),),),
+    )
+    predictor = SurrogatePredictor(ensemble)
+    parts = (np.zeros(3), np.array([1.0, 0.0, 0.0]), 0.1, 0.4, np.zeros(32))
+    start = np.array([0.55, 0.0, -1.0, 0.0, 0.0, 0.0])
+    wrapped = start.copy()
+    wrapped[2] += 2 * np.pi
+    eta = [Eta(0.5, 0.0, 0.0)]
+    assert np.allclose(
+        predictor.predict_from_parts(eta, start, *parts),
+        predictor.predict_from_parts(eta, wrapped, *parts),
+    )

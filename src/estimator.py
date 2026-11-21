@@ -73,19 +73,21 @@ CALIBRATED_R = np.array(
 SUBCELLS = 2
 
 # CALIBRATED_R_SURROGATE covers the trained surrogate predicting from
-# measured tip paths.  Its errors carry the arm's force- and
-# gravity-dependent tracking deviation from the commanded path, which the
-# constructed training paths do not reproduce — the env's estimator noise
-# is scaled to this world so the policy trains against deployment-honest
-# belief degradation.
+# measured tip paths.  Its errors include the arm's tracking deviation, which
+# the training paths' synthetic deviations reproduce only in part; the PPO
+# environment's estimator noise is scaled to this, so the policy trains with
+# a belief that sharpens as slowly as the deployed surrogate filter's.
+# Calibrated by main.py calibrate --predictor surrogate: 192 truth pushes,
+# seed 20000, truth timestep 0.0001, settle time 0.3 s, 2^3 sub-cells,
+# ensemble trained on 140k samples.
 CALIBRATED_R_SURROGATE = np.array(
     [
-        [3.892e-05, 1.022e-05, 5.268e-05, 1.437e-04, 3.888e-05, 4.768e-04],
-        [1.022e-05, 4.819e-05, 7.738e-06, 1.075e-05, 1.839e-04, -7.429e-04],
-        [5.268e-05, 7.738e-06, 3.673e-03, -1.501e-04, 2.191e-04, 7.709e-03],
-        [1.437e-04, 1.075e-05, -1.501e-04, 1.252e-03, 1.263e-04, 9.018e-05],
-        [3.888e-05, 1.839e-04, 2.191e-04, 1.263e-04, 1.329e-03, -2.172e-03],
-        [4.768e-04, -7.429e-04, 7.709e-03, 9.018e-05, -2.172e-03, 1.941e-01],
+        [4.245e-06, -4.095e-07, -2.228e-05, 1.442e-05, -1.958e-06, -4.233e-05],
+        [-4.095e-07, 2.913e-06, 7.439e-06, -6.945e-07, 1.477e-05, -5.209e-05],
+        [-2.228e-05, 7.439e-06, 1.120e-03, -1.403e-05, 1.612e-04, 3.136e-03],
+        [1.442e-05, -6.945e-07, -1.403e-05, 3.773e-04, -2.504e-05, 1.779e-05],
+        [-1.958e-06, 1.477e-05, 1.612e-04, -2.504e-05, 4.697e-04, -9.305e-05],
+        [-4.233e-05, -5.209e-05, 3.136e-03, 1.779e-05, -9.305e-05, 1.018e-01],
     ]
 )
 

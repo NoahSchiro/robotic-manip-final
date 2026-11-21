@@ -60,7 +60,7 @@ class SurrogateEnsemble:
     def predict(self, x: np.ndarray, member: int | None = None) -> np.ndarray:
         """Predict standardized-to-raw outputs for the (N, 49) inputs `x`:
         the members' mean, or one member's output."""
-        standardized = (x - self.input_mean) / self.input_std
+        standardized = ((x - self.input_mean) / self.input_std).astype(np.float32)
         if member is None:
             outputs = [mlp_forward(w, standardized) for w in self.members]
             raw = np.mean(np.stack(outputs), axis=0)
@@ -219,10 +219,12 @@ def load_ensemble(path: Path) -> SurrogateEnsemble:
             layers: list[Layer] = []
             j = 0
             while f"member{i}_layer{j}_weight" in data:
+                # Inference runs in float32: about twice as fast, and its
+                # rounding sits far below the surrogate's own error.
                 layers.append(
                     (
-                        data[f"member{i}_layer{j}_weight"],
-                        data[f"member{i}_layer{j}_bias"],
+                        data[f"member{i}_layer{j}_weight"].astype(np.float32),
+                        data[f"member{i}_layer{j}_bias"].astype(np.float32),
                     )
                 )
                 j += 1
@@ -239,6 +241,55 @@ def load_ensemble(path: Path) -> SurrogateEnsemble:
 def count_members(names: Sequence[str]) -> int:
     """Count distinct `memberN_layer0_weight` keys in a sorted name list."""
     return len({name.split("_")[0] for name in names})
+
+
+def feature_start(start: np.ndarray) -> np.ndarray:
+    """A start pose or planar state (..., 3 or 6; x, y, yaw first) as the
+    surrogate's input sees it: yaw in [0, 2*pi), the convention the training
+    data's start poses use.
+    Observations and the environment report yaw in [-pi, pi), which the
+    network never saw for negative yaws."""
+    features = np.array(start, dtype=float)
+    features[..., 2] = np.mod(features[..., 2], 2.0 * np.pi)
+    return features
+
+
+def surrogate_inputs(
+    etas: Sequence[Eta],
+    start: np.ndarray,
+    contact_position: np.ndarray,
+    contact_normal: np.ndarray,
+    speed: float,
+    time: float,
+    path_block: np.ndarray,
+) -> np.ndarray:
+    """The ensemble's (len(etas), N_INPUTS) inputs: each eta with the shared
+    start planar state (6; world x, y, yaw, velocities), the body-frame
+    contact point and inward normal, the commanded speed (m/s) and contact
+    time (s), and the downsampled (32,) world-frame tip path block."""
+    shared = np.concatenate(
+        [
+            feature_start(start),
+            contact_position,
+            contact_normal,
+            [speed, time],
+            path_block,
+        ]
+    )
+    eta_rows = np.array([eta.as_array() for eta in etas])
+    return np.concatenate([eta_rows, np.tile(shared, (len(etas), 1))], axis=1)
+
+
+def world_measurement(start: np.ndarray, outputs: np.ndarray) -> np.ndarray:
+    """The estimator's world-frame measurements (N, 6) from the ensemble's
+    start-frame outputs (N, 6): pose at the window's end, velocity at the
+    push segment's end."""
+    c, s = np.cos(start[2]), np.sin(start[2])
+    to_world = np.array([[c, s], [-s, c]])
+    end_xy = start[:2] + outputs[:, :2] @ to_world
+    end_yaw = wrap_angle(start[2] + outputs[:, 2])
+    velocity_xy = outputs[:, 3:5] @ to_world
+    return np.column_stack([end_xy, end_yaw, velocity_xy, outputs[:, 5]])
 
 
 def measured_path_block(obs: PushObservation) -> np.ndarray:
@@ -282,23 +333,10 @@ class SurrogatePredictor:
         time: float,
         path_block: np.ndarray,
     ) -> np.ndarray:
-        """Predict the measurement under each of `etas` from plain arrays:
-        the start planar state (6), the body-frame contact point and inward
-        normal, the commanded speed and time, and the downsampled (32,) tip
-        path block.  The environment calls this directly and never builds
-        PushObservation objects."""
-        shared = np.concatenate(
-            [start, contact_position, contact_normal, [speed, time], path_block]
+        """Predict the measurement under each of `etas` from plain arrays
+        (see surrogate_inputs).  The environment calls this directly and
+        never builds PushObservation objects."""
+        inputs = surrogate_inputs(
+            etas, start, contact_position, contact_normal, speed, time, path_block
         )
-        eta_rows = np.array([eta.as_array() for eta in etas])
-        inputs = np.concatenate([eta_rows, np.tile(shared, (len(etas), 1))], axis=1)
-        outputs = self.ensemble.predict(inputs)
-
-        # Start-frame outputs to the world-frame measurement: pose at the
-        # window's end, velocity at the push segment's end.
-        c, s = np.cos(start[2]), np.sin(start[2])
-        to_world = np.array([[c, s], [-s, c]])
-        end_xy = start[:2] + outputs[:, :2] @ to_world
-        end_yaw = wrap_angle(start[2] + outputs[:, 2])
-        velocity_xy = outputs[:, 3:5] @ to_world
-        return np.column_stack([end_xy, end_yaw, velocity_xy, outputs[:, 5]])
+        return world_measurement(start, self.ensemble.predict(inputs))

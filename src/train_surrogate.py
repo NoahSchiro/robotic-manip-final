@@ -22,7 +22,14 @@ import torch
 from torch import nn
 
 from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE
-from .surrogate import N_INPUTS, N_OUTPUTS, MLPWeights, SurrogateEnsemble, save_ensemble
+from .surrogate import (
+    N_INPUTS,
+    N_OUTPUTS,
+    MLPWeights,
+    SurrogateEnsemble,
+    feature_start,
+    save_ensemble,
+)
 
 BATCH_SIZE = 1024
 
@@ -78,7 +85,7 @@ def dataset_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         inputs = np.concatenate(
             [
                 data["eta"],
-                data["start_pose"],
+                feature_start(data["start_pose"]),
                 data["start_velocity"],
                 data["site_position"],
                 data["site_normal"],
