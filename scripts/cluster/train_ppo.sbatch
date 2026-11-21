@@ -22,6 +22,9 @@ TIMESTEPS=${TIMESTEPS:-3000000}
 N_ENVS=${N_ENVS:-90}
 IMAGE=${IMAGE:-$HOME/uv-py314.sif}
 
+# One numerical-library thread per environment process.
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+
 module load apptainer
 mkdir -p logs "$OUT"
 echo "job $SLURM_JOB_ID on $(hostname): $N_ENVS envs, $TIMESTEPS steps, out $OUT, commit $(git rev-parse --short HEAD)"

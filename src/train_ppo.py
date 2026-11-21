@@ -193,6 +193,22 @@ class PairedEvalCallback(BaseCallback):
             self.num_timesteps // self._eval_every + 1
         ) * self._eval_every
 
+    def _on_rollout_end(self) -> None:
+        """One progress line per policy update: steps, rate, and the recent
+        episodes' mean length (pushes plus the stop) and return."""
+        if not self.verbose:
+            return
+        episodes = list(self.model.ep_info_buffer or [])
+        length = np.mean([e["l"] for e in episodes]) if episodes else float("nan")
+        reward = np.mean([e["r"] for e in episodes]) if episodes else float("nan")
+        seconds = time.perf_counter() - self._started
+        print(
+            f"[{self.num_timesteps} steps] {self.num_timesteps / seconds:.0f} steps/s "
+            f"since start | episode length {length:.1f} | return {reward:+.3f} "
+            f"| {seconds / 60:.0f} min",
+            flush=True,
+        )
+
     def _on_step(self) -> bool:
         if self.num_timesteps < self._next_eval:
             return True
