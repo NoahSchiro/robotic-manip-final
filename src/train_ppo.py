@@ -33,7 +33,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from .env import ProbingEnv, ProbingEnvConfig
+from .env import ProbingEnv, ProbingEnvConfig, policy_decision
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,7 @@ def run_learned_episode(
     terminated = False
     while not terminated:
         masks = env.action_masks()
-        action, _ = model.predict(obs, action_masks=masks, deterministic=True)
+        action = policy_decision(model, obs, masks)
         obs, reward, terminated, _, info = env.step(int(action))
         total += reward
         pushes = int(cast(int, info["pushes"]))

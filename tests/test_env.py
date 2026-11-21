@@ -4,14 +4,19 @@ behavior, without running Drake."""
 import typing
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
+from sb3_contrib import MaskablePPO
+from torch.distributions import Categorical
 
 from src.env import (
     ProbingEnv,
     ProbingEnvConfig,
     make_probing_env_config,
+    policy_decision,
     reachability_mask,
 )
 from src.push_space import reachable
@@ -135,3 +140,31 @@ def test_reachability_mask_matches_push_space_reachable() -> None:
     expected = [reachable(pose, action) for action in lattice.actions]
     assert mask.tolist() == expected
     assert 0 < mask.sum() < len(mask)
+
+
+class FixedPolicy:
+    """Stands in for a MaskablePPO policy with fixed action probabilities."""
+
+    def __init__(self, probs: list[float]) -> None:
+        self.probs = torch.tensor([probs])
+
+    def obs_to_tensor(self, obs: np.ndarray) -> tuple[torch.Tensor, bool]:
+        return torch.as_tensor(obs), False
+
+    def get_distribution(self, _obs: torch.Tensor, action_masks: np.ndarray) -> object:
+        probs = self.probs * torch.as_tensor(action_masks)
+        return SimpleNamespace(distribution=Categorical(probs=probs / probs.sum()))
+
+
+def decide(probs: list[float], mask: list[bool] | None = None) -> int:
+    model = typing.cast(MaskablePPO, SimpleNamespace(policy=FixedPolicy(probs)))
+    full = np.ones(len(probs), dtype=bool) if mask is None else np.array(mask)
+    return policy_decision(model, np.zeros(3, dtype=np.float32), full)
+
+
+def test_decision_pushes_when_pushing_is_more_likely_than_stopping() -> None:
+    # Stop is the single most probable action, but pushing totals 0.7.
+    assert decide([0.2, 0.22, 0.28, 0.3]) == 2
+    assert decide([0.1, 0.1, 0.2, 0.6]) == 3
+    # A masked push never wins.
+    assert decide([0.5, 0.1, 0.1, 0.3], mask=[False, True, True, True]) == 3

@@ -311,7 +311,7 @@ def parse_args() -> argparse.Namespace:
     demo_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo_run5/ppo_600000.zip"),
+        default=Path("data/ppo/ppo_final.zip"),
         help="trained probing policy",
     )
     demo_parser.add_argument("--episodes", type=int, default=3, help="episodes to show")
@@ -340,7 +340,7 @@ def parse_args() -> argparse.Namespace:
     report_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo_run5/ppo_600000.zip"),
+        default=Path("data/ppo/ppo_final.zip"),
         help="trained probing policy for the behavioral probe",
     )
     report_parser.add_argument(
@@ -435,7 +435,7 @@ def parse_args() -> argparse.Namespace:
     simulate_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo_run5/ppo_600000.zip"),
+        default=Path("data/ppo/ppo_final.zip"),
         help="trained probing policy (--policy ppo)",
     )
     simulate_parser.add_argument(

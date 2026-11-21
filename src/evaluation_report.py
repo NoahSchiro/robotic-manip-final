@@ -16,7 +16,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sb3_contrib import MaskablePPO
 
-from .env import ProbingEnv, ProbingEnvConfig, make_probing_env_config
+from .env import (
+    ProbingEnv,
+    ProbingEnvConfig,
+    make_probing_env_config,
+    policy_decision,
+)
 from .params import grid_spans
 
 
@@ -104,7 +109,7 @@ def _behavioral_probe(
         picks: list[int] = []
         while not terminated:
             masks = env.action_masks()
-            action, _ = model.predict(obs, action_masks=masks, deterministic=True)
+            action = policy_decision(model, obs, masks)
             if int(action) != config.n_actions - 1:
                 action_counts[int(action)] += 1
                 picks.append(int(action))

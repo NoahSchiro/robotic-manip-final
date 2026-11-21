@@ -33,6 +33,7 @@ import numpy as np
 from gymnasium import spaces
 from pydrake.all import RigidTransform, RotationMatrix
 from sb3_contrib import MaskablePPO
+from torch.distributions import Categorical
 
 from .action import Action
 from .estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
@@ -256,11 +257,25 @@ def select_push_action(
     the `excluded` (A,) pushes.  None when the policy stops."""
     obs = observation_vector(belief, pose, last_measurement, last_action, pushes)
     mask = reachability_mask(pose, config) & ~excluded
-    action, _ = model.predict(
-        obs, action_masks=np.append(mask, True), deterministic=True
-    )
-    chosen = int(action)
+    chosen = policy_decision(model, obs, np.append(mask, True))
     return None if chosen == config.n_actions - 1 else chosen
+
+
+def policy_decision(model: MaskablePPO, obs: np.ndarray, mask: np.ndarray) -> int:
+    """The policy's deterministic choice under `mask` (stop last): stop when
+    its probability exceeds that of all pushes together, else the most
+    probable push.  With one stop action against hundreds of pushes, the
+    single most probable action is stop long before the policy actually
+    prefers stopping, so a plain argmax would stop too early."""
+    tensor, _ = model.policy.obs_to_tensor(obs)
+    distribution = model.policy.get_distribution(tensor, action_masks=mask)
+    categorical = distribution.distribution
+    assert isinstance(categorical, Categorical), "a Discrete action space"
+    probs = categorical.probs.detach().cpu().numpy().reshape(-1)
+    stop = len(probs) - 1
+    if probs[stop] >= probs[:stop].sum():
+        return stop
+    return int(np.argmax(probs[:stop]))
 
 
 def env_parts() -> list[tuple[float, float, float, float]]:

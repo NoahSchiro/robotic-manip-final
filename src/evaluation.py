@@ -27,6 +27,7 @@ from .env import (
     ProbingEnv,
     ProbingEnvConfig,
     make_probing_env_config,
+    policy_decision,
 )
 from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE, GridBayesFilter
 from .iiwa import Pusher
@@ -182,7 +183,7 @@ def _surrogate_episode(
     info: dict[str, object] = {}
     while not terminated:
         masks = env.action_masks()
-        action, _ = model.predict(obs, action_masks=masks, deterministic=True)
+        action = policy_decision(model, obs, masks)
         obs, reward, terminated, _, info = env.step(int(action))
         total += reward
     component_error = cast(np.ndarray, info["estimation_error"])

@@ -166,7 +166,8 @@ def test_surrogate_stop_is_processed_by_environment(
             )
 
     monkeypatch.setattr(evaluation, "ProbingEnv", FakeEnv)
-    model = SimpleNamespace(predict=lambda *_args, **_kwargs: (1, None))
+    monkeypatch.setattr(evaluation, "policy_decision", lambda *_args: 1)
+    model = SimpleNamespace()
     config = SimpleNamespace(n_actions=2, grid=[Eta(0.1, 0, 0), Eta(0.9, 0, 0)])
     record = evaluation._surrogate_episode(model, config, seed=7)
     assert record.pushes == 0

@@ -7,12 +7,12 @@
 #   sbatch scripts/cluster/train_ppo.sbatch
 #   OUT=data/ppo_bench TIMESTEPS=50000 N_ENVS=32 sbatch -t 00:30:00 scripts/cluster/train_ppo.sbatch
 #
-# Each environment process holds about 0.4 GB; leave a few cores for the
-# learner process.
+# Each environment process holds about 0.4 GB and the learner about 4 GB;
+# leave a few cores for the learner process.
 #SBATCH -J train-ppo
 #SBATCH -p mit_normal
 #SBATCH -c 96
-#SBATCH --mem=96G
+#SBATCH --mem=48G
 #SBATCH -t 12:00:00
 #SBATCH -o logs/%x-%j.log
 

@@ -109,6 +109,12 @@ uv run python main.py evaluation-report
 uv run python main.py demo
 ```
 
+To score a trained policy in the surrogate world and see which pushes it chooses:
+
+```sh
+uv run python -m scripts.evaluate_policy --model data/ppo/ppo_final.zip --out data/ppo/evaluation
+```
+
 Reports give each episode's parameter errors, reward, push count, and stop
 reason.
 
@@ -197,6 +203,7 @@ per measurement component, and the friction each trial's pushes favour. About
 | `scripts/motion_plans/` | Push lists for the motion checks (extreme pushes, stress pushes) |
 | `scripts/model_bias.py` | Prediction model against the truth sim on recorded pushes: mismatch, timestep effect, best-fit friction |
 | `scripts/push_informativeness.py` | How well pushes of each speed and distance separate neighbouring hypotheses |
+| `scripts/evaluate_policy.py` | Trained policy against random probing on paired surrogate episodes: errors, push counts, and the speeds, distances and directions it chooses |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
 | `scripts/cluster/` | Slurm batch scripts for the Engaging cluster (PPO training) |
 
