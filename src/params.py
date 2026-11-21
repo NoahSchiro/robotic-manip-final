@@ -6,7 +6,9 @@ rod's body-frame position, the displaced point mass that shifts the COM.
 The rod's mass is known and fixed.
 """
 
+import functools
 import itertools
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -146,7 +148,13 @@ class Subcells:
     weights: np.ndarray  # (M, len(grid)) interpolation weights, rows summing to 1
 
 
-def subcells(grid: list[Eta], n: int) -> Subcells:
+def subcells(grid: Sequence[Eta], n: int) -> Subcells:
+    """See _subcells; built once per (grid, n) and shared read-only."""
+    return _subcells(tuple(grid), n)
+
+
+@functools.lru_cache(maxsize=4)
+def _subcells(grid: tuple[Eta, ...], n: int) -> Subcells:
     """Split every grid cell into n x n x n equal boxes and place a point at
     each box's centre; n = 1 gives the grid itself.
 
@@ -155,7 +163,7 @@ def subcells(grid: list[Eta], n: int) -> Subcells:
     edge, the end of a parameter range), the value is held constant at the
     owning hypothesis's on that axis."""
     points = np.array([g.as_array() for g in grid])
-    step = grid_step(grid)
+    step = grid_step(list(grid))
     lattice = np.rint((points - points.min(axis=0)) / step).astype(int)
     index = {tuple(cell): i for i, cell in enumerate(lattice)}
     offsets = (np.arange(n) + 0.5) / n - 0.5
@@ -170,11 +178,14 @@ def subcells(grid: list[Eta], n: int) -> Subcells:
     for k, row in enumerate(rows):
         for node, weight in row.items():
             weights[k, node] = weight
-    return Subcells(
+    cells = Subcells(
         points=points.min(axis=0) + np.array(positions) * step,
         owner=np.array(owners),
         weights=weights,
     )
+    for array in (cells.points, cells.owner, cells.weights):
+        array.flags.writeable = False
+    return cells
 
 
 def _corner_weights(
