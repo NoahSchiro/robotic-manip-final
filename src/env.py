@@ -251,13 +251,15 @@ def select_push_action(
     pushes: int,
     config: ProbingEnvConfig,
     excluded: np.ndarray,
+    allow_stop: bool = True,
 ) -> int | None:
     """The deployment action selection: the trained policy picks the next
     push index from the lattice under the reachability mask, never one of
-    the `excluded` (A,) pushes.  None when the policy stops."""
+    the `excluded` (A,) pushes.  None when the policy stops; without
+    `allow_stop` it must push, unless no push is legal."""
     obs = observation_vector(belief, pose, last_measurement, last_action, pushes)
     mask = reachability_mask(pose, config) & ~excluded
-    chosen = policy_decision(model, obs, np.append(mask, True))
+    chosen = policy_decision(model, obs, np.append(mask, allow_stop or not mask.any()))
     return None if chosen == config.n_actions - 1 else chosen
 
 

@@ -138,9 +138,7 @@ def random_selector(
     return select
 
 
-def lattice_selector(
-    actions: Sequence[Action], rng: np.random.Generator
-) -> Selector:
+def lattice_selector(actions: Sequence[Action], rng: np.random.Generator) -> Selector:
     """Uniform over the reachable pushes among `actions`, skipping pushes
     whose arm plan failed at this decision; "unreachable" when none is
     left."""
@@ -166,10 +164,13 @@ def long_fast(actions: Sequence[Action]) -> list[Action]:
     ]
 
 
-def policy_selector(model: MaskablePPO, config: ProbingEnvConfig) -> Selector:
+def policy_selector(
+    model: MaskablePPO, config: ProbingEnvConfig, min_pushes: int = 0
+) -> Selector:
     """The trained policy's masked choice from the probing lattice, returning
-    "stop" when it stops.  Every lattice push sharing a contact point with a
-    push whose arm plan failed at this decision is masked."""
+    "stop" when it stops; stopping is masked until `min_pushes` pushes are
+    done.  Every lattice push sharing a contact point with a push whose arm
+    plan failed at this decision is masked."""
 
     def select(state: ProbingState, failed: list[Action]) -> Action | str:
         assert state.belief is not None, "the policy chooses from the belief"
@@ -187,6 +188,7 @@ def policy_selector(model: MaskablePPO, config: ProbingEnvConfig) -> Selector:
             state.pushes,
             config,
             excluded,
+            allow_stop=state.pushes >= min_pushes,
         )
         return "stop" if chosen is None else config.actions[chosen]
 

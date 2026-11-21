@@ -118,7 +118,7 @@ def test_immediate_policy_stop_receives_terminal_reward(
     monkeypatch.setattr(
         evaluation,
         "policy_selector",
-        lambda *_: lambda *_args: "stop",
+        lambda *_args, **_kwargs: lambda *_a: "stop",
     )
     record = evaluation._drake_episode(
         object(),

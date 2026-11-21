@@ -121,7 +121,9 @@ pushes: random pushes from the policy's 396-push lattice, and random pushes
 from its long, fast subset (at least 6.8 cm and 11 cm/s). Reports give each
 episode's parameter errors, reward, push count, and stop reason. On the
 cluster, `scripts/cluster/evaluate_transfer.sbatch` runs one episode per array
-task; combine them with:
+task (`FIXED_PUSHES=3` makes every strategy push exactly three times, the
+policy choosing which pushes; `--fixed-pushes` does the same for
+`evaluate`); combine them with:
 
 ```sh
 uv run python -m scripts.merge_evaluations data/transfer/episode_*.json --out data/transfer/summary.json

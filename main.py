@@ -396,6 +396,13 @@ def parse_args() -> argparse.Namespace:
     )
     eval_parser.add_argument("--seed", type=int, default=70000, help="PRNG seed")
     eval_parser.add_argument(
+        "--fixed-pushes",
+        type=int,
+        default=None,
+        help="every strategy makes exactly this many pushes (the policy may not "
+        "stop earlier); default: the policy decides when to stop",
+    )
+    eval_parser.add_argument(
         "--path-family",
         type=Path,
         default=Path("data/path_family.npz"),
@@ -1035,6 +1042,7 @@ def evaluate_command(args: argparse.Namespace) -> None:
             predictor=args.predictor,
             random_only=args.random_only,
             random_pushes=args.push_budget,
+            fixed_pushes=args.fixed_pushes,
         )
     )
 

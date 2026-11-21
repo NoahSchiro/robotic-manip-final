@@ -6,14 +6,18 @@
 # skipped, so resubmitting (or a preemption requeue) only fills in the rest.
 #
 #   sbatch scripts/cluster/evaluate_transfer.sbatch
+#   FIXED_PUSHES=3 OUT=data/transfer_fixed3 sbatch scripts/cluster/evaluate_transfer.sbatch
 #   uv run python -m scripts.merge_evaluations data/transfer/episode_*.json --out data/transfer/summary.json
+#
+# FIXED_PUSHES makes every strategy push exactly that many times; otherwise
+# the policy decides when to stop and the baselines copy its count.
 #
 # Each task runs ~9 pushes in the truth sim with full-grid Drake belief
 # updates on its workers (~0.3 GB each).
 #SBATCH -J transfer
 #SBATCH -p mit_preemptable
 #SBATCH --requeue
-#SBATCH -a 0-39%20
+#SBATCH -a 0-39%40
 #SBATCH -c 16
 #SBATCH --mem=16G
 #SBATCH -t 02:00:00
@@ -24,6 +28,7 @@ OUT=${OUT:-data/transfer}
 MODEL=${MODEL:-data/ppo/ppo_final.zip}
 SEED0=${SEED0:-90000}
 IMAGE=${IMAGE:-$HOME/uv-py314.sif}
+FIXED_PUSHES=${FIXED_PUSHES:-}
 SEED=$((SEED0 + SLURM_ARRAY_TASK_ID))
 REPORT="$OUT/episode_$SEED.json"
 
@@ -33,8 +38,9 @@ if [ -e "$REPORT" ]; then
     echo "$REPORT exists; skipping"
     exit 0
 fi
-echo "task $SLURM_ARRAY_TASK_ID (seed $SEED) on $(hostname), commit $(git rev-parse --short HEAD)"
+echo "task $SLURM_ARRAY_TASK_ID (seed $SEED, fixed pushes ${FIXED_PUSHES:-none}) on $(hostname), commit $(git rev-parse --short HEAD)"
 module load apptainer
 apptainer exec "$IMAGE" uv run --no-sync python main.py evaluate \
-    --model "$MODEL" --episodes 1 --seed "$SEED" --workers 15 --out "$REPORT.partial"
+    --model "$MODEL" --episodes 1 --seed "$SEED" --workers 15 --out "$REPORT.partial" \
+    ${FIXED_PUSHES:+--fixed-pushes "$FIXED_PUSHES"}
 mv "$REPORT.partial" "$REPORT"

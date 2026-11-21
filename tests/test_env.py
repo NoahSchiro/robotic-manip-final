@@ -168,3 +168,8 @@ def test_decision_pushes_when_pushing_is_more_likely_than_stopping() -> None:
     assert decide([0.1, 0.1, 0.2, 0.6]) == 3
     # A masked push never wins.
     assert decide([0.5, 0.1, 0.1, 0.3], mask=[False, True, True, True]) == 3
+
+
+def test_masked_stop_forces_the_best_push() -> None:
+    # The policy would stop (0.7), but stopping is masked.
+    assert decide([0.1, 0.2, 0.0, 0.7], mask=[True, True, True, False]) == 1

@@ -128,7 +128,8 @@ def _drake_episode(
     r_matrix: np.ndarray,
 ) -> EpisodeRecord:
     """One episode in the Drake world.  `strategy` "learned" runs the trained
-    policy, which decides when to stop; "random" and "long_fast" run
+    policy, which decides when to stop, or with `forced_pushes` makes exactly
+    that many; "random" and "long_fast" run
     `forced_pushes` pushes drawn uniformly from the probing lattice or its
     long, fast subset (the paired baselines)."""
     eta, start_pose, action_rng = episode_conditions(seed)
@@ -142,7 +143,7 @@ def _drake_episode(
     )
     if strategy == "learned":
         assert model is not None
-        selector = policy_selector(model, config)
+        selector = policy_selector(model, config, min_pushes=forced_pushes or 0)
     elif strategy == "random":
         selector = lattice_selector(config.actions, action_rng)
     elif strategy == "long_fast":
@@ -216,11 +217,13 @@ def _run_episodes(
     r_matrix: np.ndarray,
     episodes: int,
     seed: int,
+    fixed_pushes: int | None = None,
 ) -> tuple[
     list[EpisodeRecord], list[EpisodeRecord], list[EpisodeRecord], list[EpisodeRecord]
 ]:
     """Run the learned episodes, their paired random and long-fast baselines,
-    and the same episodes in the surrogate world (the gap reference)."""
+    and the same episodes in the surrogate world (the gap reference).  With
+    `fixed_pushes`, every Drake strategy makes exactly that many pushes."""
     learned_records: list[EpisodeRecord] = []
     random_records: list[EpisodeRecord] = []
     long_fast_records: list[EpisodeRecord] = []
@@ -233,7 +236,7 @@ def _run_episodes(
             truth_config,
             filter_model,
             episode_seed,
-            forced_pushes=None,
+            forced_pushes=fixed_pushes,
             strategy="learned",
             r_matrix=r_matrix,
         )
@@ -282,6 +285,7 @@ def run_evaluation(
     predictor: str = "drake",
     random_only: bool = False,
     random_pushes: int | None = None,
+    fixed_pushes: int | None = None,
 ) -> str:
     """Run the paired evaluation — the learned policy and the
     random-probing baseline through the identical Drake pipeline — and
@@ -336,7 +340,14 @@ def run_evaluation(
         filter_model = SurrogatePredictor(load_ensemble(ensemble_path))
         r_matrix = CALIBRATED_R_SURROGATE
         drake_learned, drake_random, drake_long_fast, surrogate_learned = _run_episodes(
-            model, config, truth_config, filter_model, r_matrix, episodes, seed
+            model,
+            config,
+            truth_config,
+            filter_model,
+            r_matrix,
+            episodes,
+            seed,
+            fixed_pushes,
         )
     else:
         with ParallelPushModel(
@@ -351,6 +362,7 @@ def run_evaluation(
                     CALIBRATED_R,
                     episodes,
                     seed,
+                    fixed_pushes,
                 )
             )
 
@@ -358,6 +370,7 @@ def run_evaluation(
         "episodes": episodes,
         "seed": seed,
         "predictor": predictor,
+        "fixed_pushes": fixed_pushes,
         "drake_world": {
             "learned": _summary(drake_learned).__dict__,
             "random": _summary(drake_random).__dict__,
