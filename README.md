@@ -18,6 +18,24 @@ uv sync
 uv run pytest
 ```
 
+### On the MIT Engaging cluster
+
+The cluster's system libraries are older than Drake's Linux wheels need, so the
+project runs inside an Apptainer image with `uv` and Python 3.14:
+
+```sh
+module load apptainer
+apptainer pull ~/uv-py314.sif docker://ghcr.io/astral-sh/uv:python3.14-bookworm
+apptainer exec ~/uv-py314.sif uv sync
+```
+
+Build the image and the environment inside an allocation with enough memory
+(`salloc -p mit_normal -c 4 --mem=16G`); creating the image needs several GB.
+Prefix commands with `apptainer exec ~/uv-py314.sif` (add `--nv` on GPU
+nodes). Copy `data/path_family.npz` and `data/surrogate_ensemble.npz` over,
+since `data/` is not in git. Batch scripts are in `scripts/cluster/`; create
+`logs/` once before submitting.
+
 ## Usage
 
 Every command is a `main.py` subcommand; `uv run python main.py <command> --help`
@@ -40,6 +58,8 @@ uv run python main.py simulate --estimate --pushes 5
 uv run python main.py simulate --estimate --pushes 5 --seed 123 --mu 0.8 --rod-x 0.0 --rod-y -0.04
 # Let the trained policy choose the pushes
 uv run python main.py simulate --estimate --policy ppo
+# Update the belief with the fast surrogate instead of the Drake model (the truth stays Drake)
+uv run python main.py simulate --estimate --predictor surrogate
 ```
 
 Without `--headless`, the belief is shown after every push. In Meshcat, yellow
@@ -120,7 +140,7 @@ moves after the measurement ends.
 ```sh
 uv run python -m scripts.push_informativeness --out data/push_informativeness.json
 # Plot saved results without re-simulating
-uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures/push_informativeness.png
+uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures
 ```
 
 For every contact on the MPC grid, at matched push distances (1.5, 4.5, and
@@ -152,7 +172,7 @@ per measurement component, and the friction each trial's pushes favour. About
 | `calibrate-path-family` | Fits how the arm's executed tip path deviates from the commanded one, from recorded trials |
 | `gen-surrogate-data` | Generates one shard of surrogate training data from the Drake prediction model, with pushes drawn uniformly from the push space (about 10 samples/s on 12 workers); give each shard its own `--seed` and `--out` |
 | `train-surrogate` | Trains the surrogate's MLP ensemble on one or more shards (`--dataset a.npz b.npz ...`); `--device cuda` trains on the GPU |
-| `train-ppo` | Trains the probing policy in the surrogate world |
+| `train-ppo` | Trains the probing policy in the surrogate world, choosing among the MPC's 396 lattice pushes or stop; `--resume` continues from the latest checkpoint in `--out` |
 
 ## Code layout
 
@@ -178,6 +198,7 @@ per measurement component, and the friction each trial's pushes favour. About
 | `scripts/model_bias.py` | Prediction model against the truth sim on recorded pushes: mismatch, timestep effect, best-fit friction |
 | `scripts/push_informativeness.py` | How well pushes of each speed and distance separate neighbouring hypotheses |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
+| `scripts/cluster/` | Slurm batch scripts for the Engaging cluster (PPO training) |
 
 ## Implementation notes
 

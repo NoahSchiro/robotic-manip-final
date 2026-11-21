@@ -2,7 +2,12 @@
 
 import numpy as np
 
-from scripts.push_informativeness import contacts_on_grid, separation, summarize
+from scripts.push_informativeness import (
+    contacts_on_grid,
+    feasible_combos,
+    separation,
+    summarize,
+)
 
 
 def test_separation_is_mahalanobis_with_wrapped_yaw() -> None:
@@ -28,3 +33,10 @@ def test_contacts_are_the_distinct_grid_positions() -> None:
     contacts = contacts_on_grid(0.012)
     assert len(contacts) == 44
     assert len({c.position.tobytes() for c in contacts}) == 44
+
+
+def test_combos_keep_contact_times_in_range() -> None:
+    combos = feasible_combos((0.1, 1.0))
+    assert (0.09, 0.06) not in combos  # 1.5 s of contact
+    assert (0.015, 0.15) in combos  # exactly the 0.1 s minimum
+    assert all(0.1 - 1e-9 <= d / v <= 1.0 + 1e-9 for d, v in combos)

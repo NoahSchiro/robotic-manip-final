@@ -11,7 +11,7 @@ simulation.
 
     uv run python -m scripts.push_informativeness --out data/push_informativeness.json
     # Plot saved results without re-simulating
-    uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures/push_informativeness.png
+    uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures
 """
 
 import argparse
@@ -45,8 +45,8 @@ GRID_STEPS = {
     "rod_y": (0.0, 0.0, 0.0165),
 }
 BASES = (Eta(0.2, -0.0495, 0.0), Eta(0.7, -0.0495, 0.0))
-# (push distance m, speeds m/s); every contact time stays within 0.1-1.0 s.
-MATCHED = ((0.015, (0.03, 0.075, 0.15)), (0.045, (0.075, 0.15)), (0.09, (0.10, 0.15)))
+SPEEDS = (0.03, 0.06, 0.09, 0.12, 0.15)  # m/s, spanning the push space
+DISTANCES = (0.015, 0.045, 0.09)  # m
 POSE = RigidTransform(RollPitchYaw(0.0, 0.0, 0.0), np.array([0.55, 0.0, 0.0]))
 
 _model: DrakePushModel | None = None
@@ -134,6 +134,17 @@ def summarize(
     ]
 
 
+def feasible_combos(
+    duration_range: tuple[float, float],
+) -> list[tuple[float, float]]:
+    """Every (distance m, speed m/s) of DISTANCES x SPEEDS whose contact time
+    distance / speed lies within `duration_range` (s)."""
+    low, high = duration_range
+    return [
+        (d, v) for d in DISTANCES for v in SPEEDS if low - 1e-9 <= d / v <= high + 1e-9
+    ]
+
+
 def run(workers: int) -> list[Separation]:
     contacts = contacts_on_grid(CONTACT_SPACING)
     etas = [tuple(base.as_array()) for base in BASES]
@@ -142,7 +153,9 @@ def run(workers: int) -> list[Separation]:
         for base in BASES
         for step in GRID_STEPS.values()
     ]
-    combos = [(d, v) for d, speeds in MATCHED for v in speeds]
+    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, ROD_MASS))
+    space = make_push_space(reference.parts, reference.height)
+    combos = feasible_combos(space.duration_range)
     tasks = [
         (Action(contact=c, velocity=v, time=d / v), eta)
         for c in contacts
@@ -168,61 +181,68 @@ def run(workers: int) -> list[Separation]:
 
 DISTANCE_COLORS = ("#86b6ef", "#3987e5", "#0d366b")  # short to long pushes
 PARAMETER_TITLES = {
-    "mu": "Friction (one step: 0.1)",
-    "rod_x": "Rod x (one step: 1.65 cm)",
-    "rod_y": "Rod y (one step: 1.65 cm)",
+    "mu": "Friction: neighbouring hypotheses 0.1 apart",
+    "rod_x": "Rod x: neighbouring hypotheses 1.65 cm apart",
+    "rod_y": "Rod y: neighbouring hypotheses 1.65 cm apart",
 }
 
 
-def plot(rows: Sequence[Separation], out: Path) -> None:
-    """Median separation against push speed, one panel per parameter, one
-    line per push distance; solid at the low base friction, dashed at the
-    high one."""
+def plot(rows: Sequence[Separation], out_dir: Path) -> list[Path]:
+    """One figure per parameter, sharing a y scale: median separation against
+    push speed, one line per push distance, solid at the low base friction
+    and dashed at the high one.  Returns the written paths."""
+    top = max(row.median for row in rows) * 1.1
+    paths = []
+    for parameter, title in PARAMETER_TITLES.items():
+        path = out_dir / f"push_informativeness_{parameter}.png"
+        plot_parameter([r for r in rows if r.parameter == parameter], title, top, path)
+        paths.append(path)
+    return paths
+
+
+def plot_parameter(
+    rows: Sequence[Separation], title: str, top: float, out: Path
+) -> None:
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    figure = Figure(figsize=(12, 4.2), facecolor="#fcfcfb")
+    figure = Figure(figsize=(6.4, 4.6), facecolor="#fcfcfb")
     FigureCanvasAgg(figure)
-    axes = figure.subplots(1, len(PARAMETER_TITLES), sharey=True)
+    ax = figure.subplots()
     distances = sorted({row.distance_m for row in rows})
     base_mus = sorted({row.base_mu for row in rows})
     styles = dict(zip(base_mus, ("-", "--"), strict=False))
-    top = max(row.median for row in rows) * 1.12
-    for ax, (parameter, title) in zip(axes, PARAMETER_TITLES.items(), strict=True):
-        for distance, color in zip(distances, DISTANCE_COLORS, strict=False):
-            for base_mu in base_mus:
-                line = sorted(
-                    (r.speed_m_per_s, r.median)
-                    for r in rows
-                    if r.parameter == parameter
-                    and r.distance_m == distance
-                    and r.base_mu == base_mu
-                )
-                speeds, medians = zip(*line, strict=True)
-                ax.plot(
-                    np.array(speeds) * 100,
-                    medians,
-                    styles[base_mu],
-                    color=color,
-                    lw=2,
-                    marker="o",
-                    ms=6,
-                    markeredgecolor="#fcfcfb",
-                )
-        ax.axhline(1.0, color="#898781", lw=1, ls=":")
-        ax.set_title(title, fontsize=11, loc="left", color="#0b0b0b")
-        ax.set_xlabel("push speed (cm/s)")
-        ax.set_xlim(2, 16)
-        ax.set_ylim(0, top)
-        ax.set_facecolor("#fcfcfb")
-        ax.grid(axis="y", color="#e1e0d9", lw=0.8)
-        ax.set_axisbelow(True)
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-    axes[0].set_ylabel(
-        "separation of neighbouring hypotheses\n(median over contacts, in units of R)"
-    )
+    for distance, color in zip(distances, DISTANCE_COLORS, strict=False):
+        for base_mu in base_mus:
+            line = sorted(
+                (r.speed_m_per_s, r.median)
+                for r in rows
+                if r.distance_m == distance and r.base_mu == base_mu
+            )
+            speeds, medians = zip(*line, strict=True)
+            ax.plot(
+                np.array(speeds) * 100,
+                medians,
+                styles[base_mu],
+                color=color,
+                lw=2,
+                marker="o",
+                ms=6,
+                markeredgecolor="#fcfcfb",
+            )
+    ax.axhline(1.0, color="#898781", lw=1, ls=":")
+    ax.set_title(title, fontsize=11, loc="left", color="#0b0b0b")
+    ax.set_xlabel("push speed (cm/s)")
+    ax.set_ylabel("separation after one push\n(median over contact points, units of R)")
+    ax.set_xticks(np.array(SPEEDS) * 100)
+    ax.set_xlim(1.5, 16.5)
+    ax.set_ylim(0, top)
+    ax.set_facecolor("#fcfcfb")
+    ax.grid(axis="y", color="#e1e0d9", lw=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
     handles = (
         [
             Line2D([], [], color=c, lw=2, marker="o", label=f"{d * 100:g} cm push")
@@ -235,33 +255,14 @@ def plot(rows: Sequence[Separation], out: Path) -> None:
                 color="#52514e",
                 lw=2,
                 ls=styles[m],
-                label=f"true friction near {m:g}",
+                label=f"true friction {m:g}",
             )
             for m in base_mus
         ]
-        + [
-            Line2D(
-                [],
-                [],
-                color="#898781",
-                lw=1,
-                ls=":",
-                label="1 = noticeable in one push",
-            )
-        ]
+        + [Line2D([], [], color="#898781", lw=1, ls=":", label="1 = barely noticeable")]
     )
-    figure.legend(
-        handles=handles,
-        loc="lower center",
-        ncol=len(handles),
-        frameon=False,
-        fontsize=9,
-    )
-    figure.suptitle(
-        "How much one push tells the estimator: fast pushes reveal friction (if it is low), long pushes reveal the rod",
-        fontsize=12,
-    )
-    figure.tight_layout(rect=(0, 0.08, 1, 0.95))
+    ax.legend(handles=handles, loc="upper left", frameon=False, fontsize=8.5)
+    figure.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(out, dpi=150)
 
@@ -275,7 +276,9 @@ def main() -> None:
     parser.add_argument(
         "--from-json", type=Path, help="reuse saved results instead of simulating"
     )
-    parser.add_argument("--plot", type=Path, help="also save the figure here")
+    parser.add_argument(
+        "--plot", type=Path, help="also save one figure per parameter in this folder"
+    )
     args = parser.parse_args()
     if args.from_json is not None:
         rows = [Separation(**row) for row in json.loads(args.from_json.read_text())]
@@ -284,7 +287,8 @@ def main() -> None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps([asdict(row) for row in rows], indent=1) + "\n")
     if args.plot is not None:
-        plot(rows, args.plot)
+        for path in plot(rows, args.plot):
+            print(f"wrote {path}")
     for row in rows:
         print(
             f"mu {row.base_mu:.1f} {row.parameter:6} {row.distance_m * 100:4.1f} cm "
