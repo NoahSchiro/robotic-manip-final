@@ -8,3 +8,6 @@ __pycache__/
 # everything under data/ is regenerable from the recorded commands and
 # seeds
 data/
+
+# cluster job logs (scripts/cluster/)
+logs/

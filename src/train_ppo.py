@@ -15,7 +15,7 @@ each run numpy GEMMs, and BLAS oversubscription across 12 workers is slow.
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -46,6 +46,27 @@ class EvalPoint:
     learned_error: float
     random_error: float
     learned_pushes: float
+
+
+CURVE_FILE = "learning_curve.jsonl"  # one paired-evaluation point per line
+
+
+def load_curve(out_dir: Path) -> list[EvalPoint]:
+    """The paired-evaluation points already logged in `out_dir`."""
+    path = out_dir / CURVE_FILE
+    if not path.exists():
+        return []
+    return [EvalPoint(**json.loads(line)) for line in path.read_text().splitlines()]
+
+
+def latest_checkpoint(out_dir: Path) -> Path | None:
+    """The checkpoint in `out_dir` with the most training steps, if any."""
+    checkpoints = [
+        (int(path.stem.removeprefix("ppo_")), path)
+        for path in out_dir.glob("ppo_*.zip")
+        if path.stem.removeprefix("ppo_").isdigit()
+    ]
+    return max(checkpoints)[1] if checkpoints else None
 
 
 def _make_env_fns(
@@ -162,9 +183,15 @@ class PairedEvalCallback(BaseCallback):
         self._eval_every = eval_every
         self._episodes = episodes
         self._seed = seed
-        self.points: list[EvalPoint] = []
+        self.points: list[EvalPoint] = load_curve(out_dir)
         self._next_eval = eval_every
         self._started = time.perf_counter()
+
+    def _on_training_start(self) -> None:
+        # A resumed run continues the schedule from its restored step count.
+        self._next_eval = (
+            self.num_timesteps // self._eval_every + 1
+        ) * self._eval_every
 
     def _on_step(self) -> bool:
         if self.num_timesteps < self._next_eval:
@@ -186,6 +213,8 @@ class PairedEvalCallback(BaseCallback):
         )
         self.points.append(point)
         self.model.save(self._out_dir / f"ppo_{self.num_timesteps}")
+        with (self._out_dir / CURVE_FILE).open("a") as curve:
+            curve.write(json.dumps(asdict(point)) + "\n")
         minutes = (time.perf_counter() - self._started) / 60
         if self.verbose:
             print(
@@ -206,14 +235,52 @@ def train_ppo(
     eval_every: int,
     eval_episodes: int,
     seed: int,
+    resume: bool = False,
 ) -> str:
-    """Train MaskablePPO in the surrogate world, saving checkpoints, the
-    learning curve and a final paired evaluation to `out_dir`."""
+    """Train MaskablePPO in the surrogate world for `timesteps` steps in all,
+    saving checkpoints, the learning curve and a final paired evaluation to
+    `out_dir`.  With `resume`, continue from `out_dir`'s latest checkpoint
+    (a fresh start when there is none)."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    if not resume and (out_dir / CURVE_FILE).exists():
+        raise SystemExit(
+            f"{out_dir} already holds a run: pass --resume or another --out"
+        )
     env = SubprocVecEnv(
         cast(list[Callable[[], Env]], _make_env_fns(config, n_envs, seed))
     )
-    model = MaskablePPO(
+    checkpoint = latest_checkpoint(out_dir) if resume else None
+    if checkpoint is not None:
+        model = MaskablePPO.load(checkpoint, env=env)
+        print(f"resuming from {checkpoint} at {model.num_timesteps} steps", flush=True)
+    else:
+        model = new_model(env, seed)
+    callback = PairedEvalCallback(
+        config, out_dir, eval_every, eval_episodes, seed, verbose=1
+    )
+    model.learn(
+        total_timesteps=max(timesteps - model.num_timesteps, 0),
+        callback=callback,
+        progress_bar=False,
+        reset_num_timesteps=checkpoint is None,
+    )
+    model.save(out_dir / "ppo_final")
+    return finish(
+        model,
+        config,
+        callback.points,
+        out_dir,
+        timesteps,
+        n_envs,
+        eval_episodes,
+        seed,
+        env,
+    )
+
+
+def new_model(env: SubprocVecEnv, seed: int) -> MaskablePPO:
+    """A fresh policy with the project's PPO settings."""
+    return MaskablePPO(
         "MlpPolicy",
         env,
         n_steps=512,
@@ -226,13 +293,20 @@ def train_ppo(
         seed=seed,
         verbose=0,
     )
-    callback = PairedEvalCallback(
-        config, out_dir, eval_every, eval_episodes, seed, verbose=1
-    )
-    model.learn(total_timesteps=timesteps, callback=callback, progress_bar=False)
-    model.save(out_dir / "ppo_final")
 
-    points = callback.points
+
+def finish(
+    model: MaskablePPO,
+    config: ProbingEnvConfig,
+    points: list[EvalPoint],
+    out_dir: Path,
+    timesteps: int,
+    n_envs: int,
+    eval_episodes: int,
+    seed: int,
+    env: SubprocVecEnv,
+) -> str:
+    """Write the learning curve and the final paired evaluation."""
     np.savez(
         out_dir / "learning_curve.npz",
         timesteps=np.array([p.timesteps for p in points]),

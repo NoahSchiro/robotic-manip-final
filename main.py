@@ -18,14 +18,19 @@ from src.cli import (
     truth_sim_config,
 )
 from src.dataset_file import save_dataset
-from src.dynamics import ParallelPushModel, Pose
+from src.dynamics import DynamicsModel, ParallelPushModel, Pose
 from src.env import (
     MAX_PUSHES,
     ProbingEnvConfig,
     make_probing_env_config,
 )
 from src.episode import EpisodeResult, run_episode
-from src.estimator import CALIBRATED_R, SUBCELLS, GridBayesFilter
+from src.estimator import (
+    CALIBRATED_R,
+    CALIBRATED_R_SURROGATE,
+    SUBCELLS,
+    GridBayesFilter,
+)
 from src.evaluation import run_evaluation
 from src.iiwa import (
     Q_HOME,
@@ -62,7 +67,7 @@ from src.scene import (
     place_object,
     show_object_goal,
 )
-from src.surrogate import SAMPLE_PERIOD
+from src.surrogate import SAMPLE_PERIOD, SurrogatePredictor, load_ensemble
 from src.surrogate_data import (
     assign_split,
     check_finite,
@@ -260,6 +265,11 @@ def parse_args() -> argparse.Namespace:
     )
     ppo_parser.add_argument("--seed", type=int, default=0, help="PRNG seed")
     ppo_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue from the latest checkpoint in --out (a fresh start if none)",
+    )
+    ppo_parser.add_argument(
         "--ensemble",
         type=Path,
         default=Path("data/surrogate_ensemble.npz"),
@@ -432,7 +442,14 @@ def parse_args() -> argparse.Namespace:
         "--ensemble",
         type=Path,
         default=Path("data/surrogate_ensemble.npz"),
-        help="trained surrogate ensemble (--policy ppo)",
+        help="trained surrogate ensemble (--policy ppo, --predictor surrogate)",
+    )
+    simulate_parser.add_argument(
+        "--predictor",
+        choices=("drake", "surrogate"),
+        default="drake",
+        help="prediction model the estimator's filter uses; the truth sim and "
+        "MPC planning stay Drake",
     )
     simulate_parser.add_argument(
         "--path-family",
@@ -708,6 +725,30 @@ def format_map_error(belief: GridBayesFilter, eta_true: Eta) -> str:
     )
 
 
+def make_truth_sim(
+    args: argparse.Namespace, sim: Sim, obj: Object, pusher: Pusher
+) -> TruthSim:
+    """The episode's truth sim, paced in real time when visualized."""
+    return TruthSim(
+        obj,
+        pusher,
+        truth_sim_config(args),
+        meshcat=sim.meshcat,
+        realtime_rate=0.0 if sim.headless else 1.0,
+    )
+
+
+def estimation_filter(
+    args: argparse.Namespace, grid: list[Eta], drake_model: DynamicsModel
+) -> GridBayesFilter:
+    """The estimator's filter on --predictor's model, with that model's
+    calibrated R."""
+    if args.predictor == "surrogate":
+        surrogate = SurrogatePredictor(load_ensemble(args.ensemble))
+        return GridBayesFilter(grid, surrogate, CALIBRATED_R_SURROGATE, args.nu or None)
+    return GridBayesFilter(grid, drake_model, CALIBRATED_R, args.nu or None)
+
+
 def simulate(args: argparse.Namespace) -> None:
     # A fresh random seed unless the user pins one; the seed is printed so
     # any run can be reproduced with --seed.
@@ -745,22 +786,17 @@ def simulate(args: argparse.Namespace) -> None:
         actions = space.grid(MPC_CANDIDATE_SPACING, 3, 3)
         print(format_placement_start(eta_true, obj, len(actions)))
         grid = make_grid(GridSpec(), obj.parts)
+        truth_sim = make_truth_sim(args, sim, obj, pusher)
         with ParallelPushModel(args.workers, push_model_config(args)) as model:
             belief = (
                 None
                 if args.plan_with_true_eta
-                else GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None)
+                else estimation_filter(args, grid, model)
             )
             result = run_episode(
                 action_rng=action_rng,
                 obj=obj,
-                truth_sim=TruthSim(
-                    obj,
-                    pusher,
-                    truth_sim_config(args),
-                    meshcat=sim.meshcat,
-                    realtime_rate=0.0 if sim.headless else 1.0,
-                ),
+                truth_sim=truth_sim,
                 meshcat=sim.meshcat,
                 dashboard=(
                     None
@@ -799,18 +835,13 @@ def simulate(args: argparse.Namespace) -> None:
             policy_config = make_probing_env_config(
                 args.ensemble, family_path=args.path_family
             )
+        truth_sim = make_truth_sim(args, sim, obj, pusher)
         with ParallelPushModel(args.workers, push_model_config(args)) as model:
             run_estimation(
-                belief=GridBayesFilter(grid, model, CALIBRATED_R, args.nu or None),
+                belief=estimation_filter(args, grid, model),
                 eta_true=eta,
                 pushes=args.pushes,
-                truth_sim=TruthSim(
-                    obj,
-                    pusher,
-                    truth_sim_config(args),
-                    meshcat=sim.meshcat,
-                    realtime_rate=0.0 if sim.headless else 1.0,
-                ),
+                truth_sim=truth_sim,
                 meshcat=sim.meshcat,
                 dashboard=(
                     None if sim.headless else BeliefDashboard(grid, obj.parts, eta)
@@ -1021,6 +1052,7 @@ def train_ppo_command(args: argparse.Namespace) -> None:
             eval_every=args.eval_every,
             eval_episodes=args.eval_episodes,
             seed=args.seed,
+            resume=args.resume,
         )
     )
 
