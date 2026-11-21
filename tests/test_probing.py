@@ -241,3 +241,23 @@ def test_action_stream_is_independent_of_condition_stream() -> None:
     assert not np.array_equal(draws, condition_stream)
     fresh = np.random.default_rng(np.random.SeedSequence([11, 1]))
     np.testing.assert_array_equal(draws, fresh.integers(2**32, size=4))
+
+
+def test_long_fast_keeps_long_fast_pushes() -> None:
+    pushes = [
+        site_action(0, speed=0.15, contact_time=0.6),  # 9 cm at 15 cm/s
+        site_action(0, speed=0.15, contact_time=0.2),  # 3 cm: too short
+        site_action(0, speed=0.09, contact_time=1.0),  # 9 cm at 9 cm/s: too slow
+    ]
+    assert probing.long_fast(pushes) == [pushes[0]]
+
+
+def test_lattice_selector_skips_failed_and_unreachable_pushes() -> None:
+    near, far = site_action(0), site_action(1)
+    state = SimpleNamespace(obj=SimpleNamespace(pose=START))
+    select = probing.lattice_selector([near, far], np.random.default_rng(0))
+    chosen = {id(select(state, [near])) for _ in range(10)}  # type: ignore[arg-type]
+    assert chosen == {id(far)}
+    assert select(state, [near, far]) == "unreachable"  # type: ignore[arg-type]
+    away = SimpleNamespace(obj=SimpleNamespace(pose=(2.0, 0.0, 0.0)))
+    assert select(away, []) == "unreachable"  # type: ignore[arg-type]

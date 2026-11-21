@@ -115,8 +115,17 @@ To score a trained policy in the surrogate world and see which pushes it chooses
 uv run python -m scripts.evaluate_policy --model data/ppo/ppo_final.zip --out data/ppo/evaluation
 ```
 
-Reports give each episode's parameter errors, reward, push count, and stop
-reason.
+Each `evaluate` episode runs, on identical conditions in the Drake truth sim,
+the trained policy until it stops, then two baselines with the same number of
+pushes: random pushes from the policy's 396-push lattice, and random pushes
+from its long, fast subset (at least 6.8 cm and 11 cm/s). Reports give each
+episode's parameter errors, reward, push count, and stop reason. On the
+cluster, `scripts/cluster/evaluate_transfer.sbatch` runs one episode per array
+task; combine them with:
+
+```sh
+uv run python -m scripts.merge_evaluations data/transfer/episode_*.json --out data/transfer/summary.json
+```
 
 ### Check the arm motion
 
@@ -205,7 +214,8 @@ per measurement component, and the friction each trial's pushes favour. About
 | `scripts/push_informativeness.py` | How well pushes of each speed and distance separate neighbouring hypotheses |
 | `scripts/evaluate_policy.py` | Trained policy against random probing on paired surrogate episodes: errors, push counts, and the speeds, distances and directions it chooses |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
-| `scripts/cluster/` | Slurm batch scripts for the Engaging cluster (PPO training) |
+| `scripts/cluster/` | Slurm batch scripts for the Engaging cluster (PPO training, Drake transfer evaluation) |
+| `scripts/merge_evaluations.py` | Paired statistics over per-episode evaluation reports |
 
 ## Implementation notes
 

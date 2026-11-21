@@ -67,13 +67,14 @@ def drake_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     )
     monkeypatch.setattr(
         evaluation,
-        "random_selector",
+        "lattice_selector",
         lambda *_: lambda *_args: PUSH,
     )
     monkeypatch.setattr(probing, "out_of_bounds", lambda *_: False)
     FakeTruthSim.planned_poses = []
     return SimpleNamespace(
         grid=[Eta(0.1, 0, 0), Eta(0.9, 0, 0)],
+        actions=[],
         max_pushes=3,
         entropy_weight=0.1,
         step_cost=0.05,
@@ -89,7 +90,7 @@ def run_drake(config: SimpleNamespace, budget: int) -> evaluation.EpisodeRecord:
         object(),
         seed=7,
         forced_pushes=budget,
-        policy=False,
+        strategy="random",
         r_matrix=np.eye(6),
     )
 
@@ -126,7 +127,7 @@ def test_immediate_policy_stop_receives_terminal_reward(
         object(),
         seed=7,
         forced_pushes=None,
-        policy=True,
+        strategy="learned",
         r_matrix=np.eye(6),
     )
     assert record.pushes == 0

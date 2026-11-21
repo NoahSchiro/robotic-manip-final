@@ -8,7 +8,7 @@ true final state so a later phase can continue from it.
 """
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -32,6 +32,8 @@ from .push_space import PushSpace, reachable
 from .recording import TruthSim
 
 MAX_IK_RETRIES = 40
+LONG_PUSH = 0.068  # m: the long third of the push-distance range
+FAST_PUSH = 0.11  # m/s: the fast third of the push-speed range
 GOAL_RADIUS = 0.1  # m, goal disk around the workspace center, as for starts
 
 
@@ -134,6 +136,34 @@ def random_selector(
         return "unreachable"
 
     return select
+
+
+def lattice_selector(
+    actions: Sequence[Action], rng: np.random.Generator
+) -> Selector:
+    """Uniform over the reachable pushes among `actions`, skipping pushes
+    whose arm plan failed at this decision; "unreachable" when none is
+    left."""
+
+    def select(state: ProbingState, failed: list[Action]) -> Action | str:
+        pose = _pose(state)
+        tried = {id(a) for a in failed}
+        options = [a for a in actions if id(a) not in tried and reachable(pose, a)]
+        if not options:
+            return "unreachable"
+        return options[int(rng.integers(len(options)))]
+
+    return select
+
+
+def long_fast(actions: Sequence[Action]) -> list[Action]:
+    """The pushes the informativeness study found most useful: at least
+    LONG_PUSH m and at least FAST_PUSH m/s."""
+    return [
+        a
+        for a in actions
+        if a.velocity * a.time >= LONG_PUSH - 1e-9 and a.velocity >= FAST_PUSH - 1e-9
+    ]
 
 
 def policy_selector(model: MaskablePPO, config: ProbingEnvConfig) -> Selector:

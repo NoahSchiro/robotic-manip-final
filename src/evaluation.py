@@ -4,9 +4,11 @@ The paired comparison runs the learned policy and random baseline through
 the same arm pipeline. The random-only mode needs no learned assets.
 
 Each episode samples the true eta and start pose
-(episode_conditions); the learned policy runs first, then the
-random-probing baseline reuses the learned policy's push count on the
-identical episode, so the comparison isolates push selection.  The same
+(episode_conditions); the learned policy runs first, then two baselines
+reuse its push count on the identical episode, so the comparison isolates
+push selection: random pushes from the policy's lattice, and random pushes
+from the lattice's long, fast subset (what the informativeness study
+recommends; probing.long_fast).  The same
 episodes also run in the surrogate world as the reference, which
 quantifies the sim-to-real gap of the surrogate pipeline directly.
 
@@ -37,11 +39,11 @@ from .probing import (
     PushRecord,
     episode_conditions,
     episode_object,
+    lattice_selector,
+    long_fast,
     policy_selector,
-    random_selector,
     run_probing,
 )
-from .push_space import make_push_space
 from .recording import TruthSim, TruthSimConfig
 from .surrogate import SurrogatePredictor, load_ensemble
 
@@ -122,12 +124,13 @@ def _drake_episode(
     filter_model: DynamicsModel,
     seed: int,
     forced_pushes: int | None,
-    policy: bool,
+    strategy: str,
     r_matrix: np.ndarray,
 ) -> EpisodeRecord:
-    """One episode in the Drake world.  `policy` runs the trained policy's
-    stop decision; otherwise the episode runs `forced_pushes` random pushes
-    (the paired baseline)."""
+    """One episode in the Drake world.  `strategy` "learned" runs the trained
+    policy, which decides when to stop; "random" and "long_fast" run
+    `forced_pushes` pushes drawn uniformly from the probing lattice or its
+    long, fast subset (the paired baselines)."""
     eta, start_pose, action_rng = episode_conditions(seed)
     obj = episode_object(eta, start_pose, ROD_MASS)
     spans = grid_spans(config.grid)
@@ -137,11 +140,15 @@ def _drake_episode(
         obj=obj,
         belief=belief,
     )
-    if policy:
+    if strategy == "learned":
         assert model is not None
         selector = policy_selector(model, config)
+    elif strategy == "random":
+        selector = lattice_selector(config.actions, action_rng)
+    elif strategy == "long_fast":
+        selector = lattice_selector(long_fast(config.actions), action_rng)
     else:
-        selector = random_selector(make_push_space(obj.parts, obj.height), action_rng)
+        raise ValueError(f"unknown strategy {strategy!r}")
     budget = (
         config.max_pushes
         if forced_pushes is None
@@ -160,7 +167,7 @@ def _drake_episode(
     component_error = belief.estimation_error(eta)
     return EpisodeRecord(
         seed=seed,
-        policy="learned" if policy else "random",
+        policy=strategy,
         pushes=state.pushes,
         reward=total,
         error=float(np.linalg.norm(component_error / spans)),
@@ -209,11 +216,14 @@ def _run_episodes(
     r_matrix: np.ndarray,
     episodes: int,
     seed: int,
-) -> tuple[list[EpisodeRecord], list[EpisodeRecord], list[EpisodeRecord]]:
-    """Run the learned episodes, their paired random baselines, and the
-    same episodes in the surrogate world (the gap reference)."""
+) -> tuple[
+    list[EpisodeRecord], list[EpisodeRecord], list[EpisodeRecord], list[EpisodeRecord]
+]:
+    """Run the learned episodes, their paired random and long-fast baselines,
+    and the same episodes in the surrogate world (the gap reference)."""
     learned_records: list[EpisodeRecord] = []
     random_records: list[EpisodeRecord] = []
+    long_fast_records: list[EpisodeRecord] = []
     surrogate_records: list[EpisodeRecord] = []
     for episode in range(episodes):
         episode_seed = seed + episode
@@ -224,7 +234,7 @@ def _run_episodes(
             filter_model,
             episode_seed,
             forced_pushes=None,
-            policy=True,
+            strategy="learned",
             r_matrix=r_matrix,
         )
         learned_records.append(learned)
@@ -235,19 +245,30 @@ def _run_episodes(
             filter_model,
             episode_seed,
             forced_pushes=learned.pushes,
-            policy=False,
+            strategy="random",
             r_matrix=r_matrix,
         )
         random_records.append(baseline)
+        heuristic = _drake_episode(
+            model,
+            config,
+            truth_config,
+            filter_model,
+            episode_seed,
+            forced_pushes=learned.pushes,
+            strategy="long_fast",
+            r_matrix=r_matrix,
+        )
+        long_fast_records.append(heuristic)
         surrogate_records.append(_surrogate_episode(model, config, episode_seed))
         print(
             f"episode {episode}: drake learned err {learned.error:.3f} "
             f"({learned.pushes} pushes, {learned.reason}) | random "
-            f"{baseline.error:.3f} | surrogate "
+            f"{baseline.error:.3f} | long-fast {heuristic.error:.3f} | surrogate "
             f"{surrogate_records[-1].error:.3f}",
             flush=True,
         )
-    return learned_records, random_records, surrogate_records
+    return learned_records, random_records, long_fast_records, surrogate_records
 
 
 def run_evaluation(
@@ -286,7 +307,7 @@ def run_evaluation(
                     forced_pushes=(
                         config.max_pushes if random_pushes is None else random_pushes
                     ),
-                    policy=False,
+                    strategy="random",
                     r_matrix=CALIBRATED_R,
                 )
                 for episode in range(episodes)
@@ -314,21 +335,23 @@ def run_evaluation(
     if predictor == "surrogate":
         filter_model = SurrogatePredictor(load_ensemble(ensemble_path))
         r_matrix = CALIBRATED_R_SURROGATE
-        drake_learned, drake_random, surrogate_learned = _run_episodes(
+        drake_learned, drake_random, drake_long_fast, surrogate_learned = _run_episodes(
             model, config, truth_config, filter_model, r_matrix, episodes, seed
         )
     else:
         with ParallelPushModel(
             workers, PushModelConfig(time_step=2e-3, rod_mass=ROD_MASS)
         ) as filter_model:
-            drake_learned, drake_random, surrogate_learned = _run_episodes(
-                model,
-                config,
-                truth_config,
-                filter_model,
-                CALIBRATED_R,
-                episodes,
-                seed,
+            drake_learned, drake_random, drake_long_fast, surrogate_learned = (
+                _run_episodes(
+                    model,
+                    config,
+                    truth_config,
+                    filter_model,
+                    CALIBRATED_R,
+                    episodes,
+                    seed,
+                )
             )
 
     report = {
@@ -338,6 +361,7 @@ def run_evaluation(
         "drake_world": {
             "learned": _summary(drake_learned).__dict__,
             "random": _summary(drake_random).__dict__,
+            "long_fast": _summary(drake_long_fast).__dict__,
         },
         "surrogate_world": {
             "learned": _summary(surrogate_learned).__dict__,
@@ -347,8 +371,12 @@ def run_evaluation(
                 "seed": record.seed,
                 "drake_learned": record.__dict__,
                 "drake_random": baseline.__dict__,
+                "drake_long_fast": heuristic.__dict__,
+                "surrogate_learned": reference.__dict__,
             }
-            for record, baseline in zip(drake_learned, drake_random)
+            for record, baseline, heuristic, reference in zip(
+                drake_learned, drake_random, drake_long_fast, surrogate_learned
+            )
         ],
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)

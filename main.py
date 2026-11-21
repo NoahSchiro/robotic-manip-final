@@ -371,7 +371,7 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo_run4/ppo_final.zip"),
+        default=Path("data/ppo/ppo_final.zip"),
         help="trained probing policy",
     )
     eval_parser.add_argument(
