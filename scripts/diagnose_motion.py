@@ -21,17 +21,18 @@ from pydrake.all import RigidTransform, StartMeshcat
 from pydrake.geometry import Meshcat
 
 from src import paths
+from src.constants import ROD_MASS
 from src.control.probing import ProbingState, PushRecord, random_selector, run_probing
+from src.experiment import truth_sim_config
 from src.world.action import Action
 from src.world.geometry import SurfacePart, distance_to_footprint
 from src.world.iiwa import STANDOFF, Pusher
 from src.world.object import Object, Rod
 from src.world.observation import PushObservation, wrap_angle
 from src.world.push_space import PushSpace, make_push_space
-from src.world.recording import TruthSim, TruthSimConfig, read_object_state, read_tip
+from src.world.recording import TruthSim, read_object_state, read_tip
 from src.world.scene import meshcat_visualizer
 
-ROD_MASS = 0.2  # kg, the composite's welded-in rod
 BLOCK_START_XY = (0.55, 0.0)  # m, block start in the world frame
 TOP_MARGIN = 0.001  # m above the block top, where the tip counts as contact height
 EPS = 1e-6  # s, excludes logged samples that sit on window edges
@@ -435,7 +436,7 @@ def start_sim(
     sim = TruthSim(
         obj,
         pusher,
-        TruthSimConfig(time_step=1e-4, settle_time=0.3, log_period=1e-3),
+        truth_sim_config(),
         meshcat=meshcat,
     )
     return obj, pusher, sim

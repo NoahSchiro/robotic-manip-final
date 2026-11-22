@@ -20,7 +20,7 @@ Rewards:
 - leaving the workspace: the stop reward minus `out_of_bounds_penalty`
 
 Action space: Discrete(len(actions) + 1) over the push space's lattice
-(`PushSpace.grid(PROBE_SPACING, PROBE_SPEEDS, PROBE_DISTANCES)`).  The last
+(`experiment.lattice`).  The last
 action is `stop` and is never masked; pushes are masked when the arm cannot
 reach their approach or end point (push_space.reachable).
 """
@@ -36,8 +36,15 @@ from pydrake.all import RigidTransform, RotationMatrix
 from sb3_contrib import MaskablePPO
 from torch.distributions import Categorical
 
+from src.constants import ROD_MASS, SETTLE_TIME
 from src.estimation.estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
-from src.estimation.params import Eta, GridSpec, grid_spans, make_grid, sample_eta
+from src.estimation.params import Eta, GridSpec, grid_spans, make_grid
+from src.experiment import (
+    lattice,
+    out_of_bounds,
+    reference_object,
+    sample_episode_conditions,
+)
 from src.paths import PATH_FAMILY
 from src.surrogate.model import (
     SurrogateEnsemble,
@@ -54,22 +61,9 @@ from src.surrogate.path_family import (
     perturb_tip_positions,
 )
 from src.world.action import Action
-from src.world.geometry import SurfacePart
 from src.world.iiwa import transfer_height
-from src.world.object import Object, Rod
 from src.world.observation import wrap_angle
 from src.world.push_space import make_push_space, reachable_mask
-
-# The probing lattice: the MPC's candidates (contacts about 1.2 cm apart,
-# 3 speeds x 3 distances per contact).
-PROBE_SPACING = 0.012  # m
-PROBE_SPEEDS = 3
-PROBE_DISTANCES = 3
-SETTLE_TIME = 0.3  # s, matching the dataset's windows
-ROD_MASS = 0.2  # kg, as everywhere
-
-WORKSPACE_CENTER = (0.55, 0.0)
-WORKSPACE_RADIUS = 0.25  # m, the block center's bound
 
 MAX_PUSHES = 12
 ENTROPY_WEIGHT = 0.1
@@ -125,9 +119,9 @@ def make_probing_env_config(
 ) -> ProbingEnvConfig:
     """Build the hypothesis grid and the probing lattice.  The ensemble and
     path family are needed only to run the environment."""
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
+    reference = reference_object(rod_mass)
     space = make_push_space(reference.parts, reference.height)
-    actions = tuple(space.grid(PROBE_SPACING, PROBE_SPEEDS, PROBE_DISTANCES))
+    actions = tuple(lattice(space))
     return ProbingEnvConfig(
         ensemble=load_ensemble(ensemble_path) if ensemble_path is not None else None,
         grid=make_grid(GridSpec(), reference.parts),
@@ -187,26 +181,6 @@ def member_spread(
         for rows_in in inputs
     ]
     return np.concatenate(spreads).mean(axis=0)
-
-
-def sample_episode_conditions(
-    rng: np.random.Generator, parts: list[SurfacePart]
-) -> tuple[Eta, np.ndarray]:
-    """The true eta and start pose from `rng` — the exact sampling the
-    env's reset uses, so paired evaluations (surrogate and Drake) see
-    identical episode conditions."""
-
-    eta = sample_eta(rng, GridSpec(), parts)
-    rho = 0.1 * np.sqrt(rng.uniform())
-    theta = rng.uniform(-np.pi, np.pi)
-    pose = np.array(
-        [
-            WORKSPACE_CENTER[0] + rho * np.cos(theta),
-            WORKSPACE_CENTER[1] + rho * np.sin(theta),
-            rng.uniform(-np.pi, np.pi),
-        ]
-    )
-    return eta, pose
 
 
 def observation_vector(
@@ -286,11 +260,6 @@ def policy_decision(model: MaskablePPO, obs: np.ndarray, mask: np.ndarray) -> in
     return int(np.argmax(probs[:stop]))
 
 
-def env_parts() -> list[tuple[float, float, float, float]]:
-    """The block's surface parts, for sampling etas."""
-    return Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, ROD_MASS)).parts
-
-
 def planar_transform(pose: np.ndarray) -> RigidTransform:
     """A world transform from (x, y, yaw), the block resting on the table."""
     return RigidTransform(
@@ -334,7 +303,7 @@ class ProbingEnv(gymnasium.Env):
             dtype=np.float32,
         )
         self.action_space = spaces.Discrete(config.n_actions)
-        self._parts = env_parts()
+        self._parts = reference_object().parts
         self.belief: GridBayesFilter | None = None
         self._true_eta: Eta | None = None
         self._pose = np.zeros(3)
@@ -481,11 +450,7 @@ class ProbingEnv(gymnasium.Env):
             - self.config.step_cost
         )
 
-        out_of_bounds = (
-            np.linalg.norm(self._pose[:2] - np.array(WORKSPACE_CENTER))
-            > WORKSPACE_RADIUS
-        )
-        if out_of_bounds:
+        if out_of_bounds(self._pose):
             reward += self._stop_reward() - self.config.out_of_bounds_penalty
             return self._observation(), reward, True, False, self._info("out_of_bounds")
         if self._pushes >= self.config.max_pushes:

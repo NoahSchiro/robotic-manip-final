@@ -47,7 +47,7 @@ The MAP estimate is the most probable hypothesis. Its range-normalized error is 
 
 ## Episodes
 
-`probing.episode_conditions(seed)` gives the true `eta` and the start pose (within 0.1 m of (0.55, 0) m, any yaw); random actions use an independent stream seeded by `SeedSequence([seed, 1])` and the placement goal one seeded by `SeedSequence([seed, 2])`. Every runner executes pushes through `probing.run_probing`, which selects, plans, executes, updates the belief, and stops on the push budget, the selector's stop reason, 40 consecutive arm-plan failures, or the block leaving 0.25 m of (0.55, 0) m.
+`experiment.episode_conditions(seed)` gives the true `eta` and the start pose (within 0.1 m of (0.55, 0) m, any yaw); random actions use an independent stream seeded by `SeedSequence([seed, 1])` and the placement goal one seeded by `SeedSequence([seed, 2])`. Every runner executes pushes through `probing.run_probing`, which selects, plans, executes, updates the belief, and stops on the push budget, the selector's stop reason, 40 consecutive arm-plan failures, or the block leaving 0.25 m of (0.55, 0) m.
 
 ## MPC placement
 

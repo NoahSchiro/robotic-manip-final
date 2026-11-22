@@ -135,6 +135,8 @@ To score a trained policy in the surrogate world and see which pushes it chooses
 
 ```sh
 uv run python -m scripts.evaluate_policy --out data/results/ppo_evaluation
+# Redraw behaviour.png and push_choices.png from the saved episodes
+uv run python -m scripts.evaluate_policy --out data/results/ppo_evaluation --from-json
 ```
 
 Each `evaluate` episode runs, on identical conditions in the Drake truth sim,
@@ -145,7 +147,8 @@ episode's parameter errors, reward, push count, and stop reason. On the
 cluster, `scripts/cluster/evaluate_transfer.sbatch` runs one episode per array
 task (`FIXED_PUSHES=3` makes every strategy push exactly three times, the
 policy choosing which pushes; `--fixed-pushes` does the same for
-`evaluate`); combine them with:
+`evaluate`); combine them into paired statistics (mean difference, standard
+error, paired t-test and Wilcoxon signed-rank p-values) with:
 
 ```sh
 uv run python -m scripts.merge_evaluations data/results/transfer/episode_*.json --out data/results/transfer/summary.json
@@ -201,7 +204,20 @@ For every contact on the MPC grid, at matched push distances (1.5, 4.5, and
 hypothesis and under its neighbour one grid step away in friction, rod x, or
 rod y. It reports how far apart the two predictions are relative to the
 estimator's noise (`CALIBRATED_R`): about 1 or more means one push noticeably
-shifts the belief between them. Planning-only, about 3 minutes on 12 workers.
+shifts the belief between them. The plots show the median over contacts by
+speed and distance, and one push type's separation at every contact point.
+Planning-only, about 3 minutes on 12 workers.
+
+### Where the block can be pushed
+
+```sh
+uv run python -m scripts.plot_reach --out docs/figures/reach.png
+```
+
+For each block position on the table, the share of the 396 lattice pushes
+whose approach and end points lie in the arm's reach band (0.39–0.78 m from
+the base), averaged over block yaw, with the workspace and start/goal disks.
+About 30 s.
 
 ### Check the prediction model against the truth sim
 
@@ -236,14 +252,17 @@ per measurement component, and the friction each trial's pushes favour. About
 | `src/world/` | The block and table (`object`, `geometry`); arm, stick, IK and trajectories (`iiwa`, `pdcontroller`); Drake scene and Meshcat drawing (`scene`); a push and the push space every module samples from (`action`, `push_space`); the continuous truth simulation and what a push records (`recording`, `observation`) |
 | `src/estimation/` | Unknown parameters and hypothesis grid (`params`); Drake prediction model (`dynamics`); grid Bayes filter (`estimator`); R calibration (`calibration`); recorded trials and their replay (`trials`, `replay`); live belief views (`belief_view`) |
 | `src/surrogate/` | Surrogate network and predictor (`model`), data generation (`data`), training (`train`), tip-path deviation family (`path_family`) |
-| `src/policy/` | The surrogate-world PPO environment (`env`) and training (`train`) |
-| `src/control/` | The shared Drake push loop, selectors and episode setup (`probing`); MPC (`mpc`); placement episodes (`episode`) |
+| `src/policy/` | The surrogate-world PPO environment (`env`), training (`train`), and the trained policy as a Drake-world push selector (`deploy`) |
+| `src/control/` | The shared Drake push loop and selectors (`probing`); MPC (`mpc`); placement episodes (`episode`) |
 | `src/evaluation/` | Drake transfer of the prober (`transfer`), placement under probing conditions (`placement`), training report (`report`) |
+| `src/constants.py` | Values shared across modules, defined once: rod mass, simulation timing, workspace, push lattice, MPC cost |
+| `src/experiment.py` | The setup built from them: simulation configs, the push lattice, the reference block, and how a seed becomes an episode |
 | `src/paths.py`, `src/cli.py`, `src/dataset_file.py` | Data layout; shared command-line options; dataset files |
 | `scripts/diagnose_motion.py` | Motion checks for random or listed pushes: joint speeds, tracking, release, post-measurement motion; optional Meshcat replay |
 | `scripts/motion_plans/` | Push lists for the motion checks (extreme pushes, stress pushes) |
 | `scripts/model_bias.py` | Prediction model against the truth sim on recorded pushes: mismatch, timestep effect, best-fit friction |
-| `scripts/push_informativeness.py` | How well pushes of each speed and distance separate neighbouring hypotheses |
+| `scripts/push_informativeness.py` | How well pushes of each speed, distance and contact point separate neighbouring hypotheses |
+| `scripts/plot_reach.py` | Where the block can sit: share of lattice pushes the arm reaches at each block position |
 | `scripts/evaluate_policy.py` | Trained policy against random probing on paired surrogate episodes: errors, push counts, and the speeds, distances and directions it chooses |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
 | `scripts/cluster/` | Slurm batch scripts for the Engaging cluster (PPO training, Drake transfer evaluation) |
@@ -276,7 +295,7 @@ per measurement component, and the friction each trial's pushes favour. About
   ```sh
   uv venv --python 3.14 .venv
   uv pip install --python .venv/bin/python --torch-backend cpu 'torch>=2.15'
-  uv pip install --python .venv/bin/python 'drake>=1.58.0' 'gymnasium>=1.4.0' 'matplotlib>=3.11.2' 'sb3-contrib>=2.9.2' 'stable-baselines3>=2.9.2' 'pytest>=9.2.0' 'mypy>=2.4.1' 'ruff>=0.17.3'
+  uv pip install --python .venv/bin/python 'drake>=1.58.0' 'gymnasium>=1.4.0' 'matplotlib>=3.11.2' 'sb3-contrib>=2.9.2' 'stable-baselines3>=2.9.2' 'pytest>=9.2.0' 'mypy>=2.4.1' 'ruff>=0.17.3' 'scipy>=1.18.1'
   ```
 
   Then use `uv run --no-sync`, since a plain `uv run` re-syncs to the GPU build.

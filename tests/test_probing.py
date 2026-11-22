@@ -6,12 +6,8 @@ import numpy as np
 import pytest
 
 from src.control import probing
-from src.control.probing import (
-    ProbingState,
-    episode_conditions,
-    random_selector,
-    run_probing,
-)
+from src.control.probing import ProbingState, random_selector, run_probing
+from src.experiment import episode_conditions
 from src.world.action import Action
 from src.world.geometry import SurfaceNormal
 from src.world.push_space import Face, PushSpace

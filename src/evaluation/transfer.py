@@ -24,23 +24,28 @@ from typing import cast
 import numpy as np
 from sb3_contrib import MaskablePPO
 
+from src.constants import ROD_MASS
 from src.control.probing import (
     ProbingState,
     PushRecord,
-    episode_conditions,
-    episode_object,
     lattice_selector,
     long_fast,
-    policy_selector,
     run_probing,
 )
-from src.estimation.dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
+from src.estimation.dynamics import DynamicsModel, ParallelPushModel
 from src.estimation.estimator import (
     CALIBRATED_R,
     CALIBRATED_R_SURROGATE,
     GridBayesFilter,
 )
 from src.estimation.params import Eta, grid_spans
+from src.experiment import (
+    episode_conditions,
+    episode_object,
+    push_model_config,
+    truth_sim_config,
+)
+from src.policy.deploy import policy_selector
 from src.policy.env import (
     ProbingEnv,
     ProbingEnvConfig,
@@ -50,8 +55,6 @@ from src.policy.env import (
 from src.surrogate.model import SurrogatePredictor, load_ensemble
 from src.world.iiwa import Pusher
 from src.world.recording import TruthSim, TruthSimConfig
-
-ROD_MASS = 0.2  # kg, as everywhere
 
 
 @dataclass(frozen=True)
@@ -296,15 +299,13 @@ def run_evaluation(
     write the report.  `predictor` picks the filter's prediction model:
     the Drake plant (gold-standard accuracy), or the surrogate (online
     speed, calibrated to CALIBRATED_R_SURROGATE)."""
-    truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.3, log_period=1e-3)
+    truth_config = truth_sim_config()
     started = time.perf_counter()
     if random_only:
         if predictor != "drake":
             raise ValueError("random-only evaluation requires the Drake predictor")
         config = make_probing_env_config(None, family_path=None)
-        with ParallelPushModel(
-            workers, PushModelConfig(time_step=2e-3, rod_mass=ROD_MASS)
-        ) as random_model:
+        with ParallelPushModel(workers, push_model_config()) as random_model:
             records = [
                 _drake_episode(
                     None,
@@ -354,9 +355,7 @@ def run_evaluation(
             fixed_pushes,
         )
     else:
-        with ParallelPushModel(
-            workers, PushModelConfig(time_step=2e-3, rod_mass=ROD_MASS)
-        ) as filter_model:
+        with ParallelPushModel(workers, push_model_config()) as filter_model:
             drake_learned, drake_random, drake_long_fast, surrogate_learned = (
                 _run_episodes(
                     model,

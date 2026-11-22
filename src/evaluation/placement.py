@@ -22,30 +22,26 @@ from pathlib import Path
 import numpy as np
 from sb3_contrib import MaskablePPO
 
+from src.constants import MPC_LENGTH, MPC_TIME_WEIGHT, MPC_YAW_WEIGHT, ROD_MASS
 from src.control.episode import run_episode
 from src.control.mpc import GoalTolerance, MpcController, PoseCostWeights
-from src.control.probing import (
-    Selector,
+from src.control.probing import Selector, lattice_selector, long_fast
+from src.estimation.dynamics import ParallelPushModel
+from src.estimation.estimator import CALIBRATED_R, GridBayesFilter
+from src.estimation.params import Eta, grid_spans
+from src.experiment import (
     episode_conditions,
     episode_goal,
     episode_object,
-    lattice_selector,
-    long_fast,
-    policy_selector,
+    push_model_config,
+    truth_sim_config,
 )
-from src.estimation.dynamics import ParallelPushModel, PushModelConfig
-from src.estimation.estimator import CALIBRATED_R, GridBayesFilter
-from src.estimation.params import Eta, grid_spans
-from src.policy.env import ROD_MASS, make_probing_env_config
+from src.policy.deploy import policy_selector
+from src.policy.env import make_probing_env_config
 from src.world.iiwa import Pusher
-from src.world.recording import TruthSim, TruthSimConfig
+from src.world.recording import TruthSim
 
 PROBERS = ("learned", "random", "long_fast")
-# The MPC's cost settings, as simulate --mpc's defaults.
-POSE_WEIGHTS = PoseCostWeights(length=0.07, yaw_weight=1.0)
-TIME_WEIGHT = 0.005
-TRUTH_CONFIG = TruthSimConfig(time_step=1e-4, settle_time=0.3, log_period=1e-3)
-MODEL_TIME_STEP = 2e-3  # s, the Drake prediction model's
 
 
 @dataclass(frozen=True)
@@ -118,9 +114,7 @@ def run_placement(
         probe_selector = lattice_selector(long_fast(config.actions), action_rng)
 
     started = time.perf_counter()
-    with ParallelPushModel(
-        workers, PushModelConfig(time_step=MODEL_TIME_STEP, rod_mass=ROD_MASS)
-    ) as model:
+    with ParallelPushModel(workers, push_model_config()) as model:
         belief = (
             None
             if condition.true_eta
@@ -128,10 +122,15 @@ def run_placement(
         )
         result = run_episode(
             obj=obj,
-            truth_sim=TruthSim(obj, Pusher(), TRUTH_CONFIG),
+            truth_sim=TruthSim(obj, Pusher(), truth_sim_config()),
             meshcat=None,
             dashboard=None,
-            controller=MpcController(model, config.actions, POSE_WEIGHTS, TIME_WEIGHT),
+            controller=MpcController(
+                model,
+                config.actions,
+                PoseCostWeights(MPC_LENGTH, MPC_YAW_WEIGHT),
+                MPC_TIME_WEIGHT,
+            ),
             belief=belief,
             plan_eta=belief.map_eta if belief is not None else lambda: eta,
             probe_selector=probe_selector,

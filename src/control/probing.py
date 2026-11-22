@@ -13,18 +13,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from pydrake.all import PiecewisePolynomial
-from sb3_contrib import MaskablePPO
 
 from src.estimation.estimator import GridBayesFilter
-from src.estimation.params import Eta
-from src.policy.env import (
-    WORKSPACE_CENTER,
-    WORKSPACE_RADIUS,
-    ProbingEnvConfig,
-    env_parts,
-    sample_episode_conditions,
-    select_push_action,
-)
+from src.experiment import out_of_bounds
 from src.world.action import Action
 from src.world.object import Object
 from src.world.observation import PushObservation
@@ -34,7 +25,6 @@ from src.world.recording import TruthSim
 MAX_IK_RETRIES = 40
 LONG_PUSH = 0.068  # m: the long third of the push-distance range
 FAST_PUSH = 0.11  # m/s: the fast third of the push-speed range
-GOAL_RADIUS = 0.1  # m, goal disk around the workspace center, as for starts
 
 
 @dataclass
@@ -76,44 +66,6 @@ class ProbingOutcome:
 Selector = Callable[[ProbingState, list[Action]], Action | str]
 """Chooses the next push from the state and the actions whose arm plan failed at
 this decision, returning the push, or a string giving the reason to stop."""
-
-
-def episode_conditions(seed: int) -> tuple[Eta, np.ndarray, np.random.Generator]:
-    """The seed's true eta, start pose (x m, y m, yaw rad) and action RNG.  The
-    action stream is independent of the condition stream, so the selector's
-    draws never shift the episode's sampled conditions."""
-    eta, start_pose = sample_episode_conditions(
-        np.random.default_rng(seed), env_parts()
-    )
-    action_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
-    return eta, start_pose, action_rng
-
-
-def episode_goal(seed: int) -> tuple[float, float, float]:
-    """The seed's placement goal (x m, y m, yaw rad), drawn from its own stream
-    so adding a goal never shifts the probing conditions or actions."""
-    rng = np.random.default_rng(np.random.SeedSequence([seed, 2]))
-    rho = GOAL_RADIUS * np.sqrt(rng.uniform())
-    theta = rng.uniform(-np.pi, np.pi)
-    return (
-        WORKSPACE_CENTER[0] + rho * np.cos(theta),
-        WORKSPACE_CENTER[1] + rho * np.sin(theta),
-        rng.uniform(-np.pi, np.pi),
-    )
-
-
-def episode_object(eta: Eta, start_pose: np.ndarray, rod_mass: float) -> Object:
-    """The block for `eta` resting at `start_pose` (x m, y m, yaw rad)."""
-    obj = eta.to_object(np.random.default_rng(0), rod_mass)
-    obj.pose = (float(start_pose[0]), float(start_pose[1]), float(start_pose[2]))
-    return obj
-
-
-def out_of_bounds(pose: np.ndarray) -> bool:
-    """True when the block center (pose[:2], m) leaves the workspace disk."""
-    return bool(
-        np.linalg.norm(pose[:2] - np.array(WORKSPACE_CENTER)) > WORKSPACE_RADIUS
-    )
 
 
 def _pose(state: ProbingState) -> np.ndarray:
@@ -162,37 +114,6 @@ def long_fast(actions: Sequence[Action]) -> list[Action]:
         for a in actions
         if a.velocity * a.time >= LONG_PUSH - 1e-9 and a.velocity >= FAST_PUSH - 1e-9
     ]
-
-
-def policy_selector(
-    model: MaskablePPO, config: ProbingEnvConfig, min_pushes: int = 0
-) -> Selector:
-    """The trained policy's masked choice from the probing lattice, returning
-    "stop" when it stops; stopping is masked until `min_pushes` pushes are
-    done.  Every lattice push sharing a contact point with a push whose arm
-    plan failed at this decision is masked."""
-
-    def select(state: ProbingState, failed: list[Action]) -> Action | str:
-        assert state.belief is not None, "the policy chooses from the belief"
-        excluded = np.zeros(config.n_push_actions, dtype=bool)
-        for action in failed:
-            excluded |= np.all(
-                np.isclose(config.contact_positions, action.contact.position), axis=1
-            )
-        chosen = select_push_action(
-            model,
-            state.belief,
-            _pose(state),
-            state.last_measurement,
-            state.last_action,
-            state.pushes,
-            config,
-            excluded,
-            allow_stop=state.pushes >= min_pushes,
-        )
-        return "stop" if chosen is None else config.actions[chosen]
-
-    return select
 
 
 def run_probing(

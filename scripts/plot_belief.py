@@ -196,20 +196,20 @@ def git_state() -> dict[str, Any]:
 def record_episode(args: argparse.Namespace) -> BeliefRecord:
     """Run one episode through the shared probing loop with random pushes and
     a grid Bayes filter, collecting the belief after each push."""
-    from src.control.probing import (
-        ProbingState,
-        episode_conditions,
-        episode_object,
-        random_selector,
-        run_probing,
-    )
-    from src.estimation.dynamics import ParallelPushModel, PushModelConfig
+    from src.constants import ROD_MASS
+    from src.control.probing import ProbingState, random_selector, run_probing
+    from src.estimation.dynamics import ParallelPushModel
     from src.estimation.estimator import CALIBRATED_R, GridBayesFilter
     from src.estimation.params import Eta, GridSpec, make_grid
-    from src.policy.env import ROD_MASS
+    from src.experiment import (
+        episode_conditions,
+        episode_object,
+        push_model_config,
+        truth_sim_config,
+    )
     from src.world.iiwa import Pusher
     from src.world.push_space import make_push_space
-    from src.world.recording import TruthSim, TruthSimConfig
+    from src.world.recording import TruthSim
 
     sampled, start_pose, action_rng = episode_conditions(args.seed)
     eta = Eta(
@@ -219,8 +219,8 @@ def record_episode(args: argparse.Namespace) -> BeliefRecord:
     )
     obj = episode_object(eta, start_pose, ROD_MASS)
     grid = make_grid(GridSpec(), obj.parts)
-    truth_config = TruthSimConfig(time_step=1e-4, settle_time=0.3, log_period=1e-3)
-    model_config = PushModelConfig(time_step=2e-3, rod_mass=ROD_MASS)
+    truth_config = truth_sim_config()
+    model_config = push_model_config()
 
     with ParallelPushModel(args.workers, model_config) as model:
         belief = GridBayesFilter(grid, model, CALIBRATED_R, nu=3.0)

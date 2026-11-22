@@ -36,11 +36,11 @@ from pydrake.all import SpatialVelocity
 
 from src.estimation.dynamics import DrakePushModel, PushModelConfig
 from src.estimation.params import GridSpec, sample_eta
+from src.experiment import reference_object
 from src.surrogate.model import nominal_action_tip_path, path_downsample
 from src.surrogate.path_family import PathFamily, perturb_tip_positions
 from src.world.geometry import SurfacePart
 from src.world.iiwa import transfer_height
-from src.world.object import Object, Rod
 from src.world.observation import ObjectState, wrap_angle
 from src.world.push_space import PushSpace, make_push_space
 
@@ -70,7 +70,7 @@ def make_surrogate_setup(
 ) -> SurrogateSetup:
     """Collect what every surrogate sample shares.  The footprint, and with
     it the push space, is the same for every eta."""
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
+    reference = reference_object(rod_mass)
     return SurrogateSetup(
         spec=GridSpec(),
         parts=reference.parts,

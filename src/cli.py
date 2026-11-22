@@ -1,12 +1,19 @@
 """The command-line options main.py's subcommands share.
 
-The defaults live only here: simulate must run with the settings R was
-calibrated under, so the two subcommands must never disagree.
+The defaults come from src.experiment: simulate must run with the settings
+R was calibrated under, so no subcommand may define its own.
 """
 
 import argparse
 import os
 
+from src.constants import (
+    LOG_PERIOD,
+    MODEL_TIME_STEP,
+    ROD_MASS,
+    SETTLE_TIME,
+    TRUTH_TIME_STEP,
+)
 from src.estimation.dynamics import PushModelConfig
 from src.world.recording import TruthSimConfig
 
@@ -16,13 +23,13 @@ def add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--time-step",
         type=float,
-        default=1e-4,
+        default=TRUTH_TIME_STEP,
         help="simulation timestep (nonnegative)",
     )
     parser.add_argument(
         "--rod-mass",
         type=float,
-        default=0.2,
+        default=ROD_MASS,
         help="rod mass (kg), additional to the block's own mass",
     )
     parser.add_argument(
@@ -34,19 +41,19 @@ def add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--model-time-step",
         type=float,
-        default=2e-3,
+        default=MODEL_TIME_STEP,
         help="estimator prediction model timestep",
     )
     parser.add_argument(
         "--settle-time",
         type=float,
-        default=0.3,
+        default=SETTLE_TIME,
         help="measurement delay after each push segment ends (s)",
     )
     parser.add_argument(
         "--log-period",
         type=float,
-        default=1e-3,
+        default=LOG_PERIOD,
         help="plant-state logging period for recorded pushes (s)",
     )
 

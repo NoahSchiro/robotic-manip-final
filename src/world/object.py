@@ -15,6 +15,7 @@ import numpy as np
 from pydrake.all import MultibodyPlant, Parser, RigidTransform, RotationMatrix
 
 from src import ASSET_DIR
+from src.constants import GOAL_RADIUS, START_RADIUS, WORKSPACE_CENTER
 from src.world.geometry import (
     SurfaceNormal,
     contains_disk,
@@ -235,9 +236,6 @@ class Object(BoxComposite):
     boxes, a free body whose pose gets set per-run and which must be pushed
     to a random goal orientation."""
 
-    pose_center = (0.55, 0.0)
-    pose_radius = 0.10
-
     def __init__(
         self,
         rng: np.random.Generator,
@@ -257,19 +255,19 @@ class Object(BoxComposite):
             friction=friction,
             rod=rod,
         )
-        rho_start = self.pose_radius * np.sqrt(rng.uniform())
+        rho_start = START_RADIUS * np.sqrt(rng.uniform())
         theta_start = rng.uniform(0.0, 2.0 * np.pi)
         # x, y, yaw (rad), resting on the table top
         self.pose = (
-            self.pose_center[0] + rho_start * np.cos(theta_start),
-            self.pose_center[1] + rho_start * np.sin(theta_start),
+            WORKSPACE_CENTER[0] + rho_start * np.cos(theta_start),
+            WORKSPACE_CENTER[1] + rho_start * np.sin(theta_start),
             rng.uniform(0.0, 2.0 * np.pi),
         )
-        rho_goal = self.pose_radius * np.sqrt(rng.uniform())
+        rho_goal = GOAL_RADIUS * np.sqrt(rng.uniform())
         theta_goal = rng.uniform(0.0, 2.0 * np.pi)
         self.goal = (
-            self.pose_center[0] + rho_goal * np.cos(theta_goal),
-            self.pose_center[1] + rho_goal * np.sin(theta_goal),
+            WORKSPACE_CENTER[0] + rho_goal * np.cos(theta_goal),
+            WORKSPACE_CENTER[1] + rho_goal * np.sin(theta_goal),
             rng.uniform(0.0, 2.0 * np.pi),
         )
 

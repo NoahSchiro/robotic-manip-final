@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src.control.probing import episode_conditions
 from src.estimation import trials
+from src.experiment import episode_conditions
 from src.world.action import Action
 from src.world.geometry import SurfaceNormal
 

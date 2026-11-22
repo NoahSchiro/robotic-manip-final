@@ -24,13 +24,7 @@ from typing import cast
 
 import numpy as np
 
-from src.control.probing import (
-    ProbingState,
-    episode_conditions,
-    episode_object,
-    random_selector,
-    run_probing,
-)
+from src.control.probing import ProbingState, random_selector, run_probing
 from src.estimation.dynamics import DrakePushModel, DynamicsModel, PushModelConfig
 from src.estimation.params import (
     Eta,
@@ -40,9 +34,9 @@ from src.estimation.params import (
     nearest_subcell,
     subcells,
 )
+from src.experiment import episode_conditions, episode_object, reference_object
 from src.surrogate.model import SurrogatePredictor, load_ensemble
 from src.world.iiwa import Pusher
-from src.world.object import Object, Rod
 from src.world.observation import planar_error
 from src.world.push_space import PushSpace, make_push_space
 from src.world.recording import TruthSim, TruthSimConfig
@@ -89,7 +83,7 @@ def make_sample_setup(
     n_subcells: int = 1,
 ) -> SampleSetup:
     """Collect what every calibration sample shares."""
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
+    reference = reference_object(rod_mass)
     grid = make_grid(GridSpec(), reference.parts)
     return SampleSetup(
         push_space=make_push_space(reference.parts, reference.height),

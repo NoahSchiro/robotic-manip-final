@@ -16,18 +16,10 @@ from src.cli import (
     push_model_config,
     truth_sim_config,
 )
+from src.constants import MPC_LENGTH, MPC_TIME_WEIGHT, MPC_YAW_WEIGHT
 from src.control.episode import EpisodeResult, run_episode
 from src.control.mpc import GoalTolerance, MpcController, PoseCostWeights, goal_error
-from src.control.probing import (
-    ProbingState,
-    PushRecord,
-    episode_conditions,
-    episode_goal,
-    episode_object,
-    policy_selector,
-    random_selector,
-    run_probing,
-)
+from src.control.probing import ProbingState, PushRecord, random_selector, run_probing
 from src.dataset_file import save_dataset
 from src.estimation.belief_view import BeliefDashboard, show_belief
 from src.estimation.calibration import calibrate, make_sample_setup
@@ -43,11 +35,15 @@ from src.estimation.replay import run_replay
 from src.estimation.trials import make_record_setup, record_trials
 from src.evaluation.placement import run_placement
 from src.evaluation.transfer import run_evaluation
-from src.policy.env import (
-    MAX_PUSHES,
-    ProbingEnvConfig,
-    make_probing_env_config,
+from src.experiment import (
+    episode_conditions,
+    episode_goal,
+    episode_object,
+    lattice,
+    reference_object,
 )
+from src.policy.deploy import policy_selector
+from src.policy.env import MAX_PUSHES, ProbingEnvConfig, make_probing_env_config
 from src.policy.train import train_ppo
 from src.surrogate.data import (
     assign_split,
@@ -71,7 +67,7 @@ from src.world.iiwa import (
     make_push_trajectory,
     transfer_height,
 )
-from src.world.object import Object, Rod, Table
+from src.world.object import Object, Table
 from src.world.observation import PushObservation
 from src.world.push_space import PushSpace, make_push_space
 from src.world.recording import TruthSim
@@ -81,10 +77,6 @@ from src.world.scene import (
     place_object,
     show_object_goal,
 )
-
-# m, spacing of the MPC's candidate contacts along each face; with 3 speeds and
-# 3 push distances, 396 candidates on the T.
-MPC_CANDIDATE_SPACING = 0.012
 
 
 def parse_args() -> argparse.Namespace:
@@ -572,24 +564,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="with --mpc, plan with the true eta and skip estimation",
     )
-    # 0.07 is half the T's 14 cm extent, so with --yaw-weight 1 a 7 cm position
-    # error costs as much as a 1 rad yaw error.
     simulate_parser.add_argument(
         "--cost-length",
         type=float,
-        default=0.07,
+        default=MPC_LENGTH,
         help="MPC pose cost's length scale l (m)",
     )
     simulate_parser.add_argument(
         "--yaw-weight",
         type=float,
-        default=1.0,
+        default=MPC_YAW_WEIGHT,
         help="MPC pose cost's yaw weight lambda_phi (1/rad^2)",
     )
     simulate_parser.add_argument(
         "--time-weight",
         type=float,
-        default=0.005,
+        default=MPC_TIME_WEIGHT,
         help="MPC action cost per second of maneuver time",
     )
     simulate_parser.add_argument(
@@ -834,7 +824,7 @@ def simulate(args: argparse.Namespace) -> None:
     if args.mpc:
         eta_true = eta
         space = make_push_space(obj.parts, obj.height)
-        actions = space.grid(MPC_CANDIDATE_SPACING, 3, 3)
+        actions = lattice(space)
         print(format_placement_start(eta_true, obj, len(actions)))
         grid = make_grid(GridSpec(), obj.parts)
         truth_sim = make_truth_sim(args, sim, obj, pusher)
@@ -1058,7 +1048,7 @@ def evaluation_report_command(args: argparse.Namespace) -> str:
 def calibrate_path_family_command(args: argparse.Namespace) -> None:
     """Calibrate the executed-path deviation family from the recorded
     trials and save it for data generation and the environment."""
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.0))
+    reference = reference_object()
     family, residual = calibrate_path_family(args.trials, transfer_height(reference))
     save_path_family(args.out, family)
     print(

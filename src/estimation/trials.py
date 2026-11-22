@@ -31,19 +31,13 @@ from pathlib import Path
 import numpy as np
 from pydrake.all import RigidTransform, SpatialVelocity
 
-from src.control.probing import (
-    ProbingState,
-    episode_conditions,
-    episode_object,
-    random_selector,
-    run_probing,
-)
+from src.control.probing import ProbingState, random_selector, run_probing
 from src.dataset_file import META_PREFIX
 from src.estimation.params import Eta
+from src.experiment import episode_conditions, episode_object, reference_object
 from src.world.action import Action
 from src.world.geometry import SurfaceNormal
 from src.world.iiwa import Pusher
-from src.world.object import Object, Rod
 from src.world.observation import ObjectState, PushObservation
 from src.world.push_space import PushSpace, make_push_space
 from src.world.recording import TruthSim, TruthSimConfig
@@ -74,7 +68,7 @@ def make_record_setup(
     rod_mass: float, pushes: int, truth: TruthSimConfig
 ) -> RecordSetup:
     """Collect what every recorded trial shares."""
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
+    reference = reference_object(rod_mass)
     return RecordSetup(
         rod_mass=rod_mass,
         pushes=pushes,

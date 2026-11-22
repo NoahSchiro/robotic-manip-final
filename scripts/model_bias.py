@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from src import paths
+from src.constants import TRUTH_TIME_STEP
 from src.estimation.dynamics import DrakePushModel, PushModelConfig
 from src.estimation.estimator import (
     CALIBRATED_R,
@@ -33,7 +34,7 @@ from src.estimation.estimator import (
 )
 from src.estimation.params import Eta, GridSpec, make_grid, nearest_hypothesis
 from src.estimation.trials import TrialData, load_dataset
-from src.world.object import Object, Rod
+from src.experiment import reference_object
 from src.world.observation import PushObservation, measurement, planar_error
 
 MU_SWEEP = np.round(np.arange(0.05, 1.0001, 0.05), 3)
@@ -130,9 +131,7 @@ def run(trials_path: Path, fine_step: float, workers: int) -> dict[str, np.ndarr
     trials = [trial for trial in trials if trial.observations]
     model_step = float(metadata["model_time_step"])
     rod_mass = float(metadata["rod_mass"])
-    grid = make_grid(
-        GridSpec(), Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass)).parts
-    )
+    grid = make_grid(GridSpec(), reference_object(rod_mass).parts)
     tasks = tasks_for(trials, grid, model_step, fine_step)
     with Pool(
         workers,
@@ -223,7 +222,7 @@ def summary(data: dict[str, np.ndarray]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--trials", type=Path, default=paths.REPLAY_TRIALS)
-    parser.add_argument("--fine-time-step", type=float, default=1e-4)
+    parser.add_argument("--fine-time-step", type=float, default=TRUTH_TIME_STEP)
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--out", type=Path, default=paths.RESULTS / "model_bias.npz")
     args = parser.parse_args()

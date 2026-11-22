@@ -37,8 +37,8 @@ from src.estimation.estimator import (
 )
 from src.estimation.params import Eta, GridSpec, grid_spans, grid_step, make_grid
 from src.estimation.trials import TrialData, load_dataset
+from src.experiment import reference_object
 from src.surrogate.model import SurrogatePredictor, load_ensemble
-from src.world.object import Object, Rod
 from src.world.observation import PushObservation, planar_error
 
 # A final belief this peaked with a wrong MAP counts as confidently wrong.
@@ -391,9 +391,7 @@ def run_replay(
     trials, metadata = load_dataset(trials_path)
     scored = [trial for trial in trials if trial.observations]
     rod_mass = float(metadata["rod_mass"])
-    grid = make_grid(
-        GridSpec(), Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass)).parts
-    )
+    grid = make_grid(GridSpec(), reference_object(rod_mass).parts)
     source = (
         f"saved predictions {predictions_in}"
         if predictions_in
