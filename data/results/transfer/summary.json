@@ -91,11 +91,15 @@
  "learned_vs_random": {
   "mean": 0.05848770243133107,
   "se": 0.02615533124556802,
-  "better_share": 0.45
+  "better_share": 0.45,
+  "t_test_p": 0.031133892859235908,
+  "wilcoxon_p": 0.04786974703376418
  },
  "learned_vs_long_fast": {
   "mean": 0.047205943381006144,
   "se": 0.01934127355680873,
-  "better_share": 0.5
+  "better_share": 0.5,
+  "t_test_p": 0.019303308254890395,
+  "wilcoxon_p": 0.02422117460396644
  }
 }

@@ -4,6 +4,9 @@ array job) into paired statistics.
 Each strategy's final MAP error is range-normalized (EpisodeRecord.error);
 paired differences compare strategies on identical episodes, so the
 standard error reflects push selection rather than episode difficulty.
+Each comparison reports a paired t-test and, since tied episodes (both
+strategies reaching the same grid estimate) make the differences far from
+normal, a Wilcoxon signed-rank test; both p-values are two-sided.
 
     uv run python -m scripts.merge_evaluations data/results/transfer/episode_*.json --out data/results/transfer/summary.json
 """
@@ -14,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy import stats
 
 # One per_episode entry: its seed, and one EpisodeRecord dict per strategy.
 PairedEpisode = dict[str, Any]
@@ -54,13 +58,24 @@ def strategy_stats(records: list[dict[str, float]]) -> dict[str, float]:
 
 def paired(episodes: list[PairedEpisode], better: str, worse: str) -> dict[str, float]:
     """`worse`'s error minus `better`'s per episode: positive favours `better`."""
-    diff = np.array([e[worse]["error"] - e[better]["error"] for e in episodes])
+    worse_error = np.array([e[worse]["error"] for e in episodes])
+    better_error = np.array([e[better]["error"] for e in episodes])
+    diff = worse_error - better_error
+    if len(diff) < 2:
+        nan = float("nan")
+        return {
+            "mean": float(diff.mean()),
+            "se": nan,
+            "better_share": nan,
+            "t_test_p": nan,
+            "wilcoxon_p": nan,
+        }
     return {
         "mean": float(diff.mean()),
-        "se": float(diff.std(ddof=1) / np.sqrt(len(diff)))
-        if len(diff) > 1
-        else float("nan"),
+        "se": float(diff.std(ddof=1) / np.sqrt(len(diff))),
         "better_share": float(np.mean(diff > 0)),
+        "t_test_p": float(stats.ttest_rel(worse_error, better_error).pvalue),
+        "wilcoxon_p": float(stats.wilcoxon(worse_error, better_error).pvalue),
     }
 
 
@@ -92,7 +107,8 @@ def main() -> None:
     for key, d in comparisons.items():
         print(
             f"{key}: error advantage {d['mean']:+.3f} ± {d['se']:.3f}, "
-            f"learned better in {d['better_share']:.0%}"
+            f"learned better in {d['better_share']:.0%}, "
+            f"paired t p={d['t_test_p']:.3f}, Wilcoxon p={d['wilcoxon_p']:.3f}"
         )
     if args.out is not None:
         result = {
