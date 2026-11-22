@@ -25,20 +25,18 @@ import numpy as np
 from pydrake.all import RigidTransform, RollPitchYaw, SpatialVelocity
 
 from src import paths
-from src.estimation.dynamics import DrakePushModel, PushModelConfig
+from src.constants import LATTICE_SPACING, SETTLE_TIME
+from src.estimation.dynamics import DrakePushModel
 from src.estimation.estimator import CALIBRATED_R
 from src.estimation.params import Eta
-from src.policy.env import ROD_MASS, SETTLE_TIME
+from src.experiment import push_model_config, reference_object
 from src.surrogate.model import nominal_tip_path
 from src.world.action import Action
 from src.world.geometry import SurfaceNormal
 from src.world.iiwa import transfer_height
-from src.world.object import Object, Rod
 from src.world.observation import ObjectState, measurement, planar_error
 from src.world.push_space import make_push_space
 
-MODEL_TIME_STEP = 2e-3  # s, as the estimator's predictions
-CONTACT_SPACING = 0.012  # m, the MPC grid's contact spacing
 # One grid step per parameter: friction, rod x (m), rod y (m).
 GRID_STEPS = {
     "mu": (0.1, 0.0, 0.0),
@@ -56,9 +54,7 @@ _height = 0.0
 
 def _start_worker(height: float) -> None:
     global _model, _height
-    _model = DrakePushModel(
-        PushModelConfig(time_step=MODEL_TIME_STEP, rod_mass=ROD_MASS)
-    )
+    _model = DrakePushModel(push_model_config())
     _height = height
 
 
@@ -91,7 +87,7 @@ def separation(base: np.ndarray, moved: np.ndarray, r: np.ndarray) -> np.ndarray
 
 def contacts_on_grid(spacing: float) -> list[SurfaceNormal]:
     """The distinct contact points of the MPC grid."""
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, ROD_MASS))
+    reference = reference_object()
     space = make_push_space(reference.parts, reference.height)
     unique = {
         a.contact.position.tobytes(): a.contact for a in space.grid(spacing, 1, 1)
@@ -111,6 +107,21 @@ class Separation:
     median: float
     p90: float
     share_above_1: float
+
+
+@dataclass(frozen=True)
+class ContactSeparation:
+    """The separation of one push: its body-frame contact point and inward
+    normal (x, y), push distance (m) and speed (m/s), for one base hypothesis
+    and parameter step."""
+
+    base_mu: float
+    parameter: str
+    distance_m: float
+    speed_m_per_s: float
+    contact_xy: tuple[float, float]
+    normal_xy: tuple[float, float]
+    separation: float
 
 
 def summarize(
@@ -146,15 +157,17 @@ def feasible_combos(
     ]
 
 
-def run(workers: int) -> list[Separation]:
-    contacts = contacts_on_grid(CONTACT_SPACING)
+def run(workers: int) -> tuple[list[Separation], list[ContactSeparation]]:
+    """Summaries per (base, parameter, distance, speed), and every push's
+    separation."""
+    contacts = contacts_on_grid(LATTICE_SPACING)
     etas = [tuple(base.as_array()) for base in BASES]
     etas += [
         tuple(np.add(base.as_array(), step))
         for base in BASES
         for step in GRID_STEPS.values()
     ]
-    reference = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, ROD_MASS))
+    reference = reference_object()
     space = make_push_space(reference.parts, reference.height)
     combos = feasible_combos(space.duration_range)
     tasks = [
@@ -163,13 +176,12 @@ def run(workers: int) -> list[Separation]:
         for d, v in combos
         for eta in etas
     ]
-    height = transfer_height(
-        Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, ROD_MASS))
-    )
+    height = transfer_height(reference_object())
     with Pool(workers, initializer=_start_worker, initargs=(height,)) as pool:
         predictions = np.array(pool.map(_predict, tasks, chunksize=8))
     predictions = predictions.reshape(len(contacts), len(combos), len(etas), 6)
     rows: list[Separation] = []
+    per_contact: list[ContactSeparation] = []
     for b, base in enumerate(BASES):
         for k, parameter in enumerate(GRID_STEPS):
             moved = len(BASES) + b * len(GRID_STEPS) + k
@@ -177,7 +189,20 @@ def run(workers: int) -> list[Separation]:
                 predictions[:, :, b], predictions[:, :, moved], CALIBRATED_R
             )
             rows += summarize(column, combos, base.mu, parameter)
-    return rows
+            per_contact += [
+                ContactSeparation(
+                    base_mu=base.mu,
+                    parameter=parameter,
+                    distance_m=d,
+                    speed_m_per_s=v,
+                    contact_xy=(float(c.position[0]), float(c.position[1])),
+                    normal_xy=(float(c.normal[0]), float(c.normal[1])),
+                    separation=float(column[i, j]),
+                )
+                for i, c in enumerate(contacts)
+                for j, (d, v) in enumerate(combos)
+            ]
+    return rows, per_contact
 
 
 DISTANCE_COLORS = ("#86b6ef", "#3987e5", "#0d366b")  # short to long pushes
@@ -232,10 +257,9 @@ def plot_parameter(
                 ms=6,
                 markeredgecolor="#fcfcfb",
             )
-    ax.axhline(1.0, color="#898781", lw=1, ls=":")
     ax.set_title(title, fontsize=11, loc="left", color="#0b0b0b")
     ax.set_xlabel("push speed (cm/s)")
-    ax.set_ylabel("separation after one push\n(median over contact points, units of R)")
+    ax.set_ylabel("separation s (units of R)")
     ax.set_xticks(np.array(SPEEDS) * 100)
     ax.set_xlim(1.5, 16.5)
     ax.set_ylim(0, top)
@@ -244,28 +268,119 @@ def plot_parameter(
     ax.set_axisbelow(True)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    handles = (
-        [
-            Line2D([], [], color=c, lw=2, marker="o", label=f"{d * 100:g} cm push")
-            for d, c in zip(distances, DISTANCE_COLORS, strict=False)
-        ]
-        + [
-            Line2D(
-                [],
-                [],
-                color="#52514e",
-                lw=2,
-                ls=styles[m],
-                label=f"true friction {m:g}",
-            )
-            for m in base_mus
-        ]
-        + [Line2D([], [], color="#898781", lw=1, ls=":", label="1 = barely noticeable")]
-    )
+    handles = [
+        Line2D([], [], color=c, lw=2, marker="o", label=f"{d * 100:g} cm push")
+        for d, c in zip(distances, DISTANCE_COLORS, strict=False)
+    ] + [
+        Line2D(
+            [],
+            [],
+            color="#52514e",
+            lw=2,
+            ls=styles[m],
+            label=f"true friction {m:g}",
+        )
+        for m in base_mus
+    ]
     ax.legend(handles=handles, loc="upper left", frameon=False, fontsize=8.5)
     figure.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(out, dpi=150)
+
+
+MAP_PUSH = (0.09, 0.15)  # m, m/s: the push shown on the contact maps
+MAP_BASE_MU = 0.2
+MAP_TITLES = {"mu": "Friction", "rod_x": "Rod x", "rod_y": "Rod y"}
+
+
+def plot_contact_maps(contacts: Sequence[ContactSeparation], out: Path) -> None:
+    """Separation of one push type (MAP_PUSH at true friction MAP_BASE_MU) at
+    every contact point, one panel per parameter, on the block outline."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from matplotlib.patches import Polygon
+
+    from scripts.plot_belief import outline_vertices
+
+    outline = outline_vertices(np.array(reference_object().parts)) * 100
+    figure = Figure(figsize=(12, 5.0), facecolor="#fcfcfb")
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(1, len(MAP_TITLES))
+    for ax, parameter in zip(axes, MAP_TITLES, strict=True):
+        chosen = [
+            c
+            for c in contacts
+            if c.parameter == parameter
+            and c.base_mu == MAP_BASE_MU
+            and np.isclose(c.distance_m, MAP_PUSH[0])
+            and np.isclose(c.speed_m_per_s, MAP_PUSH[1])
+        ]
+        xy = np.array([c.contact_xy for c in chosen]) * 100
+        normals = np.array([c.normal_xy for c in chosen])
+        values = np.array([c.separation for c in chosen])
+        ax.add_patch(
+            Polygon(
+                outline, closed=True, facecolor="#f0efec", edgecolor="#52514e", lw=1
+            )
+        )
+        # Arrows start outside the block and point along the push.
+        ax.quiver(
+            xy[:, 0] - 1.8 * normals[:, 0],
+            xy[:, 1] - 1.8 * normals[:, 1],
+            normals[:, 0],
+            normals[:, 1],
+            color="#b8b6ad",
+            angles="xy",
+            scale_units="xy",
+            scale=1 / 1.3,
+            width=0.006,
+        )
+        scatter = ax.scatter(
+            xy[:, 0],
+            xy[:, 1],
+            c=values,
+            cmap="Blues",
+            vmin=0,
+            vmax=values.max(),
+            s=36,
+            edgecolors="#52514e",
+            linewidths=0.5,
+            zorder=3,
+        )
+        figure.colorbar(
+            scatter,
+            ax=ax,
+            orientation="horizontal",
+            shrink=0.8,
+            pad=0.16,
+            label="separation s (units of R)",
+        )
+        ax.set_title(MAP_TITLES[parameter], fontsize=11, loc="left")
+        ax.set_aspect("equal")
+        ax.set_xlim(-10.5, 10.5)
+        ax.set_ylim(-10.5, 10.5)
+        ax.set_xlabel("body x (cm)")
+        ax.set_facecolor("#fcfcfb")
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+    axes[0].set_ylabel("body y (cm)")
+    figure.suptitle(
+        f"Separation of neighbouring hypotheses by contact point: {MAP_PUSH[0] * 100:g} cm "
+        f"push at {MAP_PUSH[1] * 100:g} cm/s, true friction {MAP_BASE_MU:g}",
+        fontsize=11,
+    )
+    figure.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(out, dpi=150)
+
+
+def json_rows(tables: dict[str, list[dict[str, object]]]) -> str:
+    """JSON with one row per line, so result diffs stay readable."""
+    blocks = [
+        f'"{name}": [\n' + ",\n".join(json.dumps(row) for row in rows) + "\n]"
+        for name, rows in tables.items()
+    ]
+    return "{\n" + ",\n".join(blocks) + "\n}\n"
 
 
 def main() -> None:
@@ -282,14 +397,35 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.from_json is not None:
-        rows = [Separation(**row) for row in json.loads(args.from_json.read_text())]
+        saved = json.loads(args.from_json.read_text())
+        rows = [Separation(**row) for row in saved["summary"]]
+        contacts = [
+            ContactSeparation(
+                **{
+                    **c,
+                    "contact_xy": tuple(c["contact_xy"]),
+                    "normal_xy": tuple(c["normal_xy"]),
+                }
+            )
+            for c in saved["contacts"]
+        ]
     else:
-        rows = run(args.workers)
+        rows, contacts = run(args.workers)
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps([asdict(row) for row in rows], indent=1) + "\n")
+        args.out.write_text(
+            json_rows(
+                {
+                    "summary": [asdict(row) for row in rows],
+                    "contacts": [asdict(c) for c in contacts],
+                }
+            )
+        )
     if args.plot is not None:
         for path in plot(rows, args.plot):
             print(f"wrote {path}")
+        contact_map = args.plot / "push_informativeness_contacts.png"
+        plot_contact_maps(contacts, contact_map)
+        print(f"wrote {contact_map}")
     for row in rows:
         print(
             f"mu {row.base_mu:.1f} {row.parameter:6} {row.distance_m * 100:4.1f} cm "
