@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from scripts.plot_belief import BeliefRecord, load_record, main, save_record
-from src.object import Object, Rod
-from src.params import Eta, GridSpec, make_grid
+from src.estimation.params import Eta, GridSpec, make_grid
+from src.world.object import Object, Rod
 
 TRUE_ETA = Eta(mu=0.42, bx=0.012, by=-0.018)
 

@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 from pydrake.all import PiecewisePolynomial
 
-from src.action import Action
-from src.geometry import SurfaceNormal
-from src.iiwa import (
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.iiwa import (
     DWELL_TIME,
     FREE_SPACE_LEGS,
     HOLD_TIME,
@@ -31,8 +31,8 @@ from src.iiwa import (
     shift_trajectory,
     transfer_height,
 )
-from src.object import Object, Rod
-from src.recording import push_window
+from src.world.object import Object, Rod
+from src.world.recording import push_window
 
 LIMITS = np.array([1.0, 2.0])
 SITES_PER_M = 200.0

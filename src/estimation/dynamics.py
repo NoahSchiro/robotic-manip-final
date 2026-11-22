@@ -44,8 +44,9 @@ from pydrake.all import (
     TrajectorySource,
 )
 
-from .action import Action
-from .iiwa import (
+from src.estimation.params import Eta
+from src.world.action import Action
+from src.world.iiwa import (
     LEG_DWELL,
     LEG_LIFT,
     LEG_PUSH,
@@ -54,9 +55,8 @@ from .iiwa import (
     push_maneuver,
     transfer_height,
 )
-from .object import Object, Table, add_object, add_table
-from .observation import ObjectState, PushObservation, measurement
-from .params import Eta
+from src.world.object import Object, Table, add_object, add_table
+from src.world.observation import ObjectState, PushObservation, measurement
 
 # A planar object pose (x, y, yaw), as Object.pose holds it.
 Pose = tuple[float, float, float]

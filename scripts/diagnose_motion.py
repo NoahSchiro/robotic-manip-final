@@ -21,15 +21,15 @@ from pydrake.all import RigidTransform, StartMeshcat
 from pydrake.geometry import Meshcat
 
 from src import paths
-from src.action import Action
-from src.geometry import SurfacePart, distance_to_footprint
-from src.iiwa import STANDOFF, Pusher
-from src.object import Object, Rod
-from src.observation import PushObservation, wrap_angle
-from src.probing import ProbingState, PushRecord, random_selector, run_probing
-from src.push_space import PushSpace, make_push_space
-from src.recording import TruthSim, TruthSimConfig, read_object_state, read_tip
-from src.scene import meshcat_visualizer
+from src.control.probing import ProbingState, PushRecord, random_selector, run_probing
+from src.world.action import Action
+from src.world.geometry import SurfacePart, distance_to_footprint
+from src.world.iiwa import STANDOFF, Pusher
+from src.world.object import Object, Rod
+from src.world.observation import PushObservation, wrap_angle
+from src.world.push_space import PushSpace, make_push_space
+from src.world.recording import TruthSim, TruthSimConfig, read_object_state, read_tip
+from src.world.scene import meshcat_visualizer
 
 ROD_MASS = 0.2  # kg, the composite's welded-in rod
 BLOCK_START_XY = (0.55, 0.0)  # m, block start in the world frame

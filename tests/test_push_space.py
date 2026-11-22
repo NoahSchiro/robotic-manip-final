@@ -4,10 +4,10 @@ the env's reach mask (no physics)."""
 import numpy as np
 import pytest
 
-from src.geometry import boundary_edges
-from src.iiwa import Pusher, clear_sites
-from src.object import Object, Rod
-from src.push_space import (
+from src.world.geometry import boundary_edges
+from src.world.iiwa import Pusher, clear_sites
+from src.world.object import Object, Rod
+from src.world.push_space import (
     DURATION_RANGE,
     INNER_CORNER_INSET,
     MAX_PUSH_DISTANCE,

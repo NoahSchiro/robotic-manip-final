@@ -19,8 +19,8 @@ from pydrake.all import (
 )
 from pydrake.geometry import Meshcat
 
-from .action import Action
-from .iiwa import (
+from src.world.action import Action
+from src.world.iiwa import (
     LEG_DWELL,
     LEG_PUSH,
     LEG_TRANSFER,
@@ -33,9 +33,9 @@ from .iiwa import (
     shift_trajectory,
     solve_tip_ik,
 )
-from .object import Object, Table
-from .observation import ObjectState, PushObservation
-from .scene import arm_reference, build_diagram, place_object, state_logger
+from src.world.object import Object, Table
+from src.world.observation import ObjectState, PushObservation
+from src.world.scene import arm_reference, build_diagram, place_object, state_logger
 
 TipSample = tuple[np.ndarray, np.ndarray]
 

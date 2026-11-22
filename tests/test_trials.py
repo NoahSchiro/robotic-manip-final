@@ -5,10 +5,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src import trials
-from src.action import Action
-from src.geometry import SurfaceNormal
-from src.probing import episode_conditions
+from src.control.probing import episode_conditions
+from src.estimation import trials
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
 
 PUSH = Action(
     contact=SurfaceNormal(

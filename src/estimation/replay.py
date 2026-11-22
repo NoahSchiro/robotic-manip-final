@@ -7,7 +7,10 @@ frozen reference the estimator is judged by
 Each recorded trial replays push by push: one prediction pass over every
 hypothesis feeds two filters that differ only in likelihood, the Student-t
 (nu = 3) the estimator ships with and the proposal's Gaussian.  Metrics per
-likelihood, scored against the true parameters:
+likelihood, scored against the true parameters: MAP within one grid step,
+MAP in the nearest cell, confidently wrong (max probability >= CONFIDENT_PROB
+with the MAP more than a step off), range-normalized MAP error, final max
+probability, and the mean entropy after each push.
 
 The report also lists every trial: its true parameters, each push's action
 and how far its measurement lies from the prediction at the true parameters
@@ -25,18 +28,18 @@ from pathlib import Path
 
 import numpy as np
 
-from .dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
-from .estimator import (
+from src.estimation.dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
+from src.estimation.estimator import (
     CALIBRATED_R,
     CALIBRATED_R_SURROGATE,
     SUBCELLS,
     GridBayesFilter,
 )
-from .object import Object, Rod
-from .observation import PushObservation, planar_error
-from .params import Eta, GridSpec, grid_spans, grid_step, make_grid
-from .surrogate import SurrogatePredictor, load_ensemble
-from .trials import TrialData, load_dataset
+from src.estimation.params import Eta, GridSpec, grid_spans, grid_step, make_grid
+from src.estimation.trials import TrialData, load_dataset
+from src.surrogate.model import SurrogatePredictor, load_ensemble
+from src.world.object import Object, Rod
+from src.world.observation import PushObservation, planar_error
 
 # A final belief this peaked with a wrong MAP counts as confidently wrong.
 CONFIDENT_PROB = 0.9

@@ -20,13 +20,13 @@ from typing import cast
 import numpy as np
 
 from src import paths
-from src.env import (
+from src.estimation.params import grid_spans
+from src.policy.env import (
     ProbingEnv,
     ProbingEnvConfig,
     make_probing_env_config,
     policy_decision,
 )
-from src.params import grid_spans
 
 # Picks a push index (or the last index, stop) from an observation and mask.
 Chooser = Callable[[np.ndarray, np.ndarray], int]

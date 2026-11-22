@@ -10,48 +10,15 @@ from pydrake.geometry import Meshcat
 from sb3_contrib import MaskablePPO
 
 from src import paths
-from src.action import Action
-from src.belief_view import BeliefDashboard, show_belief
-from src.calibration import calibrate, make_sample_setup
 from src.cli import (
     add_shared_options,
     finish_shared_options,
     push_model_config,
     truth_sim_config,
 )
-from src.dataset_file import save_dataset
-from src.dynamics import DynamicsModel, ParallelPushModel, Pose
-from src.env import (
-    MAX_PUSHES,
-    ProbingEnvConfig,
-    make_probing_env_config,
-)
-from src.episode import EpisodeResult, run_episode
-from src.estimator import (
-    CALIBRATED_R,
-    CALIBRATED_R_SURROGATE,
-    SUBCELLS,
-    GridBayesFilter,
-)
-from src.evaluation import run_evaluation
-from src.iiwa import (
-    Q_HOME,
-    Pusher,
-    build_iiwa_pusher_plant,
-    make_push_trajectory,
-    transfer_height,
-)
-from src.mpc import GoalTolerance, MpcController, PoseCostWeights, goal_error
-from src.object import Object, Rod, Table
-from src.observation import PushObservation
-from src.params import Eta, GridSpec, make_grid
-from src.path_family import (
-    calibrate_path_family,
-    load_path_family,
-    save_path_family,
-)
-from src.placement_eval import run_placement
-from src.probing import (
+from src.control.episode import EpisodeResult, run_episode
+from src.control.mpc import GoalTolerance, MpcController, PoseCostWeights, goal_error
+from src.control.probing import (
     ProbingState,
     PushRecord,
     episode_conditions,
@@ -61,29 +28,62 @@ from src.probing import (
     random_selector,
     run_probing,
 )
-from src.push_space import PushSpace, make_push_space
-from src.recording import TruthSim
-from src.replay import run_replay
-from src.scene import (
-    Sim,
-    build_diagram,
-    place_object,
-    show_object_goal,
+from src.dataset_file import save_dataset
+from src.estimation.belief_view import BeliefDashboard, show_belief
+from src.estimation.calibration import calibrate, make_sample_setup
+from src.estimation.dynamics import DynamicsModel, ParallelPushModel, Pose
+from src.estimation.estimator import (
+    CALIBRATED_R,
+    CALIBRATED_R_SURROGATE,
+    SUBCELLS,
+    GridBayesFilter,
 )
-from src.surrogate import SAMPLE_PERIOD, SurrogatePredictor, load_ensemble
-from src.surrogate_data import (
+from src.estimation.params import Eta, GridSpec, make_grid
+from src.estimation.replay import run_replay
+from src.estimation.trials import make_record_setup, record_trials
+from src.evaluation.placement import run_placement
+from src.evaluation.transfer import run_evaluation
+from src.policy.env import (
+    MAX_PUSHES,
+    ProbingEnvConfig,
+    make_probing_env_config,
+)
+from src.policy.train import train_ppo
+from src.surrogate.data import (
     assign_split,
     check_finite,
     coverage_summary,
     generate_surrogate_data,
     make_surrogate_setup,
 )
-from src.train_ppo import train_ppo
-from src.train_surrogate import train_ensemble
-from src.trials import make_record_setup, record_trials
+from src.surrogate.model import SAMPLE_PERIOD, SurrogatePredictor, load_ensemble
+from src.surrogate.path_family import (
+    calibrate_path_family,
+    load_path_family,
+    save_path_family,
+)
+from src.surrogate.train import train_ensemble
+from src.world.action import Action
+from src.world.iiwa import (
+    Q_HOME,
+    Pusher,
+    build_iiwa_pusher_plant,
+    make_push_trajectory,
+    transfer_height,
+)
+from src.world.object import Object, Rod, Table
+from src.world.observation import PushObservation
+from src.world.push_space import PushSpace, make_push_space
+from src.world.recording import TruthSim
+from src.world.scene import (
+    Sim,
+    build_diagram,
+    place_object,
+    show_object_goal,
+)
 
 # m, spacing of the MPC's candidate contacts along each face; with 3 speeds and
-# 3 contact times, about 400 candidates on the T.
+# 3 push distances, 396 candidates on the T.
 MPC_CANDIDATE_SPACING = 0.012
 
 
@@ -604,7 +604,7 @@ def parse_args() -> argparse.Namespace:
         default=10.0,
         help="an episode succeeds within this of the goal yaw (deg)",
     )
-    # 3 has heavy tails: chosen by an offline replay (see src/estimator.py).
+    # 3 has heavy tails; see src/estimation/estimator.py.
     simulate_parser.add_argument(
         "--nu",
         type=float,
@@ -950,7 +950,6 @@ def simulate(args: argparse.Namespace) -> None:
     X_WO_final = plant.EvalBodyPoseInWorld(plant_context, object_body)
     print(f"object ends at   {np.array2string(X_WO_final.translation(), precision=3)}")
 
-    # Keep meshcat open until user wants to quit
     if not sim.headless:
         input("Press Enter to quit.")
 
@@ -1045,7 +1044,7 @@ def train_surrogate_command(args: argparse.Namespace) -> None:
 def evaluation_report_command(args: argparse.Namespace) -> str:
     """Render the evaluation report: the paired table, the plots and the
     behavioral summary, from the evaluation report json."""
-    from src.evaluation_report import make_evaluation_report
+    from src.evaluation.report import make_evaluation_report
 
     return make_evaluation_report(
         report_path=args.report,

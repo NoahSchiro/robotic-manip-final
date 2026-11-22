@@ -21,11 +21,11 @@ from scripts.diagnose_motion import (
     spec_action,
     tracking_errors,
 )
-from src.action import Action
-from src.geometry import SurfaceNormal
-from src.iiwa import STANDOFF
-from src.probing import ProbingState
-from src.push_space import make_push_space
+from src.control.probing import ProbingState
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.iiwa import STANDOFF
+from src.world.push_space import make_push_space
 
 BLOCK = [(0.1, 0.05, 0.0, 0.0)]
 BLOCK_HEIGHT = 0.05

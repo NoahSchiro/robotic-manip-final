@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from src.geometry import distance_to_footprint
+from src.world.geometry import distance_to_footprint
 
 # The T: a crossbar across the bounding box's -x end, a stem along +x.  Its
 # bounding box is centered on the parts' origin, so body and parts frames agree.

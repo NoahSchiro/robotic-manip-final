@@ -5,8 +5,9 @@ only).
 
 One episode: a true eta and a start pose are sampled, the filter starts
 uniform over the grid, and the agent repeatedly picks a push from the
-push-space lattice (the MPC's candidates) or `stop`.  Each push executes a sampled arm-lag path, whose
-outcome a sampled ensemble member predicts with deployment-scale
+push-space lattice (the MPC's candidates) or `stop`.  Each push executes a
+sampled arm-lag path, whose outcome a sampled ensemble member predicts with
+deployment-scale
 measurement noise (`CALIBRATED_R_SURROGATE` minus the members' own
 spread).  The filter updates from the noisy measurement, and the block
 chains from the noisily measured pose.
@@ -35,17 +36,10 @@ from pydrake.all import RigidTransform, RotationMatrix
 from sb3_contrib import MaskablePPO
 from torch.distributions import Categorical
 
-from .action import Action
-from .estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
-from .geometry import SurfacePart
-from .iiwa import transfer_height
-from .object import Object, Rod
-from .observation import wrap_angle
-from .params import Eta, GridSpec, grid_spans, make_grid, sample_eta
-from .path_family import PathFamily, load_path_family, perturb_tip_positions
-from .paths import PATH_FAMILY
-from .push_space import make_push_space, reachable_mask
-from .surrogate import (
+from src.estimation.estimator import CALIBRATED_R_SURROGATE, GridBayesFilter
+from src.estimation.params import Eta, GridSpec, grid_spans, make_grid, sample_eta
+from src.paths import PATH_FAMILY
+from src.surrogate.model import (
     SurrogateEnsemble,
     SurrogatePredictor,
     load_ensemble,
@@ -54,6 +48,17 @@ from .surrogate import (
     surrogate_inputs,
     world_measurement,
 )
+from src.surrogate.path_family import (
+    PathFamily,
+    load_path_family,
+    perturb_tip_positions,
+)
+from src.world.action import Action
+from src.world.geometry import SurfacePart
+from src.world.iiwa import transfer_height
+from src.world.object import Object, Rod
+from src.world.observation import wrap_angle
+from src.world.push_space import make_push_space, reachable_mask
 
 # The probing lattice: the MPC's candidates (contacts about 1.2 cm apart,
 # 3 speeds x 3 distances per contact).

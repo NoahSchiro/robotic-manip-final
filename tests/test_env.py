@@ -13,14 +13,14 @@ from sb3_contrib import MaskablePPO
 from torch.distributions import Categorical
 
 from src import paths
-from src.env import (
+from src.policy.env import (
     ProbingEnv,
     ProbingEnvConfig,
     make_probing_env_config,
     policy_decision,
     reachability_mask,
 )
-from src.push_space import reachable
+from src.world.push_space import reachable
 
 ENSEMBLE = Path(__file__).resolve().parents[1] / paths.SURROGATE_ENSEMBLE
 

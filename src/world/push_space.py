@@ -16,8 +16,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .action import Action
-from .geometry import (
+from src.world.action import Action
+from src.world.geometry import (
     SurfaceEdge,
     SurfaceNormal,
     SurfacePart,
@@ -25,7 +25,7 @@ from .geometry import (
     footprint_center,
     trace_outline,
 )
-from .iiwa import STANDOFF
+from src.world.iiwa import STANDOFF
 
 # m/s, commanded tip speed.  Above about 0.15 m/s, joints reach their velocity
 # limits at some corners.

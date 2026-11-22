@@ -5,11 +5,12 @@ AdamW and cosine LR decay on standardized inputs and outputs (statistics
 from the training split), with early stopping on the development split's
 weighted loss. The loss weights each component by the Drake calibration
 scale (sqrt diag CALIBRATED_R).
-Inference runs in numpy (see surrogate.py); this module is the only torch
+Inference runs in numpy (see model.py); this module is the only torch
 user.
 
 The command's summary reports development errors on world measurement axes
-against both the Drake and historical surrogate residual scales. It does
+against both the Drake model's and the deployed surrogate's calibrated
+residual scales (CALIBRATED_R, CALIBRATED_R_SURROGATE). It does
 not score or select on the held-out split.
 """
 
@@ -21,8 +22,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE
-from .surrogate import (
+from src.estimation.estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE
+from src.surrogate.model import (
     N_INPUTS,
     N_OUTPUTS,
     MLPWeights,
@@ -248,13 +249,6 @@ def world_frame_errors(
         ]
     )
     return world
-
-
-def world_frame_rmse(
-    outputs: np.ndarray, targets: np.ndarray, start_yaw: np.ndarray
-) -> np.ndarray:
-    """Get component RMS of start-frame residuals on world measurement axes."""
-    return np.sqrt((world_frame_errors(outputs, targets, start_yaw) ** 2).mean(axis=0))
 
 
 def _train_member_worker(

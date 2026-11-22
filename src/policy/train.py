@@ -1,15 +1,16 @@
 """Train the probing policy with MaskablePPO in the surrogate world.
 
-The policy acts in `src.env.ProbingEnv`: a Discrete head over the pruned
-push library plus `stop`, with per-step action masks (reachability) and a
+The policy acts in `src.policy.env.ProbingEnv`: a Discrete head over the
+probing lattice plus `stop`, with per-step action masks (reachability) and a
 431-dim observation.  Training runs on a SubprocVecEnv across the machine's
 cores; every `eval_every` steps a paired evaluation runs the current policy
 against a random-probing baseline on identical episodes (same seed: same
 true eta, start pose and noise stream), where the baseline reuses the
 policy's own push count.
 
-Set OMP_NUM_THREADS=1 (etc.) before launching: the vector env's workers
-each run numpy GEMMs, and BLAS oversubscription across 12 workers is slow.
+BLAS libraries are pinned to one thread per process below (and in the
+cluster script): each vector-env worker runs its own numpy matrix products,
+and threads oversubscribed across the workers are slow.
 """
 
 import json
@@ -33,7 +34,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from .env import ProbingEnv, ProbingEnvConfig, policy_decision
+from src.policy.env import ProbingEnv, ProbingEnvConfig, policy_decision
 
 
 @dataclass(frozen=True)
@@ -305,7 +306,9 @@ def new_model(env: SubprocVecEnv, seed: int) -> MaskablePPO:
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.03,  # the first run collapsed onto a fixed probe pair
+        # Keeps the policy sampling across the lattice; without enough entropy
+        # bonus it locks onto one fixed probe sequence early.
+        ent_coef=0.03,
         seed=seed,
         verbose=0,
     )

@@ -25,17 +25,17 @@ import numpy as np
 from pydrake.all import RigidTransform, RollPitchYaw, SpatialVelocity
 
 from src import paths
-from src.action import Action
-from src.dynamics import DrakePushModel, PushModelConfig
-from src.env import ROD_MASS, SETTLE_TIME
-from src.estimator import CALIBRATED_R
-from src.geometry import SurfaceNormal
-from src.iiwa import transfer_height
-from src.object import Object, Rod
-from src.observation import ObjectState, measurement, planar_error
-from src.params import Eta
-from src.push_space import make_push_space
-from src.surrogate import nominal_tip_path
+from src.estimation.dynamics import DrakePushModel, PushModelConfig
+from src.estimation.estimator import CALIBRATED_R
+from src.estimation.params import Eta
+from src.policy.env import ROD_MASS, SETTLE_TIME
+from src.surrogate.model import nominal_tip_path
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.iiwa import transfer_height
+from src.world.object import Object, Rod
+from src.world.observation import ObjectState, measurement, planar_error
+from src.world.push_space import make_push_space
 
 MODEL_TIME_STEP = 2e-3  # s, as the estimator's predictions
 CONTACT_SPACING = 0.012  # m, the MPC grid's contact spacing

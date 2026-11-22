@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from src.belief_view import grid_steps, mu_marginal, rod_marginal
-from src.object import Object, Rod
-from src.params import Eta, GridSpec, make_grid
+from src.estimation.belief_view import grid_steps, mu_marginal, rod_marginal
+from src.estimation.params import Eta, GridSpec, make_grid
+from src.world.object import Object, Rod
 
 GRID = [
     Eta(0.2, 0.0, 0.0),

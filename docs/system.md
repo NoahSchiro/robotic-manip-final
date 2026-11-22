@@ -10,7 +10,7 @@ Lengths in meters, time in seconds, angles in radians. World frame: the arm base
 
 A KUKA iiwa14 with a vertical stick (radius 0.01 m) pushes a T-shaped block (a 5 × 14 cm crossbar and a 9 × 5 cm stem, 3 cm tall) on a table. The unknowns are `eta = (mu, bx, by)`: block–table friction and the body-frame position of a welded rod of known mass (0.2 kg) that shifts the center of mass. The truth simulation (`recording.TruthSim`, time step 1e-4 s) is one continuous Drake simulation: the block and arm keep their state between pushes, and the clock stops while the controller computes.
 
-## Push space (`src/push_space.py`)
+## Push space (`src/world/push_space.py`)
 
 A push is a contact point on one of the T's 8 sides with the side's inward normal, a commanded tip speed, and a contact time. The push direction is always the inward normal.
 

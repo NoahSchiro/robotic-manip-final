@@ -25,10 +25,9 @@ from pydrake.all import (
 )
 from pydrake.geometry import Meshcat, Rgba
 
-from src.geometry import SurfaceNormal
-from src.iiwa import Q_HOME, Pusher, add_iiwa_and_pusher
-from src.object import Object, Table, add_object, add_table
-from src.pdcontroller import ArmPdController
+from src.world.iiwa import Q_HOME, Pusher, add_iiwa_and_pusher
+from src.world.object import Object, Table, add_object, add_table
+from src.world.pdcontroller import ArmPdController
 
 _STATE_LOGGER = "state_logger"
 _ARM_REFERENCE = "arm_reference"
@@ -184,28 +183,3 @@ def show_prediction(meshcat: Meshcat, obj: Object, pose: np.ndarray) -> None:
     x, y, yaw = pose
     X_WP = RigidTransform(RotationMatrix.MakeZRotation(yaw), np.array([x, y, 0.0]))
     show_ghost(meshcat, obj, X_WP, "prediction", PREDICTION_COLOR)
-
-
-def show_push_sites(
-    meshcat: Meshcat,
-    obj: Object,
-    sites: list[SurfaceNormal],
-    arrow_length: float = 0.02,
-) -> None:
-    """Draw the push library in world frame: one segment per site, approaching
-    its contact point from outside along the inward normal."""
-    X_WO = obj.x_wo()
-    tips = [X_WO @ site.position for site in sites]
-    # Tails reach outside the block: an inward arrow drawn from the contact
-    # point onward would hide inside the block's opaque visual.
-    tails = [
-        tip - arrow_length * (X_WO.rotation() @ site.normal)
-        for tip, site in zip(tips, sites)
-    ]
-    meshcat.SetLineSegments(
-        "push_sites",
-        np.stack(tails, axis=1),
-        np.stack(tips, axis=1),
-        line_width=4.0,
-        rgba=Rgba(0.1, 0.65, 0.15, 1.0),
-    )

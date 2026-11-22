@@ -1,7 +1,7 @@
-"""Evaluate learned or random probing in the continuous Drake truth sim.
+"""Evaluate learned and baseline probing in the continuous Drake truth sim.
 
-The paired comparison runs the learned policy and random baseline through
-the same arm pipeline. The random-only mode needs no learned assets.
+The paired comparison runs the learned policy and its baselines through the
+same arm pipeline.  The random-only mode needs no learned assets.
 
 Each episode samples the true eta and start pose
 (episode_conditions); the learned policy runs first, then two baselines
@@ -24,17 +24,7 @@ from typing import cast
 import numpy as np
 from sb3_contrib import MaskablePPO
 
-from .dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
-from .env import (
-    ProbingEnv,
-    ProbingEnvConfig,
-    make_probing_env_config,
-    policy_decision,
-)
-from .estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE, GridBayesFilter
-from .iiwa import Pusher
-from .params import Eta, grid_spans
-from .probing import (
+from src.control.probing import (
     ProbingState,
     PushRecord,
     episode_conditions,
@@ -44,8 +34,22 @@ from .probing import (
     policy_selector,
     run_probing,
 )
-from .recording import TruthSim, TruthSimConfig
-from .surrogate import SurrogatePredictor, load_ensemble
+from src.estimation.dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
+from src.estimation.estimator import (
+    CALIBRATED_R,
+    CALIBRATED_R_SURROGATE,
+    GridBayesFilter,
+)
+from src.estimation.params import Eta, grid_spans
+from src.policy.env import (
+    ProbingEnv,
+    ProbingEnvConfig,
+    make_probing_env_config,
+    policy_decision,
+)
+from src.surrogate.model import SurrogatePredictor, load_ensemble
+from src.world.iiwa import Pusher
+from src.world.recording import TruthSim, TruthSimConfig
 
 ROD_MASS = 0.2  # kg, as everywhere
 

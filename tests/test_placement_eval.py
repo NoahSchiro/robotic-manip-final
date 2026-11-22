@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.placement_eval import Condition, parse_condition
+from src.evaluation.placement import Condition, parse_condition
 
 
 def test_conditions_parse() -> None:

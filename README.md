@@ -46,12 +46,17 @@ nodes). Download the trained models into `data/models/` (see Data layout). Batch
 | `data/models/` | no (GitHub release) | trained surrogate ensemble and PPO policy |
 | `data/work/` | no | regenerable intermediates: surrogate shards, PPO checkpoints, caches |
 
-Download the trained models into `data/models/` with the GitHub CLI (replace
-`<tag>` with the release's tag):
+Download the trained models from the
+[`models-2026-11-22` release](https://github.com/NoahSchiro/robotic-manip-final/releases/tag/models-2026-11-22)
+into `data/models/`:
 
 ```sh
-gh release download <tag> -D data/models
+mkdir -p data/models
+for f in surrogate_ensemble.npz ppo_policy.zip; do curl -L -o data/models/$f https://github.com/NoahSchiro/robotic-manip-final/releases/download/models-2026-11-22/$f; done
+sha256sum data/models/*
 ```
+
+The checksums should match the release notes.
 
 ## Usage
 
@@ -228,19 +233,13 @@ per measurement component, and the friction each trial's pushes favour. About
 
 | Module | Contents |
 | --- | --- |
-| `src/object.py`, `src/geometry.py` | The T-shaped block, the table, and outline geometry |
-| `src/iiwa.py`, `src/pdcontroller.py`, `src/scene.py` | Arm, stick, IK and trajectories; arm controller; Drake scene and Meshcat drawing |
-| `src/action.py`, `src/push_space.py` | A push action; the push space every module samples from |
-| `src/recording.py`, `src/observation.py` | The continuous truth simulation; what a push records and the measurement |
-| `src/params.py`, `src/estimator.py`, `src/calibration.py` | Unknown parameters and hypothesis grid; grid Bayes filter; R calibration |
-| `src/dynamics.py` | Drake prediction model for the estimator and the MPC, with a process-parallel wrapper |
-| `src/probing.py` | The shared push loop, selectors, and episode setup |
-| `src/mpc.py`, `src/episode.py`, `src/placement_eval.py` | MPC cost and ranking; placement episodes; package E's probing-then-placement conditions |
-| `src/belief_view.py` | Live belief views in Meshcat and matplotlib |
-| `src/trials.py`, `src/replay.py` | Recorded trials and their offline replay |
-| `src/surrogate.py`, `src/surrogate_data.py`, `src/train_surrogate.py`, `src/path_family.py`, `src/dataset_file.py` | Surrogate model, data generation, training, tip-path deviations, dataset files |
-| `src/env.py`, `src/train_ppo.py` | The surrogate-world PPO environment and training |
-| `src/evaluation.py`, `src/evaluation_report.py` | Drake-world evaluation and its report |
+| `src/world/` | The block and table (`object`, `geometry`); arm, stick, IK and trajectories (`iiwa`, `pdcontroller`); Drake scene and Meshcat drawing (`scene`); a push and the push space every module samples from (`action`, `push_space`); the continuous truth simulation and what a push records (`recording`, `observation`) |
+| `src/estimation/` | Unknown parameters and hypothesis grid (`params`); Drake prediction model (`dynamics`); grid Bayes filter (`estimator`); R calibration (`calibration`); recorded trials and their replay (`trials`, `replay`); live belief views (`belief_view`) |
+| `src/surrogate/` | Surrogate network and predictor (`model`), data generation (`data`), training (`train`), tip-path deviation family (`path_family`) |
+| `src/policy/` | The surrogate-world PPO environment (`env`) and training (`train`) |
+| `src/control/` | The shared Drake push loop, selectors and episode setup (`probing`); MPC (`mpc`); placement episodes (`episode`) |
+| `src/evaluation/` | Drake transfer of the prober (`transfer`), placement under probing conditions (`placement`), training report (`report`) |
+| `src/paths.py`, `src/cli.py`, `src/dataset_file.py` | Data layout; shared command-line options; dataset files |
 | `scripts/diagnose_motion.py` | Motion checks for random or listed pushes: joint speeds, tracking, release, post-measurement motion; optional Meshcat replay |
 | `scripts/motion_plans/` | Push lists for the motion checks (extreme pushes, stress pushes) |
 | `scripts/model_bias.py` | Prediction model against the truth sim on recorded pushes: mismatch, timestep effect, best-fit friction |
@@ -263,7 +262,7 @@ per measurement component, and the friction each trial's pushes favour. About
   0.75 m, so set wider custom layouts along y.
 - **Recalibration.** After changing the prediction model, the measurement (including
   `--settle-time`), the hypothesis grid, or the push space, rerun `calibrate` and paste its constant
-  into `src/estimator.py`; re-record trials after changing the arm motion or
+  into `src/estimation/estimator.py`; re-record trials after changing the arm motion or
   the push space.
 - **Likelihood.** `--nu` sets the Student-t likelihood's degrees of freedom
   (default 3, which keeps one badly mispredicted push from eliminating the

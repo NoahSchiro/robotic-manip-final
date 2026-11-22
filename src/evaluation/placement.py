@@ -22,14 +22,9 @@ from pathlib import Path
 import numpy as np
 from sb3_contrib import MaskablePPO
 
-from .dynamics import ParallelPushModel, PushModelConfig
-from .env import ROD_MASS, make_probing_env_config
-from .episode import run_episode
-from .estimator import CALIBRATED_R, GridBayesFilter
-from .iiwa import Pusher
-from .mpc import GoalTolerance, MpcController, PoseCostWeights
-from .params import Eta, grid_spans
-from .probing import (
+from src.control.episode import run_episode
+from src.control.mpc import GoalTolerance, MpcController, PoseCostWeights
+from src.control.probing import (
     Selector,
     episode_conditions,
     episode_goal,
@@ -38,7 +33,12 @@ from .probing import (
     long_fast,
     policy_selector,
 )
-from .recording import TruthSim, TruthSimConfig
+from src.estimation.dynamics import ParallelPushModel, PushModelConfig
+from src.estimation.estimator import CALIBRATED_R, GridBayesFilter
+from src.estimation.params import Eta, grid_spans
+from src.policy.env import ROD_MASS, make_probing_env_config
+from src.world.iiwa import Pusher
+from src.world.recording import TruthSim, TruthSimConfig
 
 PROBERS = ("learned", "random", "long_fast")
 # The MPC's cost settings, as simulate --mpc's defaults.

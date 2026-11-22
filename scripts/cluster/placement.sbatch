@@ -1,6 +1,6 @@
 #!/bin/bash
 # Package E: placement episodes, one (seed, condition) per array task
-# (src/placement_eval.py).  Task i runs seed SEED0 + i / N_CONDITIONS under
+# (src/evaluation/placement.py).  Task i runs seed SEED0 + i / N_CONDITIONS under
 # condition i % N_CONDITIONS, so the array size must be seeds x conditions.
 # Submit from the repo root; a task whose output exists is skipped, so
 # resubmitting (or a preemption requeue) only fills in the rest.

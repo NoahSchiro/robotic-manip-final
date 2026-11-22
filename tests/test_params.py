@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.params import Eta, nearest_subcell, subcells
+from src.estimation.params import Eta, nearest_subcell, subcells
 
 # An L of rod positions (one corner missing) at three friction values.
 SITES = [(0.0, 0.0), (0.01, 0.0), (0.0, 0.01)]

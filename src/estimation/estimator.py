@@ -17,13 +17,9 @@ with R as its scale matrix, rather than the proposal's Gaussian
 exp(-q / 2) (nu=None).  Under a Gaussian, a single badly mispredicted push
 costs the correct hypothesis hundreds of nats and a wrong one takes over
 with near certainty; the t's log-penalty grows only logarithmically in q,
-so no single push can eliminate a hypothesis.  Measuring velocity at the
-push segment's end removed most outliers, though rare ones remain, so the t
-is a safety net: in an offline replay of 19 held-out trials it beat the
-Gaussian on MAPs within one grid step of the truth (100% against 89%) and on
-confidently wrong final beliefs (0% against 5%), a margin of one or two
-trials.  Live runs since end within one grid step in 17 or 18 of 19, with up
-to one confidently wrong.
+so no single push can eliminate a hypothesis.  Mispredicted pushes are rare
+(see observation.py), so the t is a safety net against them; the replay
+(replay.py) scores both likelihoods.
 
 The true parameters are continuous, so they usually lie between grid
 hypotheses.  Each hypothesis therefore stands for its cell (the box within
@@ -44,9 +40,9 @@ from typing import cast
 
 import numpy as np
 
-from .dynamics import DynamicsModel
-from .observation import PushObservation, planar_error
-from .params import Eta, Subcells, subcells
+from src.estimation.dynamics import DynamicsModel
+from src.estimation.params import Eta, Subcells, subcells
+from src.world.observation import PushObservation, planar_error
 
 # Prediction-error covariances of the measurement (x, y, yaw, vx, vy, wz),
 # in m, rad, m/s, rad/s, one per prediction model.  Rerun main.py calibrate

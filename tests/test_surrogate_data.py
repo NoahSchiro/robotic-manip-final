@@ -3,10 +3,29 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.action import Action
-from src.dynamics import DrakePushModel, PushModelConfig
-from src.geometry import SurfaceNormal
-from src.iiwa import (
+from src.estimation.dynamics import DrakePushModel, PushModelConfig
+from src.estimation.params import Eta
+from src.surrogate.data import (
+    assign_split,
+    coverage_summary,
+    make_surrogate_setup,
+    stack_samples,
+    surrogate_sample,
+)
+from src.surrogate.model import (
+    N_INPUTS,
+    N_OUTPUTS,
+    PATH_SAMPLES,
+    SurrogateEnsemble,
+    SurrogatePredictor,
+    nominal_action_tip_path,
+    nominal_tip_path,
+)
+from src.surrogate.path_family import PathFamily
+from src.surrogate.train import dataset_arrays, shard_arrays, world_frame_errors
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.iiwa import (
     HOLD_TIME,
     LEG_PUSH,
     MOVE_TIME,
@@ -16,26 +35,7 @@ from src.iiwa import (
     push_maneuver,
     transfer_height,
 )
-from src.object import Object, Rod
-from src.params import Eta
-from src.path_family import PathFamily
-from src.surrogate import (
-    N_INPUTS,
-    N_OUTPUTS,
-    PATH_SAMPLES,
-    SurrogateEnsemble,
-    SurrogatePredictor,
-    nominal_action_tip_path,
-    nominal_tip_path,
-)
-from src.surrogate_data import (
-    assign_split,
-    coverage_summary,
-    make_surrogate_setup,
-    stack_samples,
-    surrogate_sample,
-)
-from src.train_surrogate import dataset_arrays, shard_arrays, world_frame_errors
+from src.world.object import Object, Rod
 
 
 def sample_arrays(seeds: np.ndarray) -> dict[str, np.ndarray]:

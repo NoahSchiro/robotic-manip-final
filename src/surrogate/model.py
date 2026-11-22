@@ -8,7 +8,7 @@ standardization statistics, so inference needs only numpy.
 
 Input columns (49), in order:
     eta (mu, bx, by) — the hypothesis
-    start pose (x, y, yaw) — world
+    start pose (x, y, yaw) — world, yaw in [0, 2 pi) (feature_start)
     start velocity (vx, vy, wz) — world
     site position (x, y, z) — object body frame
     site normal (x, y, z) — object body frame
@@ -31,10 +31,10 @@ from pathlib import Path
 import numpy as np
 from pydrake.all import RigidTransform
 
-from .action import Action
-from .iiwa import HOLD_TIME, LEG_DWELL, LEG_PUSH, push_maneuver
-from .observation import PushObservation, wrap_angle
-from .params import Eta
+from src.estimation.params import Eta
+from src.world.action import Action
+from src.world.iiwa import HOLD_TIME, LEG_DWELL, LEG_PUSH, push_maneuver
+from src.world.observation import PushObservation, wrap_angle
 
 N_OUTPUTS = 6
 PATH_SAMPLES = 16  # tip path points the surrogate conditions on

@@ -25,16 +25,16 @@ from pathlib import Path
 import numpy as np
 
 from src import paths
-from src.dynamics import DrakePushModel, PushModelConfig
-from src.estimator import (
+from src.estimation.dynamics import DrakePushModel, PushModelConfig
+from src.estimation.estimator import (
     CALIBRATED_R,
     squared_mahalanobis,
     student_t_log_likelihood,
 )
-from src.object import Object, Rod
-from src.observation import PushObservation, measurement, planar_error
-from src.params import Eta, GridSpec, make_grid, nearest_hypothesis
-from src.trials import TrialData, load_dataset
+from src.estimation.params import Eta, GridSpec, make_grid, nearest_hypothesis
+from src.estimation.trials import TrialData, load_dataset
+from src.world.object import Object, Rod
+from src.world.observation import PushObservation, measurement, planar_error
 
 MU_SWEEP = np.round(np.arange(0.05, 1.0001, 0.05), 3)
 MU_BANDS = ((0.0, 0.35), (0.35, 0.6), (0.6, 1.0))

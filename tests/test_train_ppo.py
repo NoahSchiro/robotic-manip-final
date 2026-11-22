@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from src.train_ppo import CURVE_FILE, EvalPoint, latest_checkpoint, load_curve
+from src.policy.train import CURVE_FILE, EvalPoint, latest_checkpoint, load_curve
 
 
 def test_latest_checkpoint_is_the_one_with_the_most_steps(tmp_path: Path) -> None:

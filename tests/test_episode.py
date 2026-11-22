@@ -7,12 +7,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src.action import Action
-from src.episode import MpcSelector, run_episode
-from src.geometry import SurfaceNormal
-from src.mpc import Candidate, GoalTolerance
-from src.probing import ProbingState, random_selector
-from src.push_space import Face, PushSpace
+from src.control.episode import MpcSelector, run_episode
+from src.control.mpc import Candidate, GoalTolerance
+from src.control.probing import ProbingState, random_selector
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.push_space import Face, PushSpace
 
 SITE_POSITION = np.array([0.0, 0.0, 0.015])
 SITE_NORMAL = np.array([1.0, 0.0, 0.0])

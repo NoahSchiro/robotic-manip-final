@@ -4,16 +4,16 @@ Each sample is one episode's first push: off-grid true parameters and a start
 pose from episode_conditions, a random push from the push space, run in the
 truth sim.  The push is predicted at the belief point nearest the true
 parameters (`n_subcells` points per axis in each grid cell, its error
-interpolated from the grid's; match estimator.SUBCELLS), so R covers the prediction
-model's mismatch, the interpolation, and the remaining discretization.  R
+interpolated from the grid's; match estimator.SUBCELLS), so R covers the
+prediction model's mismatch, the interpolation, and the remaining discretization.  R
 is the errors' second moment about zero (the likelihood assumes zero-mean
 errors) plus a diagonal floor.
 
 R lives in the code as estimator.CALIBRATED_R.  Rerun this after changing
 the prediction model, the measurement, the grid, or the push space, then
-paste the constant it prints into src/estimator.py:
+paste the constant it prints into src/estimation/estimator.py:
 
-    uv run main.py calibrate --samples 48
+    uv run python main.py calibrate --samples 192 --seed 20000
 """
 
 import time
@@ -24,21 +24,28 @@ from typing import cast
 
 import numpy as np
 
-from .dynamics import DrakePushModel, DynamicsModel, PushModelConfig
-from .iiwa import Pusher
-from .object import Object, Rod
-from .observation import planar_error
-from .params import Eta, GridSpec, Subcells, make_grid, nearest_subcell, subcells
-from .probing import (
+from src.control.probing import (
     ProbingState,
     episode_conditions,
     episode_object,
     random_selector,
     run_probing,
 )
-from .push_space import PushSpace, make_push_space
-from .recording import TruthSim, TruthSimConfig
-from .surrogate import SurrogatePredictor, load_ensemble
+from src.estimation.dynamics import DrakePushModel, DynamicsModel, PushModelConfig
+from src.estimation.params import (
+    Eta,
+    GridSpec,
+    Subcells,
+    make_grid,
+    nearest_subcell,
+    subcells,
+)
+from src.surrogate.model import SurrogatePredictor, load_ensemble
+from src.world.iiwa import Pusher
+from src.world.object import Object, Rod
+from src.world.observation import planar_error
+from src.world.push_space import PushSpace, make_push_space
+from src.world.recording import TruthSim, TruthSimConfig
 
 # Floor on each error's standard deviation (x, y, yaw, vx, vy, wz), in m,
 # rad, m/s, rad/s: keeps R invertible where the samples barely vary.

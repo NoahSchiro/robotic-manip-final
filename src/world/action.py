@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .geometry import SurfaceNormal
+from src.world.geometry import SurfaceNormal
 
 
 @dataclass(frozen=True)

@@ -15,15 +15,15 @@ from pydrake.all import (
     Solve,
 )
 
-from . import ASSET_DIR
-from .action import Action
-from .geometry import SurfaceNormal, SurfacePart, distance_to_footprint
-from .object import Object
+from src import ASSET_DIR
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal, SurfacePart, distance_to_footprint
+from src.world.object import Object
 
-# Home position for the iiwa
+# Joint angles (rad) of the arm's starting posture.
 Q_HOME = np.array([0.0, 0.4, 0.0, -1.6, 0.0, 1.2, 0.0])
 
-# Maneuver knobs. This moves reasonably fast
+# Push maneuver timing and geometry.
 STANDOFF = 0.015  # m, approach distance before the contact along the normal
 MOVE_TIME = 0.35  # s, nominal duration of a free-space leg
 HOLD_TIME = 0.1  # s
@@ -55,10 +55,11 @@ class Pusher:
         self.radius = 0.01
         self.length = 0.15
         self.mass = 0.2
-        # grippier than table, can play with this later
+        # The stick surface's friction; Drake combines it with the block's for
+        # stick-block contact.
         self.friction = 0.6
         self.color = (0.90, 0.45, 0.10)
-        # stiffer than the block
+        # Pa, stiffer than the block's 1e6.
         self.hydroelastic_modulus = 1.0e7
 
     @property
@@ -124,19 +125,17 @@ def add_iiwa_and_pusher(pusher: Pusher, plant: MultibodyPlant, parser: Parser) -
         "package://drake_models/iiwa_description/urdf/iiwa14_primitive_collision.urdf"
     )
     parser.AddModelsFromString(pusher.sdf(), "sdf")
-    # Add stick
     plant.WeldFrames(
         plant.GetFrameByName("iiwa_link_7"),
         plant.GetFrameByName(pusher.body, plant.GetModelInstanceByName(pusher.name)),
         RigidTransform(),
     )
-    # Weld the iiwa to the floor
     plant.WeldFrames(plant.world_frame(), plant.GetFrameByName("iiwa_link_0"))
 
 
 def build_iiwa_pusher_plant(pusher: Pusher) -> MultibodyPlant:
     """Build the arm-plus-stick plant that the IK runs on."""
-    # No table or block: the IK must not be free to move them (ps2's trick).
+    # No table or block: the IK must not be free to move them.
     plant = MultibodyPlant(0.0)
     add_iiwa_and_pusher(pusher, plant, Parser(plant))
     plant.Finalize()

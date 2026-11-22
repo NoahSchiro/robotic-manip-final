@@ -2,8 +2,8 @@
 estimator is evaluated on, and later the surrogate predictor is validated
 against.
 
-One trial draws off-grid true parameters, runs up to `pushes` random library
-pushes in one continuous TruthSim and serializes every PushObservation to
+One trial draws off-grid true parameters, runs up to `pushes` random pushes
+from the push space in one continuous TruthSim and serializes every PushObservation to
 plain arrays.  Serialization happens inside the worker process: Drake objects
 need not cross process boundaries, and the stored dataset stays readable
 without pydrake.
@@ -18,8 +18,9 @@ Dataset schema (one .npz):
   [rotational; translational]
 - tip_times: (P,) object of (n,), tip_positions/tip_velocities: (P,) object
   of (3, n) — the window's tip path, times from its start
-- meta_<name>: the scalars a replay needs to rebuild the setup (seed, grid
-  era settings, truth and model timesteps)
+- meta_<name>: the scalars a replay needs to rebuild the setup (seed, rod
+  mass, truth and model timesteps, settle time, motion and measurement
+  versions)
 """
 
 from collections.abc import Sequence
@@ -30,22 +31,22 @@ from pathlib import Path
 import numpy as np
 from pydrake.all import RigidTransform, SpatialVelocity
 
-from .action import Action
-from .dataset_file import META_PREFIX
-from .geometry import SurfaceNormal
-from .iiwa import Pusher
-from .object import Object, Rod
-from .observation import ObjectState, PushObservation
-from .params import Eta
-from .probing import (
+from src.control.probing import (
     ProbingState,
     episode_conditions,
     episode_object,
     random_selector,
     run_probing,
 )
-from .push_space import PushSpace, make_push_space
-from .recording import TruthSim, TruthSimConfig
+from src.dataset_file import META_PREFIX
+from src.estimation.params import Eta
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.iiwa import Pusher
+from src.world.object import Object, Rod
+from src.world.observation import ObjectState, PushObservation
+from src.world.push_space import PushSpace, make_push_space
+from src.world.recording import TruthSim, TruthSimConfig
 
 STATE_NAMES = ("start", "push_end", "end", "final")
 

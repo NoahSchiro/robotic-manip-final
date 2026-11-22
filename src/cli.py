@@ -7,8 +7,8 @@ calibrated under, so the two subcommands must never disagree.
 import argparse
 import os
 
-from .dynamics import PushModelConfig
-from .recording import TruthSimConfig
+from src.estimation.dynamics import PushModelConfig
+from src.world.recording import TruthSimConfig
 
 
 def add_shared_options(parser: argparse.ArgumentParser) -> None:

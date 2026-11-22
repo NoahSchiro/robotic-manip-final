@@ -1,7 +1,7 @@
 #!/bin/bash
 # Drake-world transfer check of the trained probing policy, one paired episode
 # per array task: learned policy, random lattice pushes, and long-fast lattice
-# pushes on identical conditions (src/evaluation.py), plus the surrogate-world
+# pushes on identical conditions (src/evaluation/transfer.py), plus the surrogate-world
 # reference.  Submit from the repo root; a task whose output exists is
 # skipped, so resubmitting (or a preemption requeue) only fills in the rest.
 #

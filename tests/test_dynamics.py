@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from src.action import Action
-from src.dynamics import nominal_tip_path
-from src.geometry import SurfaceNormal
-from src.iiwa import (
+from src.estimation.dynamics import nominal_tip_path
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.iiwa import (
     LEG_DWELL,
     LEG_LIFT,
     LEG_PUSH,
@@ -13,7 +13,7 @@ from src.iiwa import (
     push_maneuver,
     transfer_height,
 )
-from src.object import Object, Rod
+from src.world.object import Object, Rod
 
 
 def make_push() -> tuple[Object, Action]:

@@ -5,11 +5,16 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src import probing
-from src.action import Action
-from src.geometry import SurfaceNormal
-from src.probing import ProbingState, episode_conditions, random_selector, run_probing
-from src.push_space import Face, PushSpace
+from src.control import probing
+from src.control.probing import (
+    ProbingState,
+    episode_conditions,
+    random_selector,
+    run_probing,
+)
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.push_space import Face, PushSpace
 
 SITE_POSITIONS = np.array([[0.0, 0.0, 0.015], [0.0, 0.02, 0.015]])
 SITE_NORMALS = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])

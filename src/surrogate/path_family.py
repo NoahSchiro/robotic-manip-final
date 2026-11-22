@@ -1,15 +1,15 @@
 """The executed-path deviation family: a low-dimensional model of how the
 real arm's tracked tip paths deviate from the commanded ones.
 
-The arm's PD tracking produces force- and gravity-dependent deviations of
-~4 mm RMS from the commanded tip path — a distribution shift that
-dominated the first transfer check (surrogate-trained policies degraded
-on real executed paths).  This family is calibrated on the recorded
-trials' measured paths: each recorded push's measured xy path minus its
-reconstructed nominal path, stacked and decomposed by SVD.  The result is
-a mean deviation plus principal components with calibrated amplitudes —
-sampled per push, they generate executed paths that span the real arm's
-deviation distribution (rank-8 residual 0.32 mm on the recorded pushes).
+The arm's PD tracking produces force- and gravity-dependent deviations of a
+few mm from the commanded tip path; a surrogate trained only on commanded
+paths would meet different paths at deployment.  This family is calibrated
+on the recorded trials' measured paths: each recorded push's measured xy
+path minus its reconstructed nominal path, stacked and decomposed by SVD.
+The result is a mean deviation plus principal components with calibrated
+amplitudes; sampled per push, they generate executed paths that span the
+real arm's deviation distribution (`calibrate-path-family` prints the
+residual).
 
 The deviation lives on PATH_SAMPLES uniform window-fraction points in the
 world xy frame, and is interpolated onto whatever time grid a path uses.
@@ -21,13 +21,13 @@ from pathlib import Path
 import numpy as np
 from pydrake.all import RigidTransform
 
-from .action import Action
-from .geometry import SurfaceNormal
-from .surrogate import (
+from src.surrogate.model import (
     PATH_SAMPLES,
     nominal_tip_path,
     path_downsample,
 )
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
 
 KEEP_COMPONENTS = 8
 

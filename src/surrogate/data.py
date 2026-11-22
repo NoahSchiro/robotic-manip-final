@@ -3,8 +3,9 @@ sampled (eta, start pose, action) tuples.
 
 Dataset schema (one .npz):
 - eta: (N, 3) true (mu, bx, by) per sample
-- start_pose: (N, 3) planar x, y, yaw; start_velocity: (N, 3) planar,
-  ~1e-9 m/s seeded noise (see above)
+- start_pose: (N, 3) planar x, y, yaw (yaw in [0, 2 pi)); start_velocity:
+  (N, 3) planar, +-1e-9 seeded dust (Drake's discrete solver rejects an
+  exactly-zero start; see surrogate_sample)
 - site_position, site_normal: (N, 3) contact point and inward normal in
   the object's body frame
 - speed, time: (N,) commanded push speed (m/s) and contact time (s); each
@@ -33,15 +34,15 @@ from dataclasses import dataclass
 import numpy as np
 from pydrake.all import SpatialVelocity
 
-from .dynamics import DrakePushModel, PushModelConfig
-from .geometry import SurfacePart
-from .iiwa import transfer_height
-from .object import Object, Rod
-from .observation import ObjectState, wrap_angle
-from .params import GridSpec, sample_eta
-from .path_family import PathFamily, perturb_tip_positions
-from .push_space import PushSpace, make_push_space
-from .surrogate import nominal_action_tip_path, path_downsample
+from src.estimation.dynamics import DrakePushModel, PushModelConfig
+from src.estimation.params import GridSpec, sample_eta
+from src.surrogate.model import nominal_action_tip_path, path_downsample
+from src.surrogate.path_family import PathFamily, perturb_tip_positions
+from src.world.geometry import SurfacePart
+from src.world.iiwa import transfer_height
+from src.world.object import Object, Rod
+from src.world.observation import ObjectState, wrap_angle
+from src.world.push_space import PushSpace, make_push_space
 
 MU_DECADES = 10  # coverage bins along the friction range
 COVERAGE_BINS = 3  # coverage bins along push speed and push distance

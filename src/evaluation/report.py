@@ -16,13 +16,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sb3_contrib import MaskablePPO
 
-from .env import (
+from src.estimation.params import grid_spans
+from src.policy.env import (
     ProbingEnv,
     ProbingEnvConfig,
     make_probing_env_config,
     policy_decision,
 )
-from .params import grid_spans
 
 
 def usage_by(values: np.ndarray, counts: np.ndarray) -> str:

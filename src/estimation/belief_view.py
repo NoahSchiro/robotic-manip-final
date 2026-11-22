@@ -17,10 +17,10 @@ from matplotlib.collections import PathCollection
 from pydrake.all import Cylinder, RigidTransform
 from pydrake.geometry import Meshcat, Rgba
 
-from .estimator import GridBayesFilter
-from .geometry import SurfacePart, boundary_edges
-from .object import Object
-from .params import Eta
+from src.estimation.estimator import GridBayesFilter
+from src.estimation.params import Eta
+from src.world.geometry import SurfacePart, boundary_edges
+from src.world.object import Object
 
 # A grid position holding all the probability gets a disc this big, smaller
 # than the true rod's marker so a ring of the marker shows around it.

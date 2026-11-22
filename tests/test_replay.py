@@ -7,19 +7,19 @@ from typing import cast
 import numpy as np
 import pytest
 
-from src.action import Action
-from src.estimator import CALIBRATED_R
-from src.geometry import SurfaceNormal
-from src.observation import PushObservation
-from src.params import Eta
-from src.replay import (
+from src.estimation.estimator import CALIBRATED_R
+from src.estimation.params import Eta
+from src.estimation.replay import (
     build_report,
     load_predictions,
     predict_trial,
     replay_trial,
     save_predictions,
 )
-from src.trials import TrialData
+from src.estimation.trials import TrialData
+from src.world.action import Action
+from src.world.geometry import SurfaceNormal
+from src.world.observation import PushObservation
 
 GRID = [Eta(0.2, 0.0, 0.0), Eta(0.8, 0.0, 0.0)]
 TRUTH = Eta(0.25, 0.0, 0.0)

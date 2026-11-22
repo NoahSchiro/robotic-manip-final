@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 from pydrake.all import PiecewisePolynomial
 
-from src.iiwa import LEG_DWELL, LEG_PUSH, LEG_TRANSFER
-from src.recording import push_window
+from src.world.iiwa import LEG_DWELL, LEG_PUSH, LEG_TRANSFER
+from src.world.recording import push_window
 
 # Breaks: start, then one end per push_maneuver leg, then the hold's end.
 SEGMENT_ENDS = [0.0, 1.0, 1.5, 1.8, 2.8, 2.9, 3.3, 3.4]

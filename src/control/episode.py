@@ -15,22 +15,22 @@ from typing import Literal
 import numpy as np
 from pydrake.geometry import Meshcat
 
-from .action import Action
-from .belief_view import BeliefDashboard, show_belief
-from .estimator import GridBayesFilter
-from .mpc import Candidate, GoalTolerance, MpcController, at_goal, goal_error
-from .object import Object
-from .observation import PushObservation
-from .params import Eta
-from .probing import (
+from src.control.mpc import Candidate, GoalTolerance, MpcController, at_goal, goal_error
+from src.control.probing import (
     ProbingOutcome,
     ProbingState,
     PushRecord,
     Selector,
     run_probing,
 )
-from .recording import TruthSim
-from .scene import show_object_goal, show_prediction
+from src.estimation.belief_view import BeliefDashboard, show_belief
+from src.estimation.estimator import GridBayesFilter
+from src.estimation.params import Eta
+from src.world.action import Action
+from src.world.object import Object
+from src.world.observation import PushObservation
+from src.world.recording import TruthSim
+from src.world.scene import show_object_goal, show_prediction
 
 StopReason = Literal[
     "at goal",

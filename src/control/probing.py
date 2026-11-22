@@ -15,8 +15,9 @@ import numpy as np
 from pydrake.all import PiecewisePolynomial
 from sb3_contrib import MaskablePPO
 
-from .action import Action
-from .env import (
+from src.estimation.estimator import GridBayesFilter
+from src.estimation.params import Eta
+from src.policy.env import (
     WORKSPACE_CENTER,
     WORKSPACE_RADIUS,
     ProbingEnvConfig,
@@ -24,12 +25,11 @@ from .env import (
     sample_episode_conditions,
     select_push_action,
 )
-from .estimator import GridBayesFilter
-from .object import Object
-from .observation import PushObservation
-from .params import Eta
-from .push_space import PushSpace, reachable
-from .recording import TruthSim
+from src.world.action import Action
+from src.world.object import Object
+from src.world.observation import PushObservation
+from src.world.push_space import PushSpace, reachable
+from src.world.recording import TruthSim
 
 MAX_IK_RETRIES = 40
 LONG_PUSH = 0.068  # m: the long third of the push-distance range

@@ -4,16 +4,16 @@ from typing import cast
 import numpy as np
 import pytest
 
-from src.dynamics import DynamicsModel
-from src.estimator import (
+from src.estimation.dynamics import DynamicsModel
+from src.estimation.estimator import (
     GridBayesFilter,
     gaussian_log_likelihood,
     normalized_log_probs,
     squared_mahalanobis,
     student_t_log_likelihood,
 )
-from src.observation import PushObservation
-from src.params import Eta
+from src.estimation.params import Eta
+from src.world.observation import PushObservation
 
 GRID = [Eta(0.2, 0.0, 0.0), Eta(0.4, 0.0, 0.0), Eta(0.6, 0.0, 0.0)]
 # A one-unit error in x or y is two standard deviations.

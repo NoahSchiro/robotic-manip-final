@@ -14,8 +14,13 @@ from typing import cast
 import numpy as np
 from pydrake.all import MultibodyPlant, Parser, RigidTransform, RotationMatrix
 
-from . import ASSET_DIR
-from .geometry import SurfaceNormal, contains_disk, footprint_center, sample_outline
+from src import ASSET_DIR
+from src.world.geometry import (
+    SurfaceNormal,
+    contains_disk,
+    footprint_center,
+    sample_outline,
+)
 
 
 @dataclass(frozen=True)
@@ -108,8 +113,8 @@ class BoxComposite:
         if self.rod is None:
             return com, inertia
 
-        # Adding the rod now. Its COM shares the boxes' z (half height), then
-        # both bodies' inertias move onto the combined COM.
+        # The rod's COM shares the boxes' z (half height); both bodies'
+        # inertias move onto the combined COM.
         fx, fy = footprint_center(self.parts)
         rod_com = np.array([self.rod.x + fx, self.rod.y + fy, self.height / 2])
         r, length = self.rod.radius, self.height

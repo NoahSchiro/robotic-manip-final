@@ -10,9 +10,8 @@ its velocity at the push segment's end.  The late pose carries the
 post-release slide, which depends on friction.  The velocity is read while
 the stick still pushes steadily: by the window's end the arm is reversing,
 and its PD lag makes the stick tap the block, so a velocity read then lands
-mid-collision and is noise.  In an offline replay of 19 held-out trials,
-this split removed every prediction outlier and gave the best estimates of
-the schemes compared; rare outliers have turned up in live runs since.
+mid-collision and is noise.  Reading the velocity at the push segment's end
+avoids almost all such prediction outliers.
 """
 
 from dataclasses import dataclass
@@ -20,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 from pydrake.all import RigidTransform, RollPitchYaw, SpatialVelocity
 
-from .action import Action
+from src.world.action import Action
 
 
 @dataclass(frozen=True)

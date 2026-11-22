@@ -13,8 +13,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .geometry import SurfacePart, contains_disk, footprint_center
-from .object import Object, Rod
+from src.world.geometry import SurfacePart, contains_disk, footprint_center
+from src.world.object import Object, Rod
 
 
 @dataclass(frozen=True)

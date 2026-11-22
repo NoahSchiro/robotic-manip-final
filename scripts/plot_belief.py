@@ -26,10 +26,15 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Polygon
 
 from src import paths
-from src.geometry import SurfacePart, boundary_edges, footprint_center, trace_outline
+from src.world.geometry import (
+    SurfacePart,
+    boundary_edges,
+    footprint_center,
+    trace_outline,
+)
 
 if TYPE_CHECKING:
-    from src.probing import ProbingState, PushRecord
+    from src.control.probing import ProbingState, PushRecord
 
 SCHEMA_VERSION = 1
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -191,20 +196,20 @@ def git_state() -> dict[str, Any]:
 def record_episode(args: argparse.Namespace) -> BeliefRecord:
     """Run one episode through the shared probing loop with random pushes and
     a grid Bayes filter, collecting the belief after each push."""
-    from src.dynamics import ParallelPushModel, PushModelConfig
-    from src.env import ROD_MASS
-    from src.estimator import CALIBRATED_R, GridBayesFilter
-    from src.iiwa import Pusher
-    from src.params import Eta, GridSpec, make_grid
-    from src.probing import (
+    from src.control.probing import (
         ProbingState,
         episode_conditions,
         episode_object,
         random_selector,
         run_probing,
     )
-    from src.push_space import make_push_space
-    from src.recording import TruthSim, TruthSimConfig
+    from src.estimation.dynamics import ParallelPushModel, PushModelConfig
+    from src.estimation.estimator import CALIBRATED_R, GridBayesFilter
+    from src.estimation.params import Eta, GridSpec, make_grid
+    from src.policy.env import ROD_MASS
+    from src.world.iiwa import Pusher
+    from src.world.push_space import make_push_space
+    from src.world.recording import TruthSim, TruthSimConfig
 
     sampled, start_pose, action_rng = episode_conditions(args.seed)
     eta = Eta(
