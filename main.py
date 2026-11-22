@@ -1,6 +1,7 @@
 """Entry point."""
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +49,7 @@ from src.path_family import (
     load_path_family,
     save_path_family,
 )
+from src.placement_eval import run_placement
 from src.probing import (
     ProbingState,
     PushRecord,
@@ -357,6 +359,44 @@ def parse_args() -> argparse.Namespace:
     )
     report_parser.add_argument(
         "--out", type=Path, default=Path("data/evaluation"), help="output directory"
+    )
+
+    placement_parser = commands.add_parser(
+        "placement-eval",
+        parents=[shared],
+        help="one placement episode under one probing condition (package E)",
+    )
+    placement_parser.add_argument(
+        "--seed", type=int, required=True, help="episode seed"
+    )
+    placement_parser.add_argument(
+        "--condition",
+        required=True,
+        help='"true_eta", "none", or "<learned|random|long_fast>:<probe pushes>"',
+    )
+    placement_parser.add_argument(
+        "--model",
+        type=Path,
+        default=Path("data/ppo/ppo_final.zip"),
+        help="trained probing policy (learned conditions)",
+    )
+    placement_parser.add_argument(
+        "--max-pushes", type=int, default=20, help="push budget, probes included"
+    )
+    placement_parser.add_argument(
+        "--position-tolerance",
+        type=float,
+        default=0.005,
+        help="success radius (m); run at the tightest tolerance of interest",
+    )
+    placement_parser.add_argument(
+        "--yaw-tolerance",
+        type=float,
+        default=5.0,
+        help="success yaw tolerance (deg)",
+    )
+    placement_parser.add_argument(
+        "--out", type=Path, required=True, help="episode record (JSON)"
     )
 
     eval_parser = commands.add_parser(
@@ -801,7 +841,6 @@ def simulate(args: argparse.Namespace) -> None:
                 else estimation_filter(args, grid, model)
             )
             result = run_episode(
-                action_rng=action_rng,
                 obj=obj,
                 truth_sim=truth_sim,
                 meshcat=sim.meshcat,
@@ -818,7 +857,7 @@ def simulate(args: argparse.Namespace) -> None:
                 ),
                 belief=belief,
                 plan_eta=belief.map_eta if belief is not None else lambda: eta_true,
-                push_space=space,
+                probe_selector=random_selector(space, action_rng),
                 probe_pushes=args.probe_pushes,
                 max_pushes=args.max_pushes,
                 tolerance=GoalTolerance(
@@ -1103,6 +1142,21 @@ def main(args: argparse.Namespace) -> None:
         print(evaluation_report_command(args))
     elif args.command == "calibrate-path-family":
         calibrate_path_family_command(args)
+    elif args.command == "placement-eval":
+        record, summary = run_placement(
+            seed=args.seed,
+            condition_name=args.condition,
+            policy_path=args.model,
+            workers=args.workers,
+            max_pushes=args.max_pushes,
+            tolerance=GoalTolerance(
+                position=args.position_tolerance,
+                yaw=float(np.deg2rad(args.yaw_tolerance)),
+            ),
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(record, indent=1) + "\n")
+        print(summary)
     elif args.command == "evaluate":
         evaluate_command(args)
     else:

@@ -1,5 +1,5 @@
-"""One placement episode: optional random probing, then the one-push MPC
-toward the goal, on one live ProbingState and one push budget.
+"""One placement episode: optional probing, then the one-push MPC toward the
+goal, on one live ProbingState and one push budget.
 
 With no probe pushes this is the no-probing baseline: the MPC plans with
 the MAP eta from the first push, and the estimator learns from the
@@ -26,10 +26,9 @@ from .probing import (
     ProbingOutcome,
     ProbingState,
     PushRecord,
-    random_selector,
+    Selector,
     run_probing,
 )
-from .push_space import PushSpace
 from .recording import TruthSim
 from .scene import show_object_goal, show_prediction
 
@@ -65,6 +64,12 @@ class EpisodeResult:
     sim_time: float  # s on the truth sim's clock, probing included
     planning_time: float  # s of wall time in MPC planning
     estimation_time: float  # s of wall time in estimator updates
+    # (position m, absolute yaw rad) to the goal at the start and after each
+    # push, probes included: success within any smaller budget follows,
+    # since the one-push MPC never looks at the pushes left.
+    goal_errors: tuple[tuple[float, float], ...] = ()
+    # The filter's MAP when probing ended (None without a filter).
+    probe_map_eta: Eta | None = None
 
 
 def push_line(number: int, label: str, obs: PushObservation, extra: str) -> str:
@@ -186,7 +191,6 @@ def report_push(
 
 
 def run_episode(
-    action_rng: np.random.Generator,
     obj: Object,
     truth_sim: TruthSim,
     meshcat: Meshcat | None,
@@ -194,15 +198,15 @@ def run_episode(
     controller: MpcController,
     belief: GridBayesFilter | None,
     plan_eta: Callable[[], Eta],
-    push_space: PushSpace,
+    probe_selector: Selector,
     probe_pushes: int,
     max_pushes: int,
     tolerance: GoalTolerance,
 ) -> EpisodeResult:
     """Push `obj` from its current pose toward its goal in `truth_sim`, which
     must hold the block where `obj.pose` says, moving `obj.pose` along.  The
-    first `probe_pushes` are random draws from `push_space`; the rest come
-    from `controller`, which asks `plan_eta` for its eta before each plan.
+    first `probe_pushes` come from `probe_selector`; the rest from
+    `controller`, which asks `plan_eta` for its eta before each plan.
     Both phases run on one ProbingState and share the `max_pushes` budget.
     `belief` (None skips estimation) is updated after every push and drawn
     in `meshcat` and `dashboard` when they're open."""
@@ -212,16 +216,16 @@ def run_episode(
         show_belief(0, belief, obj, meshcat, dashboard)
     started = truth_sim.context.get_time()
     state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief)
+    goal_errors = [goal_error(obj.pose, obj.goal)]
 
     def report_probe(current: ProbingState, record: PushRecord) -> None:
+        goal_errors.append(goal_error(current.obj.pose, current.obj.goal))
         report_push(current, record, "probe", "", meshcat, dashboard)
 
     probe_outcome = run_probing(
-        state,
-        random_selector(push_space, action_rng),
-        min(probe_pushes, max_pushes),
-        on_push=report_probe,
+        state, probe_selector, min(probe_pushes, max_pushes), on_push=report_probe
     )
+    probe_map_eta = belief.map_eta() if belief is not None else None
     if probe_outcome.reason != "budget":
         print(f"probing stopped early ({probe_outcome.reason})")
 
@@ -232,6 +236,7 @@ def run_episode(
     selector = MpcSelector(controller, plan_eta, tolerance, on_choose=show_choice)
 
     def report_mpc(current: ProbingState, record: PushRecord) -> None:
+        goal_errors.append(goal_error(current.obj.pose, current.obj.goal))
         chosen = selector.chosen
         assert chosen is not None, "a placement push has a chosen candidate"
         report_push(
@@ -268,4 +273,6 @@ def run_episode(
             record.update_seconds
             for record in (*probe_outcome.records, *placement_outcome.records)
         ),
+        goal_errors=tuple(goal_errors),
+        probe_map_eta=probe_map_eta,
     )

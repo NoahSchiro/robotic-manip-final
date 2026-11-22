@@ -129,6 +129,20 @@ policy choosing which pushes; `--fixed-pushes` does the same for
 uv run python -m scripts.merge_evaluations data/transfer/episode_*.json --out data/transfer/summary.json
 ```
 
+### Probing before placement
+
+```sh
+# One placement episode: 3 learned probes, then MPC (Drake truth and filter)
+uv run python main.py placement-eval --seed 95000 --condition learned:3 --out data/placement/95000_learned_3.json
+```
+
+Conditions are `true_eta` (MPC with the true parameters), `none` (no
+probing), or `<learned|random|long_fast>:<probes>`. Probes and placement
+pushes share `--max-pushes`. The record holds the distance and angle to the
+goal after every push, so success at any looser tolerance or smaller budget
+can be scored afterwards; run at the tightest tolerance of interest.
+`scripts/cluster/placement.sbatch` runs one (seed, condition) per array task.
+
 ### Check the arm motion
 
 ```sh
@@ -204,7 +218,7 @@ per measurement component, and the friction each trial's pushes favour. About
 | `src/params.py`, `src/estimator.py`, `src/calibration.py` | Unknown parameters and hypothesis grid; grid Bayes filter; R calibration |
 | `src/dynamics.py` | Drake prediction model for the estimator and the MPC, with a process-parallel wrapper |
 | `src/probing.py` | The shared push loop, selectors, and episode setup |
-| `src/mpc.py`, `src/episode.py` | MPC cost and ranking; placement episodes |
+| `src/mpc.py`, `src/episode.py`, `src/placement_eval.py` | MPC cost and ranking; placement episodes; package E's probing-then-placement conditions |
 | `src/belief_view.py` | Live belief views in Meshcat and matplotlib |
 | `src/trials.py`, `src/replay.py` | Recorded trials and their offline replay |
 | `src/surrogate.py`, `src/surrogate_data.py`, `src/train_surrogate.py`, `src/path_family.py`, `src/dataset_file.py` | Surrogate model, data generation, training, tip-path deviations, dataset files |

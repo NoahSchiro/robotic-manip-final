@@ -11,7 +11,7 @@ from src.action import Action
 from src.episode import MpcSelector, run_episode
 from src.geometry import SurfaceNormal
 from src.mpc import Candidate, GoalTolerance
-from src.probing import ProbingState
+from src.probing import ProbingState, random_selector
 from src.push_space import Face, PushSpace
 
 SITE_POSITION = np.array([0.0, 0.0, 0.015])
@@ -123,7 +123,6 @@ def run_fake_episode(
     max_pushes: int = 5,
 ):
     return run_episode(
-        action_rng=np.random.default_rng(0),
         obj=SimpleNamespace(pose=start, goal=goal),
         truth_sim=truth,
         meshcat=None,
@@ -131,7 +130,7 @@ def run_fake_episode(
         controller=controller,
         belief=belief,
         plan_eta=lambda: None,
-        push_space=SPACE,
+        probe_selector=random_selector(SPACE, np.random.default_rng(0)),
         probe_pushes=probe_pushes,
         max_pushes=max_pushes,
         tolerance=TOLERANCE,
@@ -201,6 +200,9 @@ def test_probes_and_placement_share_one_push_budget() -> None:
     assert result.mpc_pushes == 1
     assert result.probe_pushes + result.mpc_pushes <= 3
     assert not result.success
+    # The start and one entry per push, each the (position, yaw) goal error.
+    assert len(result.goal_errors) == 1 + result.probe_pushes + result.mpc_pushes
+    assert result.goal_errors[0][0] == pytest.approx(0.2)
 
 
 def test_probes_past_the_budget_leave_no_placement_pushes() -> None:
