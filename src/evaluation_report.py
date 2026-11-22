@@ -2,7 +2,7 @@
 produces the paired-results table, the learning-curve plot and the
 behavioral summary — the submission-ready artifacts.
 
-    uv run python -u main.py evaluation-report --report data/evaluation_report.json
+    uv run python -u main.py evaluation-report --report data/results/evaluation_report.json
 """
 
 import json

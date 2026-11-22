@@ -9,6 +9,7 @@ from pydrake.all import Simulator
 from pydrake.geometry import Meshcat
 from sb3_contrib import MaskablePPO
 
+from src import paths
 from src.action import Action
 from src.belief_view import BeliefDashboard, show_belief
 from src.calibration import calibrate, make_sample_setup
@@ -117,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     calibrate_parser.add_argument(
         "--ensemble",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="trained surrogate ensemble (--predictor surrogate)",
     )
 
@@ -134,7 +135,7 @@ def parse_args() -> argparse.Namespace:
     record_parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/replay_trials.npz"),
+        default=paths.REPLAY_TRIALS,
         help="dataset output path",
     )
 
@@ -146,13 +147,13 @@ def parse_args() -> argparse.Namespace:
     replay_parser.add_argument(
         "--trials-file",
         type=Path,
-        default=Path("data/replay_trials.npz"),
+        default=paths.REPLAY_TRIALS,
         help="recorded trial dataset",
     )
     replay_parser.add_argument(
         "--report",
         type=Path,
-        default=Path("data/replay_report.json"),
+        default=paths.RESULTS / "replay_report.json",
         help="report output path",
     )
     replay_parser.add_argument(
@@ -164,7 +165,7 @@ def parse_args() -> argparse.Namespace:
     replay_parser.add_argument(
         "--ensemble",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="trained surrogate ensemble (--predictor surrogate)",
     )
     replay_parser.add_argument(
@@ -201,13 +202,13 @@ def parse_args() -> argparse.Namespace:
     surrogate_parser.add_argument(
         "--path-family",
         type=Path,
-        default=Path("data/path_family.npz"),
+        default=paths.PATH_FAMILY,
         help="calibrated executed-path deviation family",
     )
     surrogate_parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/surrogate/shard_0.npz"),
+        default=paths.SURROGATE_SHARDS / "shard_0.npz",
         help="dataset (shard) output path",
     )
 
@@ -240,13 +241,13 @@ def parse_args() -> argparse.Namespace:
         "--dataset",
         type=Path,
         nargs="+",
-        default=[Path("data/surrogate/shard_0.npz")],
+        default=[paths.SURROGATE_SHARDS / "shard_0.npz"],
         help="one or more dataset shards from gen-surrogate-data",
     )
     train_parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="ensemble output path",
     )
 
@@ -274,17 +275,17 @@ def parse_args() -> argparse.Namespace:
     ppo_parser.add_argument(
         "--ensemble",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="trained surrogate ensemble",
     )
     ppo_parser.add_argument(
         "--path-family",
         type=Path,
-        default=Path("data/path_family.npz"),
+        default=paths.PATH_FAMILY,
         help="calibrated executed-path deviation family",
     )
     ppo_parser.add_argument(
-        "--out", type=Path, default=Path("data/ppo"), help="output directory"
+        "--out", type=Path, default=paths.PPO_RUNS, help="output directory"
     )
 
     family_parser = commands.add_parser(
@@ -295,13 +296,13 @@ def parse_args() -> argparse.Namespace:
     family_parser.add_argument(
         "--trials",
         type=Path,
-        default=Path("data/replay_trials.npz"),
+        default=paths.REPLAY_TRIALS,
         help="recorded-trials dataset to calibrate from",
     )
     family_parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/path_family.npz"),
+        default=paths.PATH_FAMILY,
         help="family output path",
     )
 
@@ -313,7 +314,7 @@ def parse_args() -> argparse.Namespace:
     demo_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo/ppo_final.zip"),
+        default=paths.PPO_POLICY,
         help="trained probing policy",
     )
     demo_parser.add_argument("--episodes", type=int, default=3, help="episodes to show")
@@ -324,7 +325,7 @@ def parse_args() -> argparse.Namespace:
     demo_parser.add_argument(
         "--ensemble",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="trained surrogate ensemble",
     )
 
@@ -336,29 +337,32 @@ def parse_args() -> argparse.Namespace:
     report_parser.add_argument(
         "--report",
         type=Path,
-        default=Path("data/evaluation_report.json"),
+        default=paths.RESULTS / "evaluation_report.json",
         help="evaluation report json from the evaluate command",
     )
     report_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo/ppo_final.zip"),
+        default=paths.PPO_POLICY,
         help="trained probing policy for the behavioral probe",
     )
     report_parser.add_argument(
         "--ensemble",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="trained surrogate ensemble",
     )
     report_parser.add_argument(
         "--path-family",
         type=Path,
-        default=Path("data/path_family.npz"),
+        default=paths.PATH_FAMILY,
         help="calibrated executed-path deviation family",
     )
     report_parser.add_argument(
-        "--out", type=Path, default=Path("data/evaluation"), help="output directory"
+        "--out",
+        type=Path,
+        default=paths.RESULTS / "evaluation",
+        help="output directory",
     )
 
     placement_parser = commands.add_parser(
@@ -377,7 +381,7 @@ def parse_args() -> argparse.Namespace:
     placement_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo/ppo_final.zip"),
+        default=paths.PPO_POLICY,
         help="trained probing policy (learned conditions)",
     )
     placement_parser.add_argument(
@@ -411,13 +415,13 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo/ppo_final.zip"),
+        default=paths.PPO_POLICY,
         help="trained probing policy",
     )
     eval_parser.add_argument(
         "--ensemble",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="trained surrogate ensemble",
     )
     eval_parser.add_argument(
@@ -445,7 +449,7 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--path-family",
         type=Path,
-        default=Path("data/path_family.npz"),
+        default=paths.PATH_FAMILY,
         help="calibrated executed-path deviation family",
     )
     eval_parser.add_argument(
@@ -457,7 +461,7 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/evaluation_report.json"),
+        default=paths.RESULTS / "evaluation_report.json",
         help="report output path",
     )
 
@@ -482,13 +486,13 @@ def parse_args() -> argparse.Namespace:
     simulate_parser.add_argument(
         "--model",
         type=Path,
-        default=Path("data/ppo/ppo_final.zip"),
+        default=paths.PPO_POLICY,
         help="trained probing policy (--policy ppo)",
     )
     simulate_parser.add_argument(
         "--ensemble",
         type=Path,
-        default=Path("data/surrogate_ensemble.npz"),
+        default=paths.SURROGATE_ENSEMBLE,
         help="trained surrogate ensemble (--policy ppo, --predictor surrogate)",
     )
     simulate_parser.add_argument(
@@ -501,7 +505,7 @@ def parse_args() -> argparse.Namespace:
     simulate_parser.add_argument(
         "--path-family",
         type=Path,
-        default=Path("data/path_family.npz"),
+        default=paths.PATH_FAMILY,
         help="calibrated executed-path deviation family (--policy ppo)",
     )
     simulate_parser.add_argument(

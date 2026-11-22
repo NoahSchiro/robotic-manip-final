@@ -9,9 +9,9 @@ distance between the two predictions under CALIBRATED_R: about 1 or more means
 one push noticeably shifts the belief between them.  Planning-only; no truth
 simulation.
 
-    uv run python -m scripts.push_informativeness --out data/push_informativeness.json
+    uv run python -m scripts.push_informativeness --out data/results/push_informativeness.json
     # Plot saved results without re-simulating
-    uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures
+    uv run python -m scripts.push_informativeness --from-json data/results/push_informativeness.json --plot docs/figures
 """
 
 import argparse
@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 from pydrake.all import RigidTransform, RollPitchYaw, SpatialVelocity
 
+from src import paths
 from src.action import Action
 from src.dynamics import DrakePushModel, PushModelConfig
 from src.env import ROD_MASS, SETTLE_TIME
@@ -271,7 +272,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument(
-        "--out", type=Path, default=Path("data/push_informativeness.json")
+        "--out", type=Path, default=paths.RESULTS / "push_informativeness.json"
     )
     parser.add_argument(
         "--from-json", type=Path, help="reuse saved results instead of simulating"

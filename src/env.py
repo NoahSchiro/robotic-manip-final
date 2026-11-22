@@ -43,6 +43,7 @@ from .object import Object, Rod
 from .observation import wrap_angle
 from .params import Eta, GridSpec, grid_spans, make_grid, sample_eta
 from .path_family import PathFamily, load_path_family, perturb_tip_positions
+from .paths import PATH_FAMILY
 from .push_space import make_push_space, reachable_mask
 from .surrogate import (
     SurrogateEnsemble,
@@ -115,7 +116,7 @@ class ProbingEnvConfig:
 def make_probing_env_config(
     ensemble_path: Path | None,
     rod_mass: float = ROD_MASS,
-    family_path: Path | None = Path("data/path_family.npz"),
+    family_path: Path | None = PATH_FAMILY,
 ) -> ProbingEnvConfig:
     """Build the hypothesis grid and the probing lattice.  The ensemble and
     path family are needed only to run the environment."""

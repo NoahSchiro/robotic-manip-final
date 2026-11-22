@@ -5,9 +5,13 @@
 assets/
 __pycache__/
 
-# everything under data/ is regenerable from the recorded commands and
-# seeds
-data/
+# data/ holds generated files (layout in src/paths.py).  Tracked:
+# data/reference/ (costly inputs) and data/results/ (everything cited).
+# Ignored: data/models/ (trained artefacts, published as GitHub release
+# assets) and data/work/ (regenerable intermediates).
+data/*
+!data/reference/
+!data/results/
 
 # cluster job logs (scripts/cluster/)
 logs/

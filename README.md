@@ -32,9 +32,26 @@ apptainer exec ~/uv-py314.sif uv sync
 Build the image and the environment inside an allocation with enough memory
 (`salloc -p mit_normal -c 4 --mem=16G`); creating the image needs several GB.
 Prefix commands with `apptainer exec ~/uv-py314.sif` (add `--nv` on GPU
-nodes). Copy `data/path_family.npz` and `data/surrogate_ensemble.npz` over,
-since `data/` is not in git. Batch scripts are in `scripts/cluster/`; create
+nodes). Download the trained models into `data/models/` (see Data layout). Batch scripts are in `scripts/cluster/`; create
 `logs/` once before submitting.
+
+### Data layout
+
+`src/paths.py` defines where generated files go:
+
+| Folder | In git | Contents |
+| --- | --- | --- |
+| `data/reference/` | yes | inputs that are costly to regenerate: recorded truth-sim trials, the fitted tip-path family |
+| `data/results/` | yes | results the report cites: replay reports, transfer and placement runs, PPO training curve and evaluation, surrogate logs |
+| `data/models/` | no (GitHub release) | trained surrogate ensemble and PPO policy |
+| `data/work/` | no | regenerable intermediates: surrogate shards, PPO checkpoints, caches |
+
+Download the trained models into `data/models/` with the GitHub CLI (replace
+`<tag>` with the release's tag):
+
+```sh
+gh release download <tag> -D data/models
+```
 
 ## Usage
 
@@ -72,9 +89,9 @@ To save a push-by-push belief figure:
 
 ```sh
 # Run one headless episode in Drake and save the belief after each push
-uv run python -m scripts.plot_belief record --seed 123 --pushes 3 --out data/belief_seed123.npz
+uv run python -m scripts.plot_belief record --seed 123 --pushes 3 --out data/work/belief_seed123.npz
 # Plot it (numpy and matplotlib only)
-uv run python -m scripts.plot_belief plot data/belief_seed123.npz --out docs/figures/belief_seed123.png
+uv run python -m scripts.plot_belief plot data/work/belief_seed123.npz --out docs/figures/belief_seed123.png
 ```
 
 ### Place the block with MPC
@@ -101,7 +118,7 @@ of each MPC push as a yellow one.
 
 ```sh
 # Random probing only (no trained assets needed)
-uv run python main.py evaluate --random-only --push-budget 3 --episodes 4 --seed 70000 --out data/random_report.json
+uv run python main.py evaluate --random-only --push-budget 3 --episodes 4 --seed 70000 --out data/results/random_report.json
 # Trained policy vs random probing on the same episodes
 uv run python main.py evaluate
 uv run python main.py evaluation-report
@@ -112,7 +129,7 @@ uv run python main.py demo
 To score a trained policy in the surrogate world and see which pushes it chooses:
 
 ```sh
-uv run python -m scripts.evaluate_policy --model data/ppo/ppo_final.zip --out data/ppo/evaluation
+uv run python -m scripts.evaluate_policy --out data/results/ppo_evaluation
 ```
 
 Each `evaluate` episode runs, on identical conditions in the Drake truth sim,
@@ -126,14 +143,14 @@ policy choosing which pushes; `--fixed-pushes` does the same for
 `evaluate`); combine them with:
 
 ```sh
-uv run python -m scripts.merge_evaluations data/transfer/episode_*.json --out data/transfer/summary.json
+uv run python -m scripts.merge_evaluations data/results/transfer/episode_*.json --out data/results/transfer/summary.json
 ```
 
 ### Probing before placement
 
 ```sh
 # One placement episode: 3 learned probes, then MPC (Drake truth and filter)
-uv run python main.py placement-eval --seed 95000 --condition learned:3 --out data/placement/95000_learned_3.json
+uv run python main.py placement-eval --seed 95000 --condition learned:3 --out data/results/placement/95000_learned_3.json
 ```
 
 Conditions are `true_eta` (MPC with the true parameters), `none` (no
@@ -147,10 +164,10 @@ can be scored afterwards; run at the tightest tolerance of interest.
 
 ```sh
 # Random pushes: transfer clearance, joint speeds, tracking, release
-uv run python -m scripts.diagnose_motion --seed 123 --pushes 2 --out data/motion.json
+uv run python -m scripts.diagnose_motion --seed 123 --pushes 2 --out data/results/motion/motion.json
 # The validation push sets, with a Meshcat replay to open in a browser
-uv run python -m scripts.diagnose_motion --plan scripts/motion_plans/extremes.json --friction 0.1 --out data/extremes_mu01.json --html data/extremes_mu01.html
-uv run python -m scripts.diagnose_motion --plan scripts/motion_plans/stress.json --out data/stress.json
+uv run python -m scripts.diagnose_motion --plan scripts/motion_plans/extremes.json --friction 0.1 --out data/results/motion/extremes_mu01.json --html data/work/extremes_mu01.html
+uv run python -m scripts.diagnose_motion --plan scripts/motion_plans/stress.json --out data/results/motion/stress.json
 ```
 
 A plan file lists pushes by side index (0–7 counterclockwise around the outline,
@@ -169,9 +186,9 @@ moves after the measurement ends.
 ### Compare how informative pushes are
 
 ```sh
-uv run python -m scripts.push_informativeness --out data/push_informativeness.json
+uv run python -m scripts.push_informativeness --out data/results/push_informativeness.json
 # Plot saved results without re-simulating
-uv run python -m scripts.push_informativeness --from-json data/push_informativeness.json --plot docs/figures
+uv run python -m scripts.push_informativeness --from-json data/results/push_informativeness.json --plot docs/figures
 ```
 
 For every contact on the MPC grid, at matched push distances (1.5, 4.5, and
@@ -184,7 +201,7 @@ shifts the belief between them. Planning-only, about 3 minutes on 12 workers.
 ### Check the prediction model against the truth sim
 
 ```sh
-uv run python -m scripts.model_bias --out data/model_bias.npz
+uv run python -m scripts.model_bias --out data/results/model_bias.npz
 ```
 
 Re-predicts every recorded replay push at the true parameters (at the model's
@@ -198,8 +215,8 @@ per measurement component, and the friction each trial's pushes favour. About
 | Command | What it does |
 | --- | --- |
 | `calibrate` | Measures the estimator's prediction-error covariance R from truth-simulation pushes and prints the constant for `estimator.CALIBRATED_R` |
-| `record-trials` | Records multi-push trials in the truth simulation to `data/replay_trials.npz` |
-| `replay` | Scores the estimator on recorded trials and writes `data/replay_report.json`; `--save-predictions` caches the grid predictions so `--load-predictions` can rescore them (for example with another `--subcells`) in seconds |
+| `record-trials` | Records multi-push trials in the truth simulation to `data/reference/replay_trials.npz` |
+| `replay` | Scores the estimator on recorded trials and writes `data/results/replay_report.json`; `--save-predictions` caches the grid predictions so `--load-predictions` can rescore them (for example with another `--subcells`) in seconds |
 | `calibrate-path-family` | Fits how the arm's executed tip path deviates from the commanded one, from recorded trials |
 | `gen-surrogate-data` | Generates one shard of surrogate training data from the Drake prediction model, with pushes drawn uniformly from the push space (about 10 samples/s on 12 workers); give each shard its own `--seed` and `--out` |
 | `train-surrogate` | Trains the surrogate's MLP ensemble on one or more shards (`--dataset a.npz b.npz ...`); `--device cuda` trains on the GPU |
@@ -252,7 +269,7 @@ per measurement component, and the friction each trial's pushes favour. About
   (default 3, which keeps one badly mispredicted push from eliminating the
   right hypothesis); `--nu 0` uses a Gaussian.
 - **Tests.** Most tests take seconds; surrogate-environment tests need
-  `data/surrogate_ensemble.npz` and `data/path_family.npz` (about two minutes).
+  `data/models/surrogate_ensemble.npz` and `data/reference/path_family.npz` (about two minutes).
   They do not replace short Drake runs for physics changes.
 - **CPU-only PyTorch on Linux.** `uv sync` installs the GPU build from the
   lockfile. For a CPU-only local environment:

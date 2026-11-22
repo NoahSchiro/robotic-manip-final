@@ -1,0 +1,42 @@
+{
+  "seed": 123,
+  "friction": 0.1,
+  "initial_yaw_rad": 0.7,
+  "pushes": [
+    {
+      "push": 1,
+      "action": {
+        "speed_m_per_s": 0.1,
+        "contact_time_s": 0.2
+      },
+      "physical_duration_s": 2.0,
+      "max_abs_joint_speed_rad_per_s": 0.42292990137476366,
+      "transfer_min_tip_height_m": 0.06969381549833442,
+      "transfer_clearance_above_top_m": 0.03969381549833442,
+      "action_end_object_velocity": [
+        2.2887699549204455e-11,
+        -4.708713742966918e-11,
+        -1.935250749621801e-10
+      ],
+      "action_end_tip_height_m": 0.07844587242008608
+    },
+    {
+      "push": 2,
+      "action": {
+        "speed_m_per_s": 0.1,
+        "contact_time_s": 0.4
+      },
+      "physical_duration_s": 2.1999999999999993,
+      "max_abs_joint_speed_rad_per_s": 0.5959783877707592,
+      "transfer_min_tip_height_m": 0.07123013182557889,
+      "transfer_clearance_above_top_m": 0.041230131825578886,
+      "action_end_object_velocity": [
+        2.13285193944641e-10,
+        -1.743187632454519e-10,
+        -1.959327293947603e-10
+      ],
+      "action_end_tip_height_m": 0.07780950571311426
+    }
+  ],
+  "wall_seconds": 38.66519059300026
+}

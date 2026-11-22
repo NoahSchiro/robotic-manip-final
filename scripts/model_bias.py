@@ -13,7 +13,7 @@ Mismatch is the Mahalanobis distance under CALIBRATED_R between the measured
 and the predicted measurement.  Writes every prediction to an .npz and prints a
 summary by friction band and per trial.
 
-    uv run python -m scripts.model_bias --out data/model_bias.npz
+    uv run python -m scripts.model_bias --out data/results/model_bias.npz
 """
 
 import argparse
@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from src import paths
 from src.dynamics import DrakePushModel, PushModelConfig
 from src.estimator import (
     CALIBRATED_R,
@@ -221,12 +222,10 @@ def summary(data: dict[str, np.ndarray]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--trials", type=Path, default=Path("data/replay_trials_v2.npz")
-    )
+    parser.add_argument("--trials", type=Path, default=paths.REPLAY_TRIALS)
     parser.add_argument("--fine-time-step", type=float, default=1e-4)
     parser.add_argument("--workers", type=int, default=12)
-    parser.add_argument("--out", type=Path, default=Path("data/model_bias.npz"))
+    parser.add_argument("--out", type=Path, default=paths.RESULTS / "model_bias.npz")
     args = parser.parse_args()
     started = time.time()
     data = run(args.trials, args.fine_time_step, args.workers)

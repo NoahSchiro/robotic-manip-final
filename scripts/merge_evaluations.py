@@ -5,7 +5,7 @@ Each strategy's final MAP error is range-normalized (EpisodeRecord.error);
 paired differences compare strategies on identical episodes, so the
 standard error reflects push selection rather than episode difficulty.
 
-    uv run python -m scripts.merge_evaluations data/transfer/episode_*.json --out data/transfer/summary.json
+    uv run python -m scripts.merge_evaluations data/results/transfer/episode_*.json --out data/results/transfer/summary.json
 """
 
 import argparse

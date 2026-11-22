@@ -1,0 +1,16 @@
+10000 samples from 1 shard(s)
+member 0: best weighted val MSE 59.940937 (10 s)
+member 1: best weighted val MSE 61.353725 (5 s)
+member 2: best weighted val MSE 62.781010 (4 s)
+member 3: best weighted val MSE 61.653942 (3 s)
+member 4: best weighted val MSE 63.112694 (3 s)
+ensemble of 5 members saved to data/surrogate/ensemble_10k.npz
+component   RMSE    Drake scale ratio    deployment scale ratio    bias
+x          3.315e-03               4.88                    0.53 +2.351e-04
+y          3.161e-03               5.60                    0.46 -7.828e-05
+yaw        5.116e-02               3.71                    0.84 +8.319e-04
+vx         1.478e-02               9.70                    0.42 +1.133e-03
+vy         1.428e-02              10.04                    0.39 +6.907e-04
+wz         2.378e-01               7.67                    0.54 -6.696e-03
+worst ratio to Drake calibration scale 10.04
+member spread (std over members, start frame): 1.23e-03  1.22e-03  2.18e-02  4.90e-03  4.80e-03  8.42e-02

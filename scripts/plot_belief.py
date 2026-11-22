@@ -1,7 +1,7 @@
 """Record one probing episode's belief and plot how it sharpens push by push.
 
-    uv run python -m scripts.plot_belief record --seed 123 --pushes 3 --out data/belief_seed123.npz
-    uv run python -m scripts.plot_belief plot data/belief_seed123.npz --out docs/figures/belief_seed123.png
+    uv run python -m scripts.plot_belief record --seed 123 --pushes 3 --out data/work/belief_seed123.npz
+    uv run python -m scripts.plot_belief plot data/work/belief_seed123.npz --out docs/figures/belief_seed123.png
 
 `record` runs the truth sim and the Drake prediction model.  `plot` reads only
 the .npz and uses numpy, matplotlib and the outline geometry in src/geometry.py.
@@ -25,6 +25,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Polygon
 
+from src import paths
 from src.geometry import SurfacePart, boundary_edges, footprint_center, trace_outline
 
 if TYPE_CHECKING:
@@ -626,7 +627,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         if args.workers < 1:
             parser.error("--workers must be at least 1")
         if args.out is None:
-            args.out = Path(f"data/belief_seed{args.seed}.npz")
+            args.out = paths.WORK / f"belief_seed{args.seed}.npz"
     else:
         if args.out is None:
             args.out = args.record.with_suffix(".png")

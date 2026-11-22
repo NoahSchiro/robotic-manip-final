@@ -6,8 +6,8 @@
 # skipped, so resubmitting (or a preemption requeue) only fills in the rest.
 #
 #   sbatch scripts/cluster/evaluate_transfer.sbatch
-#   FIXED_PUSHES=3 OUT=data/transfer_fixed3 sbatch scripts/cluster/evaluate_transfer.sbatch
-#   uv run python -m scripts.merge_evaluations data/transfer/episode_*.json --out data/transfer/summary.json
+#   FIXED_PUSHES=3 OUT=data/results/transfer_fixed3 sbatch scripts/cluster/evaluate_transfer.sbatch
+#   uv run python -m scripts.merge_evaluations data/results/transfer/episode_*.json --out data/results/transfer/summary.json
 #
 # FIXED_PUSHES makes every strategy push exactly that many times; otherwise
 # the policy decides when to stop and the baselines copy its count.
@@ -24,8 +24,8 @@
 #SBATCH -o logs/%x-%A_%a.log
 
 set -euo pipefail
-OUT=${OUT:-data/transfer}
-MODEL=${MODEL:-data/ppo/ppo_final.zip}
+OUT=${OUT:-data/results/transfer}
+MODEL=${MODEL:-data/models/ppo_policy.zip}
 SEED0=${SEED0:-90000}
 IMAGE=${IMAGE:-$HOME/uv-py314.sif}
 FIXED_PUSHES=${FIXED_PUSHES:-}

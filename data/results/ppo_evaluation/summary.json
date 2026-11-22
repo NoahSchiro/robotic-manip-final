@@ -1,0 +1,92 @@
+{
+ "model": "data/ppo/ppo_final.zip",
+ "seed": 70000,
+ "episodes": 100,
+ "learned": {
+  "return_mean": 0.21852430186919503,
+  "normalized_error_mean": 0.10575042267164941,
+  "normalized_error_se": 0.0053814422309423435,
+  "mu_abs_error_mean": 0.05885722212496809,
+  "rod_x_abs_error_cm_mean": 0.6509457382580688,
+  "rod_y_abs_error_cm_mean": 0.5301267440096372,
+  "within_one_step_share": 0.84,
+  "pushes_mean": 3.21,
+  "pushes_histogram": [
+   0,
+   0,
+   16,
+   54,
+   23,
+   7,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "speed_shares": [
+   0.0,
+   0.3333333333333333,
+   0.6666666666666666
+  ],
+  "distance_shares": [
+   0.0,
+   0.059190031152647975,
+   0.940809968847352
+  ],
+  "push_direction_shares": {
+   "+x": 0.3302180685358255,
+   "+y": 0.021806853582554516,
+   "-x": 0.5202492211838006,
+   "-y": 0.1277258566978193
+  },
+  "distinct_pushes": 14
+ },
+ "random": {
+  "return_mean": -0.09025734699077292,
+  "normalized_error_mean": 0.23050135482421563,
+  "normalized_error_se": 0.01474314149636272,
+  "mu_abs_error_mean": 0.1364908415389633,
+  "rod_x_abs_error_cm_mean": 1.0664600994735947,
+  "rod_y_abs_error_cm_mean": 1.0755483370311594,
+  "within_one_step_share": 0.37,
+  "pushes_mean": 3.21,
+  "pushes_histogram": [
+   0,
+   0,
+   16,
+   54,
+   23,
+   7,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "speed_shares": [
+   0.3582554517133956,
+   0.32087227414330216,
+   0.32087227414330216
+  ],
+  "distance_shares": [
+   0.5638629283489096,
+   0.19003115264797507,
+   0.24610591900311526
+  ],
+  "push_direction_shares": {
+   "+x": 0.2772585669781931,
+   "+y": 0.2585669781931464,
+   "-x": 0.20249221183800623,
+   "-y": 0.2616822429906542
+  },
+  "distinct_pushes": 213
+ },
+ "paired_error_advantage_mean": 0.12475093215256625,
+ "paired_error_advantage_se": 0.015614901813402662,
+ "learned_better_share": 0.77
+}

@@ -7,7 +7,7 @@ uniformly random reachable pushes, as many as the policy used, then stop.
 Errors are the final MAP's, per parameter and range-normalized as in the
 training reward.
 
-    uv run python -m scripts.evaluate_policy --model data/ppo/ppo_final.zip --out data/ppo/evaluation
+    uv run python -m scripts.evaluate_policy --out data/results/ppo_evaluation
 """
 
 import argparse
@@ -19,6 +19,7 @@ from typing import cast
 
 import numpy as np
 
+from src import paths
 from src.env import (
     ProbingEnv,
     ProbingEnvConfig,
@@ -230,16 +231,12 @@ def plot(result: dict[str, object], out: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=Path, default=Path("data/ppo/ppo_final.zip"))
-    parser.add_argument(
-        "--ensemble", type=Path, default=Path("data/surrogate_ensemble.npz")
-    )
-    parser.add_argument(
-        "--path-family", type=Path, default=Path("data/path_family.npz")
-    )
+    parser.add_argument("--model", type=Path, default=paths.PPO_POLICY)
+    parser.add_argument("--ensemble", type=Path, default=paths.SURROGATE_ENSEMBLE)
+    parser.add_argument("--path-family", type=Path, default=paths.PATH_FAMILY)
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--seed", type=int, default=70000)
-    parser.add_argument("--out", type=Path, default=Path("data/ppo/evaluation"))
+    parser.add_argument("--out", type=Path, default=paths.RESULTS / "ppo_evaluation")
     args = parser.parse_args()
     config, learned, random = evaluate(
         args.model, args.ensemble, args.path_family, args.episodes, args.seed

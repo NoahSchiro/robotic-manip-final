@@ -21,8 +21,8 @@
 #SBATCH -o logs/%x-%A_%a.log
 
 set -euo pipefail
-OUT=${OUT:-data/placement}
-MODEL=${MODEL:-data/ppo/ppo_final.zip}
+OUT=${OUT:-data/results/placement}
+MODEL=${MODEL:-data/models/ppo_policy.zip}
 SEED0=${SEED0:-95000}
 IMAGE=${IMAGE:-$HOME/uv-py314.sif}
 CONDITIONS=${CONDITIONS:-"true_eta none learned:1 learned:2 learned:3 learned:4 learned:5 random:1 random:2 random:3 random:4 random:5 long_fast:1 long_fast:2 long_fast:3 long_fast:4 long_fast:5"}

@@ -20,6 +20,7 @@ import numpy as np
 from pydrake.all import RigidTransform, StartMeshcat
 from pydrake.geometry import Meshcat
 
+from src import paths
 from src.action import Action
 from src.geometry import SurfacePart, distance_to_footprint
 from src.iiwa import STANDOFF, Pusher
@@ -560,7 +561,9 @@ def main() -> None:
         "--friction", type=float, help="table friction (overrides a plan's value)"
     )
     parser.add_argument("--yaw", type=float)
-    parser.add_argument("--out", type=Path, default=Path("data/motion_diagnostic.json"))
+    parser.add_argument(
+        "--out", type=Path, default=paths.RESULTS / "motion" / "motion_diagnostic.json"
+    )
     parser.add_argument(
         "--html", type=Path, help="save a static Meshcat replay of the run here"
     )

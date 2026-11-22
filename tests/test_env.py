@@ -12,6 +12,7 @@ import torch
 from sb3_contrib import MaskablePPO
 from torch.distributions import Categorical
 
+from src import paths
 from src.env import (
     ProbingEnv,
     ProbingEnvConfig,
@@ -21,7 +22,7 @@ from src.env import (
 )
 from src.push_space import reachable
 
-ENSEMBLE = Path(__file__).resolve().parents[1] / "data" / "surrogate_ensemble.npz"
+ENSEMBLE = Path(__file__).resolve().parents[1] / paths.SURROGATE_ENSEMBLE
 
 
 @pytest.fixture(scope="module")
