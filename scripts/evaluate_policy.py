@@ -229,6 +229,92 @@ def plot(result: dict[str, object], out: Path) -> None:
     figure.savefig(out, dpi=150)
 
 
+def plot_push_choices(config: ProbingEnvConfig, actions: list[int], out: Path) -> None:
+    """The learned policy's pushes (lattice indices, stops excluded): each
+    contact point's share of pushes on the block outline, and each lattice
+    speed and distance level's share."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from matplotlib.patches import Polygon
+
+    from scripts.plot_belief import outline_vertices
+    from src.experiment import reference_object
+
+    chosen = np.asarray(actions)
+    contact_xy = np.round(config.contact_positions[:, :2], 4)
+    contacts, contact_index = np.unique(contact_xy, axis=0, return_inverse=True)
+    contact_count = np.bincount(contact_index[chosen], minlength=len(contacts))
+    contact_share = contact_count / len(chosen)
+    speeds = np.unique(np.round(config.speeds, 4))
+    speed_index = np.searchsorted(speeds, np.round(config.speeds, 4))
+    distance = config.speeds * config.times
+    # Distances are evenly spaced per speed, so rank within a speed is the level.
+    level = np.zeros(len(distance), dtype=int)
+    for i in range(len(speeds)):
+        rows = np.flatnonzero(speed_index == i)
+        level[rows] = np.unique(np.round(distance[rows], 4), return_inverse=True)[1]
+    kind_share = np.zeros((len(speeds), level.max() + 1))
+    np.add.at(kind_share, (speed_index[chosen], level[chosen]), 1 / len(chosen))
+
+    figure = Figure(figsize=(10, 4.3), facecolor="#fcfcfb")
+    FigureCanvasAgg(figure)
+    left, right = figure.subplots(1, 2, width_ratios=(1.15, 1))
+    outline = outline_vertices(np.array(reference_object().parts)) * 100
+    left.add_patch(
+        Polygon(outline, closed=True, facecolor="#f0efec", edgecolor="#52514e", lw=1)
+    )
+    xy = contacts * 100
+    unused = contact_share == 0
+    left.scatter(*xy[unused].T, s=40, facecolors="none", edgecolors="#b4b2a9", lw=0.8)
+    dots = left.scatter(
+        *xy[~unused].T,
+        s=90,
+        c=contact_share[~unused] * 100,
+        cmap="Blues",
+        # Below zero so the least used contacts still read as used.
+        vmin=-0.2 * contact_share.max() * 100,
+        edgecolors="#52514e",
+        linewidths=0.6,
+        zorder=3,
+    )
+    bar = figure.colorbar(dots, ax=left, shrink=0.8, label="share of pushes (%)")
+    bar.ax.set_ylim(0, contact_share.max() * 100)
+    left.set_title(
+        f"Contact point ({(~unused).sum()} of {len(contacts)} used; open: never)",
+        fontsize=10,
+        loc="left",
+    )
+    left.set_aspect("equal")
+    left.set_xlabel("body x (cm)")
+    left.set_ylabel("body y (cm)")
+    image = right.imshow(kind_share * 100, cmap="Blues", vmin=0, aspect="auto")
+    for i in range(len(speeds)):
+        for j in range(kind_share.shape[1]):
+            rows = np.flatnonzero((speed_index == i) & (level == j))
+            d, t = distance[rows[0]] * 100, config.times[rows[0]]
+            dark = kind_share[i, j] > 0.6 * kind_share.max()
+            right.text(
+                j,
+                i,
+                f"{kind_share[i, j]:.0%}\n{d:.1f} cm, {t:.2f} s",
+                ha="center",
+                va="center",
+                fontsize=8.5,
+                color="white" if dark else "#0b0b0b",
+            )
+    figure.colorbar(image, ax=right, shrink=0.8, label="share of pushes (%)")
+    right.set_xticks(range(kind_share.shape[1]), ["short", "medium", "long"])
+    right.set_yticks(range(len(speeds)), [f"{v * 100:.0f} cm/s" for v in speeds])
+    right.set_xlabel("push distance (lattice level)")
+    right.set_title("Push speed and distance", fontsize=10, loc="left")
+    figure.suptitle(
+        f"Learned policy's pushes in the surrogate world ({len(chosen)} pushes)",
+        fontsize=11,
+    )
+    figure.tight_layout()
+    figure.savefig(out, dpi=150)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=Path, default=paths.PPO_POLICY)
@@ -237,7 +323,27 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--seed", type=int, default=70000)
     parser.add_argument("--out", type=Path, default=paths.RESULTS / "ppo_evaluation")
+    parser.add_argument(
+        "--from-json",
+        action="store_true",
+        help="replot from --out's saved episodes instead of running them",
+    )
     args = parser.parse_args()
+    if args.from_json:
+        saved = [
+            Episode(**e) for e in json.loads((args.out / "episodes.json").read_text())
+        ]
+        actions = [a for e in saved if e.policy == "learned" for a in e.actions]
+        plot(
+            json.loads((args.out / "summary.json").read_text()),
+            args.out / "behaviour.png",
+        )
+        plot_push_choices(
+            make_probing_env_config(None, family_path=None),
+            actions,
+            args.out / "push_choices.png",
+        )
+        return
     config, learned, random = evaluate(
         args.model, args.ensemble, args.path_family, args.episodes, args.seed
     )
@@ -252,6 +358,9 @@ def main() -> None:
         json.dumps([asdict(e) for e in learned + random]) + "\n"
     )
     plot(result, args.out / "behaviour.png")
+    plot_push_choices(
+        config, [a for e in learned for a in e.actions], args.out / "push_choices.png"
+    )
     print(json.dumps(result, indent=1))
 
 
