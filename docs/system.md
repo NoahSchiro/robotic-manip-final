@@ -47,7 +47,9 @@ The MAP estimate is the most probable hypothesis. Its range-normalized error is 
 
 ## Episodes
 
-`experiment.episode_conditions(seed)` gives the true `eta` and the start pose (within 0.1 m of (0.55, 0) m, any yaw); random actions use an independent stream seeded by `SeedSequence([seed, 1])` and the placement goal one seeded by `SeedSequence([seed, 2])`. Every runner executes pushes through `probing.run_probing`, which selects, plans, executes, updates the belief, and stops on the push budget, the selector's stop reason, 40 consecutive arm-plan failures, or the block leaving 0.25 m of (0.55, 0) m.
+`experiment.episode_conditions(seed, task)` gives the true `eta` and the start pose; random actions use an independent stream seeded by `SeedSequence([seed, 1])` and the placement goal one seeded by `SeedSequence([seed, 2])`. Every runner executes pushes through `probing.run_probing`, which selects, plans, executes, updates the belief, and stops on the push budget, the selector's stop reason, 40 consecutive arm-plan failures, or the block leaving the task's bounds.
+
+Episodes use one of two tasks (`experiment.TASKS`). In `near`, the default and the task the PPO policy was trained on, start and goal are each drawn within 0.1 m of (0.55, 0) m, and the block must stay within 0.25 m of that point. In `far`, start and goal are drawn on the band 0.50–0.65 m from the arm base within ±55° of the +x axis, where the arm reaches every lattice push from any block yaw, and the goal is redrawn until it lies 0.30–0.45 m from the start; the block must stay 0.40–0.75 m from the base within ±75°. Start and goal yaw are uniform in both. `eta` is drawn before the start pose, so a seed has the same true `eta` in both tasks.
 
 ## MPC placement
 
@@ -55,10 +57,8 @@ A placement episode runs optional random probes, then MPC pushes, on one state a
 
 `V = |r − r_goal|² / l² + λ_yaw · wrap(yaw − yaw_goal)² + w_t · T_maneuver`
 
-with `l = 0.07 m`, `λ_yaw = 1 rad⁻²`, `w_t = 0.005 s⁻¹`. It takes the cheapest candidate the arm can reach that improves on the current pose cost. An episode succeeds within 1 cm and 10° of the goal; otherwise it stops as "stuck" (no improving candidate), "unreachable" (none reachable), "push budget", "ik_exhausted" (40 consecutive arm-plan failures), or "out_of_bounds".
+with `l = 0.07 m`, `λ_yaw = 1 rad⁻²`, `w_t = 0.005 s⁻¹`. Only candidates inside the arm's reach band (0.42–0.78 m from the base for the approach and push end) are predicted, and a candidate is ranked only if, from its predicted end pose, at least 80% of the candidates remain reachable (or, when the block is already below that, no fewer than now); otherwise the one-push lookahead drives the block toward the base, where it can no longer be pushed. It takes the cheapest ranked candidate whose arm plan succeeds and that improves on the current pose cost. An episode succeeds within 1 cm and 10° of the goal; otherwise it stops as "stuck" (no improving candidate), "unreachable" (none reachable), "push budget", "ik_exhausted" (40 consecutive arm-plan failures), or "out_of_bounds".
 
 ## Surrogate
 
 The surrogate is an MLP ensemble that predicts a push's measurement, for fast belief updates and the PPO training world. Its 49 inputs are `eta`, the world start pose and velocity, the body-frame contact point and normal, speed and contact time, and the tip path's xy at 16 times. Its outputs are the measurement-end pose change and push-end velocity in the start pose's frame. Training data come from the Drake prediction model with sampled tip-path deviations. Samples are split by sample seed (modulo 10) into training (80%), development (10%), and held-out (10%) rows; each sample also stores its action-end pose and velocity for a future planning model.
-
-The surrogate data generator and the PPO environment still sample the earlier discrete library (32 sites, speeds 0.05 and 0.1 m/s, contact times 0.2 and 0.4 s).

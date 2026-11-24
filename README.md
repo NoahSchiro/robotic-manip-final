@@ -172,8 +172,11 @@ can be scored afterwards; run at the tightest tolerance of interest.
 push, and 0.30–0.45 m apart). A seed has the same true parameters in both.
 `scripts/cluster/placement.sbatch` runs one (seed, condition) per array task;
 its header lists the benchmark, headroom and full-comparison submissions.
-Score the records (success by push budget at 0.5 cm/5°, 1 cm/10° and
-2 cm/20°, and the paired difference between `none` and `true_eta`) with:
+Score the records with the command below. It writes `summary.json`,
+`success.png` (success by push budget at tolerances 0.5 cm/5°, 1 cm/10° and
+2 cm/20°) and `paired.png` (per seed, the pushes saved by knowing η: the MPC
+with η unknown, condition `none`, planning with the filter's estimate, against
+the MPC with η known, `true_eta`; neither condition probes):
 
 ```sh
 uv run python -m scripts.summarize_placement data/results/headroom/near data/results/headroom/far --out data/results/headroom

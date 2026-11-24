@@ -3,8 +3,10 @@
 Each record holds the distance and yaw to the goal at the start and after
 every push, so success is scored here at several tolerances and push budgets
 without rerunning.  An episode that stopped early keeps its last pose for the
-remaining budget.  Conditions are compared on the seeds they share; the
-paired comparison of "none" against "true_eta" is the most probing could gain.
+remaining budget.  Conditions are compared on the seeds they share.  Neither
+"true_eta" nor "none" probes: the MPC plans with the true eta, or with the
+estimate the filter builds from the MPC's own pushes.  Their paired gap is
+the most any probing strategy could gain.
 
     uv run python -m scripts.summarize_placement data/results/headroom/near data/results/headroom/far --out data/results/headroom
 """
@@ -20,6 +22,13 @@ from scipy import stats
 
 from src.constants import MPC_LENGTH, MPC_YAW_WEIGHT
 
+CONDITION_LABELS = {
+    "true_eta": "MPC, η known",
+    "none": "MPC, η unknown (estimated)",
+    "nominal_eta": "MPC, η fixed at nominal",
+    "farthest_eta": "MPC, η fixed at farthest",
+}
+
 # (position m, yaw deg): the episode tolerance and two looser ones.
 TOLERANCES = ((0.005, 5.0), (0.01, 10.0), (0.02, 20.0))
 BUDGETS = (2, 3, 5, 10, 20)
@@ -33,6 +42,10 @@ def load(directories: list[Path]) -> list[Record]:
         for directory in directories
         for path in sorted(directory.glob("*.json"))
     ]
+
+
+def tolerance_key(position: float, yaw_deg: float) -> str:
+    return f"{position * 100:g}cm_{yaw_deg:g}deg"
 
 
 def pushes_to_reach(record: Record, position: float, yaw_deg: float) -> float:
@@ -50,12 +63,22 @@ def final_cost(record: Record) -> float:
     return float((distance / MPC_LENGTH) ** 2 + MPC_YAW_WEIGHT * yaw**2)
 
 
+def spread(values: list[float]) -> dict[str, float]:
+    array = np.asarray(values, dtype=float)
+    return {
+        "mean": float(array.mean()),
+        "median": float(np.median(array)),
+        "min": float(array.min()),
+        "max": float(array.max()),
+    }
+
+
 def condition_stats(records: list[Record]) -> dict[str, Any]:
     stops: dict[str, int] = defaultdict(int)
     for r in records:
         stops[r["stop_reason"]] += 1
     reached = {
-        f"{p * 100:g}cm_{y:g}deg": np.array([pushes_to_reach(r, p, y) for r in records])
+        tolerance_key(p, y): np.array([pushes_to_reach(r, p, y) for r in records])
         for p, y in TOLERANCES
     }
     return {
@@ -65,6 +88,11 @@ def condition_stats(records: list[Record]) -> dict[str, Any]:
             tol: {str(b): float(np.mean(k <= b)) for b in BUDGETS}
             for tol, k in reached.items()
         },
+        # Per episode, in seed order; never reaching it is null.
+        "pushes_to_reach": {
+            tol: [None if np.isinf(v) else int(v) for v in k]
+            for tol, k in reached.items()
+        },
         "median_pushes_to_reach": {
             tol: float(np.median(k)) for tol, k in reached.items()
         },
@@ -72,8 +100,10 @@ def condition_stats(records: list[Record]) -> dict[str, Any]:
         "final_position_error_cm_median": float(
             np.median([r["position_error"] * 100 for r in records])
         ),
-        "start_distance_cm_mean": float(
-            np.mean([r["goal_errors"][0][0] * 100 for r in records])
+        # How far the goal starts: distance (cm) and rotation (deg).
+        "start_distance_cm": spread([r["goal_errors"][0][0] * 100 for r in records]),
+        "start_rotation_deg": spread(
+            [float(np.rad2deg(r["goal_errors"][0][1])) for r in records]
         ),
         "wall_time_min_mean": float(np.mean([r["wall_time"] / 60 for r in records])),
     }
@@ -88,7 +118,7 @@ def paired(
     result: dict[str, Any] = {"seeds": len(seeds)}
     cap = max(BUDGETS) + 1
     for p, y in TOLERANCES:
-        tol = f"{p * 100:g}cm_{y:g}deg"
+        tol = tolerance_key(p, y)
         a = np.array(
             [min(pushes_to_reach(by_seed[worse][s], p, y), cap) for s in seeds]
         )
@@ -111,57 +141,185 @@ def paired(
     return result
 
 
-def summarize(records: list[Record]) -> dict[str, Any]:
-    """Per task: each condition's statistics, and none against true_eta."""
+def by_task(records: list[Record]) -> dict[str, dict[str, dict[int, Record]]]:
+    """Records indexed by task, condition and seed."""
     tasks: dict[str, dict[str, dict[int, Record]]] = defaultdict(
         lambda: defaultdict(dict)
     )
     for r in records:
         tasks[r.get("task", "near")][r["condition"]][r["seed"]] = r
+    return tasks
+
+
+def summarize(records: list[Record]) -> dict[str, Any]:
+    """Per task: each condition's statistics, and none against true_eta."""
+    tasks = by_task(records)
     summary: dict[str, Any] = {}
     for task, by_condition in sorted(tasks.items()):
         summary[task] = {
             "conditions": {
-                name: condition_stats(list(by_seed.values()))
+                name: condition_stats([by_seed[k] for k in sorted(by_seed)])
                 for name, by_seed in sorted(by_condition.items())
             }
         }
-        if "true_eta" in by_condition and "none" in by_condition:
-            summary[task]["none_vs_true_eta"] = paired(by_condition, "true_eta", "none")
+        if "true_eta" in by_condition:
+            summary[task]["vs_true_eta"] = {
+                name: paired(by_condition, "true_eta", name)
+                for name in sorted(by_condition)
+                if name != "true_eta"
+            }
     return summary
 
 
 def plot(summary: dict[str, Any], out: Path) -> None:
-    """Success rate against push budget, one panel per task, one line per
-    condition, solid at the episode tolerance and dashed at the loosest."""
+    """Success rate against push budget: one row per task, one column per
+    tolerance, one line per condition."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    colors = {"true_eta": "#0b0b0b", "none": "#2a78d6"}
-    tight = f"{TOLERANCES[0][0] * 100:g}cm_{TOLERANCES[0][1]:g}deg"
-    loose = f"{TOLERANCES[-1][0] * 100:g}cm_{TOLERANCES[-1][1]:g}deg"
-    figure = Figure(figsize=(5 * len(summary), 3.8), facecolor="#fcfcfb")
+    # (color, marker, marker size, hollow) per condition: the larger hollow
+    # rings stay visible around the smaller filled markers where they coincide.
+    styles = {
+        "true_eta": ("#0b0b0b", "o", 3.5, False),
+        "none": ("#2a78d6", "o", 7.0, True),
+        "nominal_eta": ("#eb6834", "s", 4.0, False),
+        "farthest_eta": ("#b3261e", "^", 4.5, False),
+    }
+    budgets = np.arange(max(BUDGETS) + 1)
+    figure = Figure(
+        figsize=(3.6 * len(TOLERANCES), 2.9 * len(summary)), facecolor="#fcfcfb"
+    )
     FigureCanvasAgg(figure)
-    axes = np.atleast_1d(figure.subplots(1, len(summary), sharey=True))
-    for ax, (task, task_summary) in zip(axes, summary.items(), strict=True):
-        for name, st in task_summary["conditions"].items():
-            color = colors.get(name, "#eb6834")
-            for tol, style in ((tight, "-"), (loose, "--")):
-                rates = [st["success_by_budget"][tol][str(b)] * 100 for b in BUDGETS]
-                label = f"{name} ({tol.replace('_', ', ')})"
-                ax.plot(
-                    BUDGETS, rates, style, marker="o", ms=4, color=color, label=label
+    axes = np.atleast_2d(
+        figure.subplots(len(summary), len(TOLERANCES), sharex=True, sharey=True)
+    )
+    for row, (task, task_summary) in zip(axes, summary.items(), strict=True):
+        for ax, (position, yaw) in zip(row, TOLERANCES, strict=True):
+            tol = tolerance_key(position, yaw)
+            # Budgets are whole pushes, so each condition is a dot per budget;
+            # hollow rings stay visible around filled dots where they coincide.
+            for name, st in task_summary["conditions"].items():
+                reached = np.array(
+                    [np.inf if k is None else k for k in st["pushes_to_reach"][tol]]
                 )
-        ax.set_title(f"{task} task ({st['episodes']} seeds)", fontsize=10, loc="left")
+                rates = [np.mean(reached <= b) * 100 for b in budgets]
+                color, marker, size, hollow = styles.get(
+                    name, ("#8a8880", "D", 4.0, False)
+                )
+                ax.plot(
+                    budgets,
+                    rates,
+                    ls="",
+                    marker=marker,
+                    ms=size,
+                    mfc="none" if hollow else color,
+                    mec=color,
+                    mew=1.3,
+                    color=color,
+                    label=CONDITION_LABELS.get(name, name),
+                )
+            ax.set_title(
+                f"{task} task, tolerance {position * 100:g} cm / {yaw:g}°",
+                fontsize=9.5,
+                loc="left",
+            )
+            ax.set_ylim(0, 102)
+            ax.set_xlim(-0.5, max(BUDGETS) + 0.5)
+            ax.grid(color="#e1e0d9", lw=0.7)
+            ax.set_facecolor("#fcfcfb")
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+        row[0].set_ylabel("episodes at the goal (%)")
+    for ax in axes[-1]:
         ax.set_xlabel("push budget")
-        ax.set_xticks(BUDGETS)
-        ax.set_ylim(0, 102)
-        ax.grid(axis="y", color="#e1e0d9")
-        ax.set_facecolor("#fcfcfb")
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-    axes[0].set_ylabel("episodes at the goal (%)")
-    axes[-1].legend(frameon=False, fontsize=7.5, loc="lower right")
+    axes[-1, 0].legend(frameon=False, fontsize=8, loc="lower right")
+    counts = sorted(
+        {
+            st["episodes"]
+            for task_summary in summary.values()
+            for st in task_summary["conditions"].values()
+        }
+    )
+    seeds = (
+        f"{counts[0]} paired seeds"
+        if len(counts) == 1
+        else f"{counts[0]}–{counts[-1]} seeds per condition"
+    )
+    figure.suptitle(
+        f"Episodes at the goal by push budget ({seeds} per task)", fontsize=11
+    )
+    figure.tight_layout()
+    figure.savefig(out, dpi=150)
+
+
+PAIRED_RANGE = (-3, 3)  # extra pushes shown; larger gaps are clipped to the ends
+
+
+def plot_paired(tasks: dict[str, dict[str, dict[int, Record]]], out: Path) -> None:
+    """Per seed, the pushes saved by knowing eta: the pushes the MPC needs to
+    reach each tolerance with eta unknown ("none", planning with the filter's
+    estimate) minus with eta known ("true_eta"), as stacked dots; seeds where
+    only one condition, or neither, reaches it get their own columns."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    low, high = PAIRED_RANGE
+    only_estimated, only_true, neither = low - 2, high + 2, high + 4
+    colors = {
+        only_estimated: "#2a78d6",
+        only_true: "#0b0b0b",
+        neither: "#b8b6ad",
+    }
+    shown = {t: c for t, c in sorted(tasks.items()) if "none" in c and "true_eta" in c}
+    figure = Figure(
+        figsize=(4 * len(TOLERANCES), 3.2 * len(shown)), facecolor="#fcfcfb"
+    )
+    FigureCanvasAgg(figure)
+    axes = np.atleast_2d(
+        figure.subplots(len(shown), len(TOLERANCES), sharex=True, sharey=True)
+    )
+    for row, (task, conditions) in zip(axes, shown.items(), strict=True):
+        estimated, true = conditions["none"], conditions["true_eta"]
+        seeds = sorted(set(estimated) & set(true))
+        for ax, (position, yaw) in zip(row, TOLERANCES, strict=True):
+            stacked: dict[int, int] = defaultdict(int)
+            for seed in seeds:
+                a = pushes_to_reach(estimated[seed], position, yaw)
+                b = pushes_to_reach(true[seed], position, yaw)
+                if np.isinf(a) and np.isinf(b):
+                    x = neither
+                elif np.isinf(a):
+                    x = only_true
+                elif np.isinf(b):
+                    x = only_estimated
+                else:
+                    x = int(np.clip(a - b, low, high))
+                stacked[x] += 1
+                color = colors.get(
+                    x, "#0b0b0b" if x > 0 else "#2a78d6" if x < 0 else "#8a8880"
+                )
+                ax.plot(x, stacked[x], "o", ms=6.5, color=color)
+            ax.axvline(0, color="#e1e0d9", lw=1, zorder=0)
+            ticks = [only_estimated, *range(low, high + 1), only_true, neither]
+            names = [
+                "only\nunknown η\nreaches",
+                *[f"{v:+d}" if v else "0" for v in range(low, high + 1)],
+                "only\nknown η\nreaches",
+                "neither",
+            ]
+            ax.set_xticks(ticks, names, fontsize=7.5)
+            ax.set_xlim(only_estimated - 1, neither + 1)
+            ax.set_title(
+                f"{task} task, tolerance {position * 100:g} cm / {yaw:g}°",
+                fontsize=9.5,
+                loc="left",
+            )
+            ax.set_facecolor("#fcfcfb")
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+        row[0].set_ylabel(f"seeds (of {len(seeds)})")
+    for ax in axes[-1]:
+        ax.set_xlabel("pushes saved by knowing η (unknown − known)", fontsize=8.5)
     figure.tight_layout()
     figure.savefig(out, dpi=150)
 
@@ -170,27 +328,37 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("directories", type=Path, nargs="+", help="record folders")
     parser.add_argument(
-        "--out", type=Path, help="folder for summary.json and success.png"
+        "--out",
+        type=Path,
+        help="folder for summary.json, success.png and paired.png",
     )
     args = parser.parse_args()
-    summary = summarize(load(args.directories))
+    records = load(args.directories)
+    summary = summarize(records)
     for task, task_summary in summary.items():
-        print(f"== {task}")
+        first = next(iter(task_summary["conditions"].values()))
+        d, a = first["start_distance_cm"], first["start_rotation_deg"]
+        print(
+            f"== {task}: goal starts {d['mean']:.1f} cm away (median {d['median']:.1f}, "
+            f"{d['min']:.1f}-{d['max']:.1f}), rotation median {a['median']:.0f} deg "
+            f"({a['min']:.0f}-{a['max']:.0f})"
+        )
         for name, st in task_summary["conditions"].items():
             rates = st["success_by_budget"]
             print(
-                f"  {name:10} n={st['episodes']:3} start {st['start_distance_cm_mean']:5.1f} cm  "
+                f"  {name:10} n={st['episodes']:3}  "
                 + "  ".join(
                     f"{tol}: {rates[tol]['5']:.0%}@5 {rates[tol]['20']:.0%}@20"
                     for tol in rates
                 )
                 + f"  stops {st['stop_reasons']}"
             )
-        if "none_vs_true_eta" in task_summary:
-            for tol, d in task_summary["none_vs_true_eta"].items():
+        for name, comparison in task_summary.get("vs_true_eta", {}).items():
+            for tol, d in comparison.items():
                 if tol != "seeds":
                     print(
-                        f"  none vs true_eta, {tol}: {d['mean_extra_pushes']:+.2f} pushes "
+                        f"  {name} vs true_eta, {tol}: "
+                        f"{d['mean_extra_pushes']:+.2f} pushes "
                         f"± {d['se'] or float('nan'):.2f}, "
                         f"Wilcoxon p={d['wilcoxon_p'] or float('nan'):.3f}"
                     )
@@ -198,7 +366,8 @@ def main() -> None:
         args.out.mkdir(parents=True, exist_ok=True)
         (args.out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
         plot(summary, args.out / "success.png")
-        print(f"wrote {args.out / 'summary.json'} and {args.out / 'success.png'}")
+        plot_paired(by_task(records), args.out / "paired.png")
+        print(f"wrote summary.json, success.png and paired.png in {args.out}")
 
 
 if __name__ == "__main__":
