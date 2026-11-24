@@ -4,6 +4,10 @@ truth sim with the Drake filter, written as a JSON record.
 Conditions, all on the seed's paired true eta, start pose and goal:
 - "true_eta": MPC plans with the true parameters, no filter (the ceiling);
 - "none": no probing, MPC plans with the filter's MAP from the first push;
+- "nominal_eta": MPC plans with a fixed, uninformed eta (the grid point
+  nearest the grid's mean), no filter;
+- "farthest_eta": MPC plans with the grid hypothesis farthest from the true
+  eta (range-normalized), no filter: the worst fixed model;
 - "<prober>:<k>": k probe pushes, then MPC; the prober is "learned" (the
   trained policy choosing pushes, stop masked), "random" (uniform over the
   probing lattice) or "long_fast" (uniform over its long, fast subset).
@@ -16,6 +20,7 @@ and any smaller budget afterwards (the one-push MPC never looks at either).
 
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -45,28 +50,53 @@ from src.world.recording import TruthSim
 PROBERS = ("learned", "random", "long_fast")
 
 
+# Where the MPC's eta comes from: the filter's MAP, or a fixed eta.
+ETA_SOURCES = {
+    "none": "estimated",
+    "true_eta": "true",
+    "nominal_eta": "nominal",
+    "farthest_eta": "farthest",
+}
+
+
 @dataclass(frozen=True)
 class Condition:
-    """A parsed condition: prober None for "true_eta" and "none"."""
+    """A parsed condition: prober None unless probes run first; `eta_source`
+    is "estimated", "true", "nominal" or "farthest"."""
 
     name: str
     prober: str | None
     probes: int
-    true_eta: bool
+    eta_source: str
 
 
 def parse_condition(name: str) -> Condition:
-    """Parse "true_eta", "none", or "<prober>:<k>".
+    """Parse "true_eta", "none", "nominal_eta", "farthest_eta", or
+    "<prober>:<k>".
 
     Raises ValueError for anything else."""
-    if name == "true_eta":
-        return Condition(name, None, 0, True)
-    if name == "none":
-        return Condition(name, None, 0, False)
+    if name in ETA_SOURCES:
+        return Condition(name, None, 0, ETA_SOURCES[name])
     prober, _, count = name.partition(":")
     if prober not in PROBERS or not count.isdigit() or int(count) < 1:
         raise ValueError(f"unknown condition {name!r}")
-    return Condition(name, prober, int(count), False)
+    return Condition(name, prober, int(count), "estimated")
+
+
+def nominal_eta(grid: list[Eta]) -> Eta:
+    """The grid hypothesis nearest the grid's mean (range-normalized): what a
+    system without an estimator would assume.  A grid point, since the mean
+    rod position itself can fall outside the block."""
+    points = np.array([g.as_array() for g in grid])
+    offsets = (points - points.mean(axis=0)) / grid_spans(grid)
+    return grid[int(np.argmin(np.linalg.norm(offsets, axis=1)))]
+
+
+def farthest_eta(grid: list[Eta], truth: Eta) -> Eta:
+    """The grid hypothesis farthest from `truth` (range-normalized)."""
+    points = np.array([g.as_array() for g in grid])
+    offsets = (points - truth.as_array()) / grid_spans(grid)
+    return grid[int(np.argmax(np.linalg.norm(offsets, axis=1)))]
 
 
 def normalized_error(estimate: Eta | None, truth: Eta, grid: list[Eta]) -> float | None:
@@ -116,13 +146,21 @@ def run_placement(
     elif condition.prober == "long_fast":
         probe_selector = lattice_selector(long_fast(config.actions), action_rng)
 
+    fixed_eta = {
+        "true": eta,
+        "nominal": nominal_eta(config.grid),
+        "farthest": farthest_eta(config.grid, eta),
+    }.get(condition.eta_source)
     started = time.perf_counter()
     with ParallelPushModel(workers, push_model_config()) as model:
-        belief = (
-            None
-            if condition.true_eta
-            else GridBayesFilter(config.grid, model, CALIBRATED_R, nu=3.0)
-        )
+        belief: GridBayesFilter | None = None
+        plan_eta: Callable[[], Eta]
+        if fixed_eta is None:
+            belief = GridBayesFilter(config.grid, model, CALIBRATED_R, nu=3.0)
+            plan_eta = belief.map_eta
+        else:
+            planned: Eta = fixed_eta
+            plan_eta = lambda: planned
         result = run_episode(
             obj=obj,
             truth_sim=TruthSim(obj, Pusher(), truth_sim_config()),
@@ -135,7 +173,7 @@ def run_placement(
                 MPC_TIME_WEIGHT,
             ),
             belief=belief,
-            plan_eta=belief.map_eta if belief is not None else lambda: eta,
+            plan_eta=plan_eta,
             probe_selector=probe_selector,
             probe_pushes=condition.probes,
             max_pushes=max_pushes,
@@ -158,6 +196,10 @@ def run_placement(
         "prober": condition.prober,
         "probes": condition.probes,
         "true_eta": eta.as_array().tolist(),
+        "eta_source": condition.eta_source,
+        # The fixed eta the MPC planned with; None when it used the filter.
+        "plan_eta": fixed_eta.as_array().tolist() if fixed_eta is not None else None,
+        "plan_eta_error": normalized_error(fixed_eta, eta, config.grid),
         "start_pose": [float(v) for v in start_pose],
         "goal": [float(v) for v in goal],
         **asdict(result),

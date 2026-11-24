@@ -162,7 +162,10 @@ uv run python main.py placement-eval --seed 95000 --condition learned:3 --out da
 ```
 
 Conditions are `true_eta` (MPC with the true parameters), `none` (no
-probing), or `<learned|random|long_fast>:<probes>`. Probes and placement
+probing; MPC plans with the estimator's running estimate), `nominal_eta` and
+`farthest_eta` (MPC plans with a fixed η, never updated: the grid point
+nearest the grid's mean, or the one farthest from the true η), or
+`<learned|random|long_fast>:<probes>`. Probes and placement
 pushes share `--max-pushes`. The record holds the distance and angle to the
 goal after every push, so success at any looser tolerance or smaller budget
 can be scored afterwards; run at the tightest tolerance of interest.

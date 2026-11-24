@@ -11,6 +11,9 @@
 # see src/experiment.py TASKS):
 #   TASK=near CONDITIONS="true_eta none" OUT=data/results/headroom/near sbatch -a 0-59 scripts/cluster/placement.sbatch
 #   TASK=far CONDITIONS="true_eta none" OUT=data/results/headroom/far sbatch -a 0-59 scripts/cluster/placement.sbatch
+# Fixed wrong eta on the same seeds (does eta matter, or is the estimator good?):
+#   TASK=near CONDITIONS="nominal_eta farthest_eta" OUT=data/results/headroom/near sbatch -a 0-59 scripts/cluster/placement.sbatch
+#   TASK=far CONDITIONS="nominal_eta farthest_eta" OUT=data/results/headroom/far sbatch -a 0-59 scripts/cluster/placement.sbatch
 # Full run (30 seeds x 17 conditions = 510 tasks):
 #   sbatch -a 0-509%64 scripts/cluster/placement.sbatch
 #
