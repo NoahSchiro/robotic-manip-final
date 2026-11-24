@@ -166,7 +166,18 @@ probing), or `<learned|random|long_fast>:<probes>`. Probes and placement
 pushes share `--max-pushes`. The record holds the distance and angle to the
 goal after every push, so success at any looser tolerance or smaller budget
 can be scored afterwards; run at the tightest tolerance of interest.
-`scripts/cluster/placement.sbatch` runs one (seed, condition) per array task.
+`--task` picks where start and goal are drawn: `near` (default; both within
+10 cm of (0.55, 0) m, the task the PPO policy was trained on) or `far` (both
+0.50–0.65 m from the arm base within ±55°, where the arm reaches every lattice
+push, and 0.30–0.45 m apart). A seed has the same true parameters in both.
+`scripts/cluster/placement.sbatch` runs one (seed, condition) per array task;
+its header lists the benchmark, headroom and full-comparison submissions.
+Score the records (success by push budget at 0.5 cm/5°, 1 cm/10° and
+2 cm/20°, and the paired difference between `none` and `true_eta`) with:
+
+```sh
+uv run python -m scripts.summarize_placement data/results/headroom/near data/results/headroom/far --out data/results/headroom
+```
 
 ### Check the arm motion
 
@@ -215,7 +226,7 @@ uv run python -m scripts.plot_reach --out docs/figures/reach.png
 ```
 
 For each block position on the table, the share of the 396 lattice pushes
-whose approach and end points lie in the arm's reach band (0.39–0.78 m from
+whose approach and end points lie in the arm's reach band (0.42–0.78 m from
 the base), averaged over block yaw, with the workspace and start/goal disks.
 About 30 s.
 
@@ -266,6 +277,7 @@ per measurement component, and the friction each trial's pushes favour. About
 | `scripts/evaluate_policy.py` | Trained policy against random probing on paired surrogate episodes: errors, push counts, and the speeds, distances and directions it chooses |
 | `scripts/plot_belief.py` | Push-by-push belief figure |
 | `scripts/cluster/` | Slurm batch scripts for the Engaging cluster (PPO training, Drake transfer evaluation) |
+| `scripts/summarize_placement.py` | Placement records scored by tolerance and push budget, and the paired gap between conditions |
 | `scripts/merge_evaluations.py` | Paired statistics over per-episode evaluation reports |
 
 ## Implementation notes

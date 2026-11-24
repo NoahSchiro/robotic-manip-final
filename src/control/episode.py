@@ -26,6 +26,7 @@ from src.control.probing import (
 from src.estimation.belief_view import BeliefDashboard, show_belief
 from src.estimation.estimator import GridBayesFilter
 from src.estimation.params import Eta
+from src.experiment import TASKS, Task
 from src.world.action import Action
 from src.world.object import Object
 from src.world.observation import PushObservation
@@ -140,6 +141,8 @@ class MpcSelector:
             return "at goal"
         if self._decision_pushes != state.pushes:
             self._plan(state)
+        if not self._candidates:
+            return "unreachable"
         improving = [c for c in self._candidates if c.cost < self.cost_before]
         if not improving:
             return "stuck"
@@ -155,6 +158,7 @@ class MpcSelector:
     def _plan(self, state: ProbingState) -> None:
         print(
             f"planning push {state.pushes + 1} over "
+            f"{len(self.controller.reachable(state.obj.pose))} reachable of "
             f"{len(self.controller.actions)} candidates...",
             flush=True,
         )
@@ -202,6 +206,7 @@ def run_episode(
     probe_pushes: int,
     max_pushes: int,
     tolerance: GoalTolerance,
+    task: Task = TASKS["near"],
 ) -> EpisodeResult:
     """Push `obj` from its current pose toward its goal in `truth_sim`, which
     must hold the block where `obj.pose` says, moving `obj.pose` along.  The
@@ -209,13 +214,14 @@ def run_episode(
     `controller`, which asks `plan_eta` for its eta before each plan.
     Both phases run on one ProbingState and share the `max_pushes` budget.
     `belief` (None skips estimation) is updated after every push and drawn
-    in `meshcat` and `dashboard` when they're open."""
+    in `meshcat` and `dashboard` when they're open.  The episode stops
+    "out_of_bounds" when the block leaves `task`'s bounds."""
     if meshcat is not None:
         show_object_goal(meshcat, obj)
     if belief is not None:
         show_belief(0, belief, obj, meshcat, dashboard)
     started = truth_sim.context.get_time()
-    state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief)
+    state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief, task=task)
     goal_errors = [goal_error(obj.pose, obj.goal)]
 
     def report_probe(current: ProbingState, record: PushRecord) -> None:

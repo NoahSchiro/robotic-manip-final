@@ -7,7 +7,7 @@ import pytest
 
 from src.control import probing
 from src.control.probing import ProbingState, random_selector, run_probing
-from src.experiment import episode_conditions
+from src.experiment import TASKS, episode_conditions
 from src.world.action import Action
 from src.world.geometry import SurfaceNormal
 from src.world.push_space import Face, PushSpace
@@ -224,6 +224,20 @@ def test_random_selector_draws_only_reachable_pushes() -> None:
         belief=None,
     )
     assert selector(far, []) == "unreachable"
+
+
+def test_bounds_follow_the_states_task() -> None:
+    # On the far task's band, outside the near task's workspace disk.
+    side = (0.30, 0.45, 0.0)
+    near = make_state(FakeTruthSim())
+    near.obj.pose = side
+    assert run_probing(near, fixed_selector(0), budget=3).reason == "out_of_bounds"
+    far = make_state(FakeTruthSim())
+    far.obj.pose = side
+    far.task = TASKS["far"]
+    outcome = run_probing(far, fixed_selector(0), budget=3)
+    assert outcome.reason == "budget"
+    assert len(outcome.records) == 3
 
 
 def test_episode_conditions_are_deterministic_per_seed() -> None:

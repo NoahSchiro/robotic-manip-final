@@ -96,6 +96,9 @@ class FakeController:
     def cost(self, obj: object) -> float:
         return abs(obj.pose[0] - obj.goal[0])
 
+    def reachable(self, _pose: object) -> list[Action]:
+        return self.actions
+
     def plan(self, obj: object, _eta: object) -> list[Candidate]:
         self.plan_calls += 1
         x, y, yaw = obj.pose
@@ -257,3 +260,82 @@ def test_selector_reports_the_latest_decision() -> None:
     assert selector.chosen.cost < selector.cost_before
     assert chosen_predictions == [pytest.approx(0.56)]
     assert selector.planning_seconds >= selector.plan_seconds >= 0.0
+
+
+def test_selector_with_nothing_reachable_is_unreachable() -> None:
+    selector = MpcSelector(FakeController([]), lambda: None, TOLERANCE)
+    state = ProbingState(
+        truth_sim=FakeTruthSim(),
+        obj=SimpleNamespace(pose=START, goal=(0.57, 0.0, 0.0)),
+        belief=None,
+    )
+    assert selector(state, []) == "unreachable"
+
+
+class RecordingModel:
+    """Predicts no motion and records which pushes it was asked about."""
+
+    def __init__(self) -> None:
+        self.asked: list[Action] = []
+
+    def predict_pushes(self, _eta: object, pose: object, actions: list[Action]):
+        self.asked = list(actions)
+        return np.tile(np.asarray(pose, dtype=float), (len(actions), 1))
+
+
+def test_mpc_ranks_only_pushes_inside_the_reach_band() -> None:
+    from src.constants import MPC_LENGTH, MPC_TIME_WEIGHT, MPC_YAW_WEIGHT
+    from src.control.mpc import MpcController, PoseCostWeights
+    from src.experiment import lattice, reference_object
+    from src.world.push_space import make_push_space, reachable
+
+    block = reference_object()
+    actions = lattice(make_push_space(block.parts, block.height))
+    model = RecordingModel()
+    controller = MpcController(
+        model, actions, PoseCostWeights(MPC_LENGTH, MPC_YAW_WEIGHT), MPC_TIME_WEIGHT
+    )
+    block.goal = (0.55, 0.0, 0.0)
+    # Near the inner edge of the band, only some pushes are reachable.
+    block.pose = (0.42, 0.0, 0.0)
+    pose = np.array(block.pose)
+    expected = [a for a in actions if reachable(pose, a)]
+    assert 0 < len(expected) < len(actions)
+    candidates = controller.plan(block, None)
+    assert model.asked == expected
+    assert sorted(id(c.action) for c in candidates) == sorted(id(a) for a in expected)
+    # Out of reach entirely: nothing to rank.
+    block.pose = (0.1, 0.0, 0.0)
+    assert controller.plan(block, None) == []
+
+
+class InwardModel:
+    """Predicts that every other push leaves the block next to the arm base."""
+
+    def predict_pushes(self, _eta: object, pose: object, actions: list[Action]):
+        predicted = np.tile(np.asarray(pose, dtype=float), (len(actions), 1))
+        predicted[::2, :2] = (0.30, 0.0)
+        return predicted
+
+
+def test_mpc_drops_pushes_that_strand_the_block() -> None:
+    from src.constants import MPC_LENGTH, MPC_TIME_WEIGHT, MPC_YAW_WEIGHT
+    from src.control.mpc import MpcController, PoseCostWeights
+    from src.experiment import lattice, reference_object
+    from src.world.push_space import make_push_space
+
+    block = reference_object()
+    actions = lattice(make_push_space(block.parts, block.height))
+    controller = MpcController(
+        InwardModel(),
+        actions,
+        PoseCostWeights(MPC_LENGTH, MPC_YAW_WEIGHT),
+        MPC_TIME_WEIGHT,
+    )
+    # The goal is next to the base, so stranding pushes would rank first.
+    block.goal = (0.30, 0.0, 0.0)
+    block.pose = (0.55, 0.0, 0.0)
+    assert controller.reachable_share(block.pose) == 1.0
+    candidates = controller.plan(block, None)
+    assert len(candidates) == len(actions) // 2
+    assert all(c.predicted[0] == 0.55 for c in candidates)

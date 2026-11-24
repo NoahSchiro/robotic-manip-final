@@ -35,7 +35,10 @@ MAX_PUSH_DISTANCE = 0.10  # m, speed times contact time
 # m; the inner inset exceeds the stick radius (0.01 m) plus 1 mm clearance.
 INNER_CORNER_INSET = 0.012
 OUTER_CORNER_INSET = 0.005
-REACH_MIN, REACH_MAX = 0.39, 0.78  # m, tip radius band from the arm base
+# m, tip radius band from the arm base.  Tool-down IK reaches tips from
+# 0.41 m outward at push and transfer heights; the inner limit keeps 1 cm of
+# margin.
+REACH_MIN, REACH_MAX = 0.42, 0.78
 
 
 @dataclass(frozen=True)

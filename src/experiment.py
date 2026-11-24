@@ -1,13 +1,22 @@
 """The experiment's shared setup built from src.constants: simulation
-configs, the push lattice, the reference block, and how a seed becomes an
-episode.
+configs, the push lattice, the reference block, the placement tasks, and how
+a seed becomes an episode.
 
-Poses are planar (x, y, yaw) in the world frame (m, rad).
+Poses are planar (x, y, yaw) in the world frame (m, rad); the arm's base is
+the origin.
 """
+
+from dataclasses import dataclass
+from typing import Protocol
 
 import numpy as np
 
 from src.constants import (
+    FAR_BAND_HALF_ANGLE,
+    FAR_BAND_RADII,
+    FAR_BOUNDS_HALF_ANGLE,
+    FAR_BOUNDS_RADII,
+    FAR_GOAL_DISTANCES,
     GOAL_RADIUS,
     LATTICE_DISTANCES,
     LATTICE_SPACING,
@@ -66,33 +75,110 @@ def disk_point(rng: np.random.Generator, radius: float) -> tuple[float, float]:
     )
 
 
+class Task(Protocol):
+    """Where a placement episode's start and goal positions are drawn, and
+    where the block center must stay (world frame, m)."""
+
+    def start_xy(self, rng: np.random.Generator) -> tuple[float, float]: ...
+
+    def goal_xy(
+        self, rng: np.random.Generator, start_xy: tuple[float, float]
+    ) -> tuple[float, float]: ...
+
+    def out_of_bounds(self, xy: np.ndarray) -> bool: ...
+
+
+@dataclass(frozen=True)
+class DiskTask:
+    """Start and goal uniform within their radii of the workspace center; the
+    block must stay within the workspace radius."""
+
+    def start_xy(self, rng: np.random.Generator) -> tuple[float, float]:
+        return disk_point(rng, START_RADIUS)
+
+    def goal_xy(
+        self, rng: np.random.Generator, start_xy: tuple[float, float]
+    ) -> tuple[float, float]:
+        return disk_point(rng, GOAL_RADIUS)
+
+    def out_of_bounds(self, xy: np.ndarray) -> bool:
+        return bool(np.linalg.norm(xy - np.array(WORKSPACE_CENTER)) > WORKSPACE_RADIUS)
+
+
+def _in_sector(xy: np.ndarray, radii: tuple[float, float], half_angle: float) -> bool:
+    radius = float(np.linalg.norm(xy))
+    angle = float(np.arctan2(xy[1], xy[0]))
+    return radii[0] <= radius <= radii[1] and abs(angle) <= half_angle
+
+
+@dataclass(frozen=True)
+class BandTask:
+    """Start and goal uniform over the band sector (FAR_BAND_*), the goal
+    redrawn until it lies FAR_GOAL_DISTANCES from the start; the block must
+    stay in the wider bounds sector (FAR_BOUNDS_*)."""
+
+    def _band_point(self, rng: np.random.Generator) -> tuple[float, float]:
+        inner, outer = FAR_BAND_RADII
+        radius = np.sqrt(rng.uniform(inner**2, outer**2))  # uniform over area
+        angle = rng.uniform(-FAR_BAND_HALF_ANGLE, FAR_BAND_HALF_ANGLE)
+        return (float(radius * np.cos(angle)), float(radius * np.sin(angle)))
+
+    def start_xy(self, rng: np.random.Generator) -> tuple[float, float]:
+        return self._band_point(rng)
+
+    def goal_xy(
+        self, rng: np.random.Generator, start_xy: tuple[float, float]
+    ) -> tuple[float, float]:
+        low, high = FAR_GOAL_DISTANCES
+        while True:
+            goal = self._band_point(rng)
+            if low <= np.hypot(goal[0] - start_xy[0], goal[1] - start_xy[1]) <= high:
+                return goal
+
+    def out_of_bounds(self, xy: np.ndarray) -> bool:
+        return not _in_sector(xy, FAR_BOUNDS_RADII, FAR_BOUNDS_HALF_ANGLE)
+
+
+TASKS: dict[str, Task] = {"near": DiskTask(), "far": BandTask()}
+"""The placement tasks by name.  "near" is the one the PPO policy was trained
+on; every function below defaults to it."""
+
+
 def sample_episode_conditions(
-    rng: np.random.Generator, parts: list[tuple[float, float, float, float]]
+    rng: np.random.Generator,
+    parts: list[tuple[float, float, float, float]],
+    task: Task = TASKS["near"],
 ) -> tuple[Eta, np.ndarray]:
     """The true eta and start pose from `rng`; the PPO environment's reset and
     the Drake episodes both draw this way, so paired evaluations see identical
-    conditions."""
+    conditions.  Eta is drawn first, so a seed's eta is the same in every
+    task."""
     eta = sample_eta(rng, GridSpec(), parts)
-    x, y = disk_point(rng, START_RADIUS)
+    x, y = task.start_xy(rng)
     return eta, np.array([x, y, rng.uniform(-np.pi, np.pi)])
 
 
-def episode_conditions(seed: int) -> tuple[Eta, np.ndarray, np.random.Generator]:
+def episode_conditions(
+    seed: int, task: Task = TASKS["near"]
+) -> tuple[Eta, np.ndarray, np.random.Generator]:
     """The seed's true eta, start pose and action RNG.  The action stream is
     independent of the condition stream, so a selector's draws never shift the
     episode's conditions."""
     eta, start_pose = sample_episode_conditions(
-        np.random.default_rng(seed), reference_object().parts
+        np.random.default_rng(seed), reference_object().parts, task
     )
     action_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
     return eta, start_pose, action_rng
 
 
-def episode_goal(seed: int) -> tuple[float, float, float]:
-    """The seed's placement goal, from its own stream, so adding a goal never
-    shifts the probing conditions or actions."""
+def episode_goal(
+    seed: int, start_pose: np.ndarray, task: Task = TASKS["near"]
+) -> tuple[float, float, float]:
+    """The seed's placement goal for a block starting at `start_pose`, from
+    its own stream, so adding a goal never shifts the probing conditions or
+    actions."""
     rng = np.random.default_rng(np.random.SeedSequence([seed, 2]))
-    x, y = disk_point(rng, GOAL_RADIUS)
+    x, y = task.goal_xy(rng, (float(start_pose[0]), float(start_pose[1])))
     return (x, y, rng.uniform(-np.pi, np.pi))
 
 
@@ -105,8 +191,6 @@ def episode_object(
     return obj
 
 
-def out_of_bounds(pose: np.ndarray) -> bool:
-    """True when the block center (pose[:2]) leaves the workspace disk."""
-    return bool(
-        np.linalg.norm(pose[:2] - np.array(WORKSPACE_CENTER)) > WORKSPACE_RADIUS
-    )
+def out_of_bounds(pose: np.ndarray, task: Task = TASKS["near"]) -> bool:
+    """True when the block center (pose[:2]) leaves `task`'s bounds."""
+    return task.out_of_bounds(np.asarray(pose[:2], dtype=float))

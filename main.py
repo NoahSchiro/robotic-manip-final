@@ -36,6 +36,7 @@ from src.estimation.trials import make_record_setup, record_trials
 from src.evaluation.placement import run_placement
 from src.evaluation.transfer import run_evaluation
 from src.experiment import (
+    TASKS,
     episode_conditions,
     episode_goal,
     episode_object,
@@ -369,6 +370,14 @@ def parse_args() -> argparse.Namespace:
         "--condition",
         required=True,
         help='"true_eta", "none", or "<learned|random|long_fast>:<probe pushes>"',
+    )
+    placement_parser.add_argument(
+        "--task",
+        choices=sorted(TASKS),
+        default="near",
+        help="where start and goal are drawn: near (within 10 cm of the "
+        "workspace center, the PPO training task) or far (0.30-0.45 m apart "
+        "along the arm's full-reach band)",
     )
     placement_parser.add_argument(
         "--model",
@@ -817,7 +826,9 @@ def simulate(args: argparse.Namespace) -> None:
     if args.start is not None:
         obj.pose = pose_from_degrees(*args.start)
     obj.goal = (
-        pose_from_degrees(*args.goal) if args.goal is not None else episode_goal(seed)
+        pose_from_degrees(*args.goal)
+        if args.goal is not None
+        else episode_goal(seed, start_pose)
     )
     pusher = Pusher()
 
@@ -1139,6 +1150,7 @@ def main(args: argparse.Namespace) -> None:
         record, summary = run_placement(
             seed=args.seed,
             condition_name=args.condition,
+            task_name=args.task,
             policy_path=args.model,
             workers=args.workers,
             max_pushes=args.max_pushes,

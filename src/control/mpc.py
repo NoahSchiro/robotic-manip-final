@@ -6,8 +6,14 @@ A push's cost is the proposal's pose cost at its predicted outcome,
     V(q) = |r - r_g|^2 / l^2 + lambda_phi wrap(phi - phi_g)^2,
 
 plus an action cost proportional to its maneuver time (moving to the
-push, pushing, backing off, lifting, and holding).  The caller executes the best
-push the arm can reach, updates the estimator, and replans.
+push, pushing, backing off, lifting, and holding).  Only pushes inside the
+arm's reach band from the current pose (push_space.reachable_mask) are
+predicted, and a push is ranked only if, from its predicted end pose, at
+least MIN_REACHABLE_SHARE of the candidates stay reachable (or, when the
+block is already below that share, no fewer than now).  The one-push
+lookahead would otherwise drive the block toward the arm base, where it can
+no longer be pushed.  The caller executes the best push whose arm plan
+succeeds, updates the estimator, and replans.
 
 The candidates are a lattice on the push space (push_space.PushSpace.grid):
 contacts along each face inset from its corners, so the lowered stick clears
@@ -27,6 +33,9 @@ from src.world.action import Action
 from src.world.iiwa import maneuver_time
 from src.world.object import Object
 from src.world.observation import wrap_angle
+from src.world.push_space import reachable_mask
+
+MIN_REACHABLE_SHARE = 0.8
 
 
 @dataclass(frozen=True)
@@ -116,18 +125,53 @@ class MpcController:
         self.actions = list(actions)
         self.pose_weights = pose_weights
         self.time_weight = time_weight
+        # Body-frame contact xy and inward normal xy (A, 2), push distance (A,) m.
+        self._contact_xy = np.array([a.contact.position[:2] for a in self.actions])
+        self._normal_xy = np.array([a.contact.normal[:2] for a in self.actions])
+        self._distance = np.array([a.velocity * a.time for a in self.actions])
+
+    def _reachable_mask(self, pose: Pose) -> np.ndarray:
+        return reachable_mask(
+            np.asarray(pose, dtype=float),
+            self._contact_xy,
+            self._normal_xy,
+            self._distance,
+        )
+
+    def reachable(self, pose: Pose) -> list[Action]:
+        """The candidates inside the reach band for a block at `pose`."""
+        mask = self._reachable_mask(pose)
+        return [a for a, ok in zip(self.actions, mask, strict=True) if ok]
+
+    def reachable_share(self, pose: Pose) -> float:
+        """The share of candidates inside the reach band at `pose`."""
+        return float(self._reachable_mask(pose).mean())
 
     def cost(self, obj: Object) -> float:
         """Get the pose cost of `obj` where it is now, pushing nothing."""
         return float(pose_cost(np.array(obj.pose), obj.goal, self.pose_weights))
 
     def plan(self, obj: Object, eta: Eta) -> list[Candidate]:
-        """Score every candidate push from `obj`'s current pose toward its
-        goal under `eta`, cheapest first."""
+        """Score every reachable candidate push from `obj`'s current pose
+        toward its goal under `eta`, cheapest first, keeping those that leave
+        enough of the candidates reachable (see the module docstring); empty
+        when none qualifies."""
+        actions = self.reachable(obj.pose)
+        if not actions:
+            return []
+        predicted = self.model.predict_pushes(eta, obj.pose, actions)
+        required = min(MIN_REACHABLE_SHARE, self.reachable_share(obj.pose))
+        keep = [
+            i
+            for i, pose in enumerate(predicted)
+            if self.reachable_share(pose) >= required - 1e-9
+        ]
+        if not keep:
+            return []
         return rank_pushes(
-            self.actions,
-            self.model.predict_pushes(eta, obj.pose, self.actions),
-            np.array([maneuver_time(obj, action) for action in self.actions]),
+            [actions[i] for i in keep],
+            predicted[keep],
+            np.array([maneuver_time(obj, actions[i]) for i in keep]),
             obj.goal,
             self.pose_weights,
             self.time_weight,

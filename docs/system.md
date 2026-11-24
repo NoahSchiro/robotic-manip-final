@@ -21,7 +21,7 @@ A push is a contact point on one of the T's 8 sides with the side's inward norma
 | Contact time | 0.1–1.0 s |
 | Push distance (speed × contact time) | at most 0.10 m |
 
-Random pushes are uniform: a side in proportion to its usable length, then position uniformly, and speed and time uniformly over their ranges, redrawn together until their product is within 0.10 m. A push is reachable when the approach point and the push end lie 0.39–0.78 m from the arm base. The MPC's candidates are a grid: contacts about 1.2 cm apart, 3 speeds (0.03, 0.09, 0.15 m/s), and for each speed 3 push distances from speed × 0.1 s up to the smaller of speed × 1.0 s and 0.10 m; each distance sets its contact time (396 pushes).
+Random pushes are uniform: a side in proportion to its usable length, then position uniformly, and speed and time uniformly over their ranges, redrawn together until their product is within 0.10 m. A push is reachable when the approach point and the push end lie 0.42–0.78 m from the arm base. The MPC's candidates are a grid: contacts about 1.2 cm apart, 3 speeds (0.03, 0.09, 0.15 m/s), and for each speed 3 push distances from speed × 0.1 s up to the smaller of speed × 1.0 s and 0.10 m; each distance sets its contact time (396 pushes).
 
 ## Arm maneuver and timing
 

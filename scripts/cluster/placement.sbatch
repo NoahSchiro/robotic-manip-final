@@ -7,6 +7,10 @@
 #
 # Benchmark (3 seeds x 3 conditions):
 #   CONDITIONS="true_eta none learned:3" sbatch -a 0-8 scripts/cluster/placement.sbatch
+# Headroom of probing (30 seeds x 2 conditions per task; TASK is near or far,
+# see src/experiment.py TASKS):
+#   TASK=near CONDITIONS="true_eta none" OUT=data/results/headroom/near sbatch -a 0-59 scripts/cluster/placement.sbatch
+#   TASK=far CONDITIONS="true_eta none" OUT=data/results/headroom/far sbatch -a 0-59 scripts/cluster/placement.sbatch
 # Full run (30 seeds x 17 conditions = 510 tasks):
 #   sbatch -a 0-509%64 scripts/cluster/placement.sbatch
 #
@@ -24,6 +28,7 @@ set -euo pipefail
 OUT=${OUT:-data/results/placement}
 MODEL=${MODEL:-data/models/ppo_policy.zip}
 SEED0=${SEED0:-95000}
+TASK=${TASK:-near}
 IMAGE=${IMAGE:-$HOME/uv-py314.sif}
 CONDITIONS=${CONDITIONS:-"true_eta none learned:1 learned:2 learned:3 learned:4 learned:5 random:1 random:2 random:3 random:4 random:5 long_fast:1 long_fast:2 long_fast:3 long_fast:4 long_fast:5"}
 
@@ -39,9 +44,9 @@ if [ -e "$REPORT" ]; then
     echo "$REPORT exists; skipping"
     exit 0
 fi
-echo "task $SLURM_ARRAY_TASK_ID: seed $SEED, $CONDITION on $(hostname), commit $(git rev-parse --short HEAD)"
+echo "task $SLURM_ARRAY_TASK_ID: $TASK seed $SEED, $CONDITION on $(hostname), commit $(git rev-parse --short HEAD)"
 module load apptainer
 apptainer exec "$IMAGE" uv run --no-sync python main.py placement-eval \
-    --seed "$SEED" --condition "$CONDITION" --model "$MODEL" --workers 15 \
+    --seed "$SEED" --condition "$CONDITION" --task "$TASK" --model "$MODEL" --workers 15 \
     --out "$REPORT.partial"
 mv "$REPORT.partial" "$REPORT"

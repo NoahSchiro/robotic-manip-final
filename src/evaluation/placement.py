@@ -30,6 +30,7 @@ from src.estimation.dynamics import ParallelPushModel
 from src.estimation.estimator import CALIBRATED_R, GridBayesFilter
 from src.estimation.params import Eta, grid_spans
 from src.experiment import (
+    TASKS,
     episode_conditions,
     episode_goal,
     episode_object,
@@ -92,16 +93,18 @@ def git_commit() -> str:
 def run_placement(
     seed: int,
     condition_name: str,
+    task_name: str,
     policy_path: Path,
     workers: int,
     max_pushes: int,
     tolerance: GoalTolerance,
 ) -> tuple[dict[str, object], str]:
-    """Run one placement episode; return its record (units: m, rad, s) and a
-    one-line summary."""
+    """Run one placement episode of task `task_name` (a TASKS key); return its
+    record (units: m, rad, s) and a one-line summary."""
     condition = parse_condition(condition_name)
-    eta, start_pose, action_rng = episode_conditions(seed)
-    goal = episode_goal(seed)
+    task = TASKS[task_name]
+    eta, start_pose, action_rng = episode_conditions(seed, task)
+    goal = episode_goal(seed, start_pose, task)
     obj = episode_object(eta, start_pose, ROD_MASS)
     obj.goal = goal
     config = make_probing_env_config(None, family_path=None)
@@ -137,11 +140,12 @@ def run_placement(
             probe_pushes=condition.probes,
             max_pushes=max_pushes,
             tolerance=tolerance,
+            task=task,
         )
     final_map = belief.map_eta() if belief is not None else None
     wall_time = time.perf_counter() - started
     summary = (
-        f"{condition.name} seed {seed}: success {result.success} "
+        f"{task_name} {condition.name} seed {seed}: success {result.success} "
         f"({result.stop_reason}), {result.probe_pushes} probes + "
         f"{result.mpc_pushes} MPC pushes, final error "
         f"{result.position_error * 100:.1f} cm / "
@@ -149,6 +153,7 @@ def run_placement(
     )
     record = {
         "seed": seed,
+        "task": task_name,
         "condition": condition.name,
         "prober": condition.prober,
         "probes": condition.probes,

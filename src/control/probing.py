@@ -15,7 +15,7 @@ import numpy as np
 from pydrake.all import PiecewisePolynomial
 
 from src.estimation.estimator import GridBayesFilter
-from src.experiment import out_of_bounds
+from src.experiment import TASKS, Task, out_of_bounds
 from src.world.action import Action
 from src.world.object import Object
 from src.world.observation import PushObservation
@@ -33,11 +33,12 @@ class ProbingState:
     rad) in the world frame; `belief` is None when no filter runs;
     `last_measurement` is the (6,) estimator measurement of the last push and
     `last_action` the (8,) vector [contact position (3), contact normal (3), speed
-    m/s, contact time s]."""
+    m/s, contact time s].  `task` sets where the block must stay."""
 
     truth_sim: TruthSim
     obj: Object
     belief: GridBayesFilter | None
+    task: Task = TASKS["near"]
     last_measurement: np.ndarray = field(default_factory=lambda: np.zeros(6))
     last_action: np.ndarray = field(default_factory=lambda: np.zeros(8))
     pushes: int = 0
@@ -151,7 +152,7 @@ def run_probing(
         failed.clear()
         if on_push is not None:
             on_push(state, record)
-        if out_of_bounds(_pose(state)):
+        if out_of_bounds(_pose(state), state.task):
             return ProbingOutcome("out_of_bounds", tuple(records))
 
 
