@@ -1,0 +1,12 @@
+{
+  "timesteps": 3000000,
+  "n_envs": 90,
+  "seed": 0,
+  "final": {
+    "learned_reward": 0.23040623335168772,
+    "random_reward": -0.19133232302659872,
+    "learned_error": 0.060363057525479095,
+    "random_error": 0.18288434866493772,
+    "learned_pushes": 2.9583333333333335
+  }
+}

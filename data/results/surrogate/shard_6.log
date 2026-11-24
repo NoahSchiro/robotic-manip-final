@@ -1,0 +1,16 @@
+samples per push speed (rows, m/s) x push distance (columns, m):
+              0.003-0.035  0.035-0.068  0.068-0.100  
+0.030-0.070           2636           1028              1  
+0.070-0.110           1218           1475            926  
+0.110-0.150            732            977           1007  
+mu [0.10, 0.18): 1006 samples
+mu [0.18, 0.26): 1012 samples
+mu [0.26, 0.34): 1003 samples
+mu [0.34, 0.42): 1007 samples
+mu [0.42, 0.50): 992 samples
+mu [0.50, 0.58): 965 samples
+mu [0.58, 0.66): 983 samples
+mu [0.66, 0.74): 980 samples
+mu [0.74, 0.82): 1046 samples
+mu [0.82, 0.90): 1006 samples
+wrote 10000 samples to data/surrogate/shard_6.npz

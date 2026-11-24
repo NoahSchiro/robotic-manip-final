@@ -1,0 +1,397 @@
+"""Train the surrogate's MLP ensemble on `gen-surrogate-data`'s dataset.
+
+Each member is a configurable 49-input, six-output ReLU MLP trained with
+AdamW and cosine LR decay on standardized inputs and outputs (statistics
+from the training split), with early stopping on the development split's
+weighted loss. The loss weights each component by the Drake calibration
+scale (sqrt diag CALIBRATED_R).
+Inference runs in numpy (see model.py); this module is the only torch
+user.
+
+The command's summary reports development errors on world measurement axes
+against both the Drake model's and the deployed surrogate's calibrated
+residual scales (CALIBRATED_R, CALIBRATED_R_SURROGATE). It does
+not score or select on the held-out split.
+"""
+
+import time
+from collections.abc import Sequence
+from pathlib import Path
+
+import numpy as np
+import torch
+from torch import nn
+
+from src.estimation.estimator import CALIBRATED_R, CALIBRATED_R_SURROGATE
+from src.surrogate.model import (
+    N_INPUTS,
+    N_OUTPUTS,
+    MLPWeights,
+    SurrogateEnsemble,
+    feature_start,
+    save_ensemble,
+)
+
+BATCH_SIZE = 1024
+
+
+def dataset_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load (N, 49) inputs, (N, 6) targets and the 0/1/2 data split."""
+    with np.load(path, allow_pickle=True) as data:
+        schema_version = (
+            int(data["meta_schema_version"]) if "meta_schema_version" in data else 1
+        )
+        if schema_version not in (1, 2, 3):
+            raise ValueError(f"unsupported surrogate dataset schema {schema_version}")
+        if schema_version >= 2:
+            if "meta_feature_version" not in data or "meta_target_version" not in data:
+                raise ValueError("schema 2 requires feature and target versions")
+            if (
+                int(data["meta_feature_version"]) != 1
+                or int(data["meta_target_version"]) != 1
+            ):
+                raise ValueError(
+                    "surrogate feature or target version does not match the model"
+                )
+            if "sample_seed" not in data or "split" not in data:
+                raise ValueError("schema 2 requires sample_seed and split")
+            split = data["split"].astype(np.uint8)
+            if not np.isin(split, (0, 1, 2)).all():
+                raise ValueError("split must contain only 0, 1, or 2")
+            seeds = data["sample_seed"]
+            order = np.argsort(seeds)
+            if np.any(
+                (seeds[order][1:] == seeds[order][:-1])
+                & (split[order][1:] != split[order][:-1])
+            ):
+                raise ValueError("one sample seed appears in multiple splits")
+            if schema_version == 3:
+                required = (
+                    "meta_action_target_version",
+                    "action_end_displacement",
+                    "action_end_velocity",
+                    "action_end_time",
+                    "action_tip_path",
+                )
+                if any(key not in data for key in required):
+                    raise ValueError("schema 3 requires action-end labels and path")
+                if int(data["meta_action_target_version"]) != 1:
+                    raise ValueError("unsupported action-end target version")
+                if data["action_end_displacement"].shape != (len(split), 3) or data[
+                    "action_end_velocity"
+                ].shape != (len(split), 3):
+                    raise ValueError("action-end target layout is invalid")
+        else:
+            split = data["is_val"].astype(np.uint8)
+        inputs = np.concatenate(
+            [
+                data["eta"],
+                feature_start(data["start_pose"]),
+                data["start_velocity"],
+                data["site_position"],
+                data["site_normal"],
+                data["speed"][:, None],
+                data["time"][:, None],
+                data["tip_path"][:, :2].reshape(len(data["time"]), -1),
+            ],
+            axis=1,
+        )
+        outputs = np.concatenate(
+            [data["displacement"], data["push_end_velocity"]], axis=1
+        )
+        if inputs.shape[1] != N_INPUTS or outputs.shape[1] != N_OUTPUTS:
+            raise ValueError(
+                "surrogate feature or target layout does not match the model"
+            )
+        if (
+            len(split) != len(inputs)
+            or not np.isfinite(inputs).all()
+            or not np.isfinite(outputs).all()
+        ):
+            raise ValueError(
+                "surrogate dataset has mismatched rows or non-finite values"
+            )
+        if not (np.any(split == 0) and np.any(split == 1)):
+            raise ValueError("surrogate dataset needs training and development rows")
+        return inputs, outputs, split
+
+
+def shard_arrays(paths: Sequence[Path]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load and concatenate dataset shards (see dataset_arrays).  A sample
+    seed drawn by two shards gives the same sample twice; only its first
+    row is kept, so no sample counts double."""
+    inputs, outputs, splits, seeds = [], [], [], []
+    for path in paths:
+        x, y, split = dataset_arrays(path)
+        with np.load(path, allow_pickle=True) as data:
+            seeds.append(
+                data["sample_seed"].astype(np.uint64)
+                if "sample_seed" in data
+                else np.full(len(x), np.iinfo(np.uint64).max, dtype=np.uint64)
+            )
+        inputs.append(x)
+        outputs.append(y)
+        splits.append(split)
+    all_seeds = np.concatenate(seeds)
+    _, first = np.unique(all_seeds, return_index=True)
+    keep = np.zeros(len(all_seeds), dtype=bool)
+    keep[first] = True
+    keep |= all_seeds == np.iinfo(np.uint64).max  # schema-1 rows carry no seed
+    return (
+        np.concatenate(inputs)[keep],
+        np.concatenate(outputs)[keep],
+        np.concatenate(splits)[keep],
+    )
+
+
+def loss_weights(output_std: np.ndarray) -> np.ndarray:
+    """Get per-output loss weights that make the standardized MSE measure
+    what the acceptance gate measures: each component's raw error against
+    its tolerated plant-vs-truth std (sqrt diag R)."""
+    tolerated = np.sqrt(np.diag(CALIBRATED_R))
+    return (output_std / tolerated) ** 2
+
+
+def train_member(
+    seed: int,
+    x_train: torch.Tensor,
+    y_train: torch.Tensor,
+    x_val: torch.Tensor,
+    y_val: torch.Tensor,
+    loss_w: torch.Tensor,
+    epochs: int,
+    patience: int,
+    hidden: int = 512,
+    layers: int = 3,
+) -> tuple[MLPWeights, float]:
+    """Train one member on the device its tensors live on, returning its
+    best weights (by validation loss) and that loss.  Weights come back as
+    float64 numpy for numpy inference."""
+    device = x_train.device
+    torch.manual_seed(seed)
+    generator = torch.Generator().manual_seed(seed)
+    hidden_layers: list[nn.Module] = []
+    for _ in range(layers):
+        hidden_layers += [
+            nn.Linear(N_INPUTS if not hidden_layers else hidden, hidden),
+            nn.ReLU(),
+        ]
+    model = nn.Sequential(*hidden_layers, nn.Linear(hidden, N_OUTPUTS)).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=1e-5
+    )
+
+    def weighted_mse(prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return ((prediction - target) ** 2 * loss_w).mean()
+
+    best_loss = float("inf")
+    best_state: dict[str, torch.Tensor] | None = None
+    stale = 0
+    for _epoch in range(epochs):
+        order = torch.randperm(len(x_train), generator=generator).to(device)
+        for start in range(0, len(order), BATCH_SIZE):
+            batch = order[start : start + BATCH_SIZE]
+            optimizer.zero_grad()
+            loss: torch.Tensor = weighted_mse(model(x_train[batch]), y_train[batch])
+            # torch 2.15's stubs leave Tensor.backward untyped.
+            loss.backward()  # type: ignore[no-untyped-call]
+            optimizer.step()
+        scheduler.step()
+        with torch.no_grad():
+            val_loss = float(weighted_mse(model(x_val), y_val))
+        if val_loss < best_loss - 1e-9:
+            best_loss, stale = val_loss, 0
+            best_state = {
+                name: value.detach().clone()
+                for name, value in model.state_dict().items()
+            }
+        else:
+            stale += 1
+            if stale >= patience:
+                break
+    assert best_state is not None
+    model.load_state_dict(best_state)
+    extracted: list[tuple[np.ndarray, np.ndarray]] = []
+    for i in range(0, len(model), 2):
+        linear = cast_linear(model[i])
+        extracted.append(
+            (
+                linear.weight.detach().cpu().numpy().astype(np.float64),
+                linear.bias.detach().cpu().numpy().astype(np.float64),
+            )
+        )
+    return tuple(extracted), best_loss
+
+
+def cast_linear(module: nn.Module) -> nn.Linear:
+    """Narrow a Sequential's module to its Linear layers."""
+    assert isinstance(module, nn.Linear)
+    return module
+
+
+def world_frame_errors(
+    outputs: np.ndarray, targets: np.ndarray, start_yaw: np.ndarray
+) -> np.ndarray:
+    """Rotate start-frame output residuals into world measurement axes."""
+    errors = outputs - targets
+    c, s = np.cos(start_yaw), np.sin(start_yaw)
+    to_world = np.stack(
+        [np.stack([c, -s], axis=-1), np.stack([s, c], axis=-1)], axis=-2
+    )
+    world_xy = np.einsum("nij,nj->ni", to_world, errors[:, :2])
+    world = np.column_stack(
+        [
+            world_xy,
+            errors[:, 2],
+            np.einsum("nij,nj->ni", to_world, errors[:, 3:5]),
+            errors[:, 5],
+        ]
+    )
+    return world
+
+
+def _train_member_worker(
+    seed: int,
+    hidden: int,
+    layers: int,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_val: np.ndarray,
+    y_val: np.ndarray,
+    loss_w: np.ndarray,
+    epochs: int,
+    patience: int,
+) -> tuple[MLPWeights, float]:
+    """Train one member in a worker process (torch single-threaded; the
+    members run in parallel)."""
+    torch.set_num_threads(1)
+    x_tr = torch.tensor(x_train, dtype=torch.float32)
+    y_tr = torch.tensor(y_train, dtype=torch.float32)
+    x_v = torch.tensor(x_val, dtype=torch.float32)
+    y_v = torch.tensor(y_val, dtype=torch.float32)
+    lw = torch.tensor(loss_w, dtype=torch.float32)
+    return train_member(
+        seed, x_tr, y_tr, x_v, y_v, lw, epochs, patience, hidden, layers
+    )
+
+
+def train_ensemble(
+    dataset_paths: Sequence[Path],
+    out_path: Path,
+    members: int,
+    epochs: int,
+    patience: int,
+    seed: int,
+    hidden: int = 512,
+    layers: int = 3,
+    device: str = "cpu",
+) -> str:
+    """Train the ensemble on the dataset shards, save it, and return the
+    summary: validation RMSE against the estimator's tolerated prediction
+    error.  On "cpu" the members train in parallel processes, one thread
+    each; on "cuda" they train one after another on the GPU."""
+    x, y, split = shard_arrays(dataset_paths)
+    print(f"{len(x)} samples from {len(dataset_paths)} shard(s)", flush=True)
+    train, val = split == 0, split == 1
+    input_mean, input_std = x[train].mean(axis=0), x[train].std(axis=0)
+    output_mean, output_std = y[train].mean(axis=0), y[train].std(axis=0)
+    # A near-zero std means a constant column (float dust included); its
+    # standardized values would explode on any deploy-time deviation.
+    input_std[input_std < 1e-6] = 1.0
+    output_std[output_std < 1e-6] = 1.0
+
+    from concurrent.futures import ProcessPoolExecutor
+
+    x_train_np = ((x[train] - input_mean) / input_std).astype(np.float64)
+    y_train_np = ((y[train] - output_mean) / output_std).astype(np.float64)
+    x_val_np = ((x[val] - input_mean) / input_std).astype(np.float64)
+    y_val_np = ((y[val] - output_mean) / output_std).astype(np.float64)
+    member_args = [
+        (
+            seed + i,
+            hidden,
+            layers,
+            x_train_np,
+            y_train_np,
+            x_val_np,
+            y_val_np,
+            loss_weights(output_std),
+            epochs,
+            patience,
+        )
+        for i in range(members)
+    ]
+    weights = []
+    if device == "cpu":
+        with ProcessPoolExecutor(members) as pool:
+            results = pool.map(_train_member_worker, *zip(*member_args))
+            for i, (member_weights, best_loss) in enumerate(results):
+                weights.append(member_weights)
+                print(f"member {i}: best weighted val MSE {best_loss:.6f}", flush=True)
+    else:
+        if not torch.cuda.is_available():
+            raise SystemExit(f"--device {device}: torch sees no CUDA device")
+        x_tr, y_tr, x_v, y_v, lw = (
+            torch.tensor(a, dtype=torch.float32, device=device)
+            for a in (
+                x_train_np,
+                y_train_np,
+                x_val_np,
+                y_val_np,
+                loss_weights(output_std),
+            )
+        )
+        for i in range(members):
+            started = time.time()
+            member_weights, best_loss = train_member(
+                seed + i, x_tr, y_tr, x_v, y_v, lw, epochs, patience, hidden, layers
+            )
+            weights.append(member_weights)
+            print(
+                f"member {i}: best weighted val MSE {best_loss:.6f} "
+                f"({time.time() - started:.0f} s)",
+                flush=True,
+            )
+
+    ensemble = SurrogateEnsemble(
+        input_mean=input_mean,
+        input_std=input_std,
+        output_mean=output_mean,
+        output_std=output_std,
+        members=tuple(weights),
+    )
+    save_ensemble(out_path, ensemble)
+
+    # Acceptance check: mean prediction's val RMSE in the world frame
+    # against the estimator's tolerated plant-vs-truth error.
+    predictions = ensemble.predict(x[val])
+    residuals = world_frame_errors(predictions, y[val], x[val, 5])
+    rmse = np.sqrt((residuals**2).mean(axis=0))
+    tolerated = np.sqrt(np.diag(CALIBRATED_R))
+    development_scale = np.sqrt(np.diag(CALIBRATED_R_SURROGATE))
+    labels = ("x", "y", "yaw", "vx", "vy", "wz")
+    lines = [
+        f"ensemble of {members} members saved to {out_path}",
+        "component   RMSE    Drake scale ratio    deployment scale ratio    bias",
+    ]
+    worst = 0.0
+    for axis, (label, got, want) in enumerate(zip(labels, rmse, tolerated)):
+        ratio = float(got / want)
+        worst = max(worst, ratio)
+        lines.append(
+            f"{label:<10} {got:8.3e} {ratio:18.2f} "
+            f"{got / development_scale[axis]:23.2f} {residuals[:, axis].mean():+9.3e}"
+        )
+    lines.append(f"worst ratio to Drake calibration scale {worst:.2f}")
+
+    # Ensemble spread: the epistemic noise the env's randomization scales.
+    member_outputs = np.stack(
+        [ensemble.predict(x[val], member=i) for i in range(members)]
+    )
+    spread = member_outputs.std(axis=0).mean(axis=0)
+    lines.append(
+        "member spread (std over members, start frame): "
+        + "  ".join(f"{v:.2e}" for v in spread)
+    )
+    return "\n".join(lines)

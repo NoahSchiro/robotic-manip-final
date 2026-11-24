@@ -1,0 +1,38 @@
+{
+  "seed": 123,
+  "pushes": [
+    {
+      "push": 1,
+      "action": {
+        "speed_m_per_s": 0.1,
+        "contact_time_s": 0.2
+      },
+      "physical_duration_s": 2.0,
+      "transfer_min_tip_height_m": 0.07000000028256434,
+      "transfer_clearance_above_top_m": 0.04000000028256434,
+      "action_end_object_velocity": [
+        -1.7309411624475343e-11,
+        -4.305365939337333e-11,
+        -3.837925926567632e-11
+      ],
+      "action_end_tip_height_m": 0.07853274386553946
+    },
+    {
+      "push": 2,
+      "action": {
+        "speed_m_per_s": 0.1,
+        "contact_time_s": 0.4
+      },
+      "physical_duration_s": 2.1999999999999993,
+      "transfer_min_tip_height_m": 0.07066232233971823,
+      "transfer_clearance_above_top_m": 0.040662322339718227,
+      "action_end_object_velocity": [
+        -2.4621336297211148e-11,
+        -6.845586412569381e-11,
+        -3.7185044734155595e-11
+      ],
+      "action_end_tip_height_m": 0.0779226911396374
+    }
+  ],
+  "wall_seconds": 39.25332493099995
+}

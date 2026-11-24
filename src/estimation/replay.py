@@ -1,0 +1,433 @@
+"""Offline replay of recorded trials through the grid Bayes filter: the
+frozen reference the estimator is judged by
+
+    uv run python main.py record-trials   # the dataset (slow, Drake truth)
+    uv run python main.py replay          # this report (minutes)
+
+Each recorded trial replays push by push: one prediction pass over every
+hypothesis feeds two filters that differ only in likelihood, the Student-t
+(nu = 3) the estimator ships with and the proposal's Gaussian.  Metrics per
+likelihood, scored against the true parameters: MAP within one grid step,
+MAP in the nearest cell, confidently wrong (max probability >= CONFIDENT_PROB
+with the MAP more than a step off), range-normalized MAP error, final max
+probability, and the mean entropy after each push.
+
+The report also lists every trial: its true parameters, each push's action
+and how far its measurement lies from the prediction at the true parameters
+(Mahalanobis distance under R, so model mismatch shows apart from weak pushes),
+and each likelihood's final estimate and entropy after every push.
+
+Trials recorded with zero pushes carry no signal (their MAP is an arbitrary
+tie-break), so they are dropped from the metrics and counted in the report.
+"""
+
+import json
+from collections.abc import Iterable, Sequence
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+import numpy as np
+
+from src.estimation.dynamics import DynamicsModel, ParallelPushModel, PushModelConfig
+from src.estimation.estimator import (
+    CALIBRATED_R,
+    CALIBRATED_R_SURROGATE,
+    SUBCELLS,
+    GridBayesFilter,
+)
+from src.estimation.params import Eta, GridSpec, grid_spans, grid_step, make_grid
+from src.estimation.trials import TrialData, load_dataset
+from src.experiment import reference_object
+from src.surrogate.model import SurrogatePredictor, load_ensemble
+from src.world.observation import PushObservation, planar_error
+
+# A final belief this peaked with a wrong MAP counts as confidently wrong.
+CONFIDENT_PROB = 0.9
+
+# The likelihoods every replay compares, by name and degrees of freedom
+# (None: the Gaussian the proposal specifies).
+LIKELIHOODS: dict[str, float | None] = {"student_t": 3.0, "gaussian": None}
+
+# Eta's components, in as_array() order, for labeling per-parameter errors.
+ETA_PARAMETERS = ("mu", "bx", "by")
+
+
+@dataclass(frozen=True)
+class StepRecord:
+    """The filter's state after one replayed push (or the prior at index 0)."""
+
+    entropy: float
+    max_p: float
+    map_index: int
+    mean_eta: np.ndarray
+
+
+@dataclass(frozen=True)
+class TrialTracks:
+    """One trial's per-likelihood step records, prior included, with each
+    push's observation and its measurement's Mahalanobis distance under R from
+    the prediction at the true parameters."""
+
+    eta: Eta
+    steps: dict[str, list[StepRecord]]
+    observations: list[PushObservation]
+    true_eta_distance: list[float]
+
+
+@dataclass(frozen=True)
+class FinalMetrics:
+    """One trial's final-step scores against its true parameters."""
+
+    within_one_grid_step: bool
+    map_is_nearest_cell: bool
+    confidently_wrong: bool
+    map_error_scaled: float
+    abs_error_scaled: np.ndarray
+
+
+@dataclass(frozen=True)
+class MetricCount:
+    """A pass/fail metric over the scored trials."""
+
+    count: int
+    total: int
+    rate: float
+
+
+@dataclass(frozen=True)
+class CurvePoint:
+    """Mean belief entropy after `push` pushes into a trial."""
+
+    push: int
+    mean_entropy: float
+
+
+@dataclass(frozen=True)
+class LikelihoodReport:
+    """One likelihood's aggregated final metrics and entropy curve."""
+
+    within_one_grid_step: MetricCount
+    map_is_nearest_cell: MetricCount
+    confidently_wrong: MetricCount
+    map_error_scaled_mean: float
+    abs_error_scaled_mean: dict[str, float]
+    final_max_p_mean: float
+    entropy_curve: list[CurvePoint]
+
+
+@dataclass(frozen=True)
+class ReplayReport:
+    """The replay's aggregate over the scored trials, per likelihood."""
+
+    recorded_trials: int
+    scored_trials: int
+    dropped_empty_trials: int
+    mean_pushes: float
+    hypotheses: int
+    metadata: dict[str, float | int | str]
+    likelihoods: dict[str, LikelihoodReport]
+    trials: list[dict[str, object]]
+
+
+def nearest_index(grid: list[Eta], eta: Eta) -> int:
+    """Get the index of the grid hypothesis nearest `eta` in scaled units."""
+    points = np.array([g.as_array() for g in grid])
+    distances = (((points - eta.as_array()) / grid_spans(grid)) ** 2).sum(axis=1)
+    return int(np.argmin(distances))
+
+
+def filter_step(belief: GridBayesFilter) -> StepRecord:
+    """Snapshot the filter's current state."""
+    return StepRecord(
+        entropy=belief.entropy(),
+        max_p=float(belief.probs.max()),
+        map_index=int(np.argmax(belief.log_probs)),
+        mean_eta=belief.mean_eta().as_array(),
+    )
+
+
+class PredictionsSupplied:
+    """Stands in for the filter's model in replay, which passes every
+    push's predictions in directly."""
+
+    def predict(self, etas: Sequence[Eta], obs: PushObservation) -> np.ndarray:
+        raise RuntimeError("replay supplies predictions; the filter never predicts")
+
+
+def predict_trial(
+    trial: TrialData, grid: list[Eta], model: DynamicsModel
+) -> np.ndarray:
+    """Predict each push of `trial` under every grid hypothesis and, last,
+    under the true parameters: (pushes, len(grid) + 1, 6)."""
+    return np.array(
+        [model.predict([*grid, trial.eta], obs) for obs in trial.observations]
+    ).reshape(len(trial.observations), len(grid) + 1, 6)
+
+
+def replay_trial(
+    trial: TrialData,
+    grid: list[Eta],
+    predictions: np.ndarray,
+    r_matrix: np.ndarray,
+    n_subcells: int = SUBCELLS,
+) -> TrialTracks:
+    """Replay one trial's pushes through one filter per likelihood, from
+    `predictions` (see predict_trial)."""
+    filters = {
+        name: GridBayesFilter(grid, PredictionsSupplied(), r_matrix, nu, n_subcells)
+        for name, nu in LIKELIHOODS.items()
+    }
+    steps = {name: [filter_step(belief)] for name, belief in filters.items()}
+    r_inv = np.linalg.inv(r_matrix)
+    distances = []
+    for obs, predicted in zip(trial.observations, predictions, strict=True):
+        measured = obs.measured()
+        residual = planar_error(measured, predicted[-1])
+        distances.append(float(np.sqrt(residual @ r_inv @ residual)))
+        for name, belief in filters.items():
+            belief.update_from_predictions(measured, predicted[:-1])
+            steps[name].append(filter_step(belief))
+    return TrialTracks(
+        eta=trial.eta,
+        steps=steps,
+        observations=list(trial.observations),
+        true_eta_distance=distances,
+    )
+
+
+def save_predictions(
+    path: Path, predictions: Sequence[np.ndarray], grid: list[Eta], predictor: str
+) -> None:
+    """Write every scored trial's predictions (see predict_trial) with the
+    grid they were made on."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        predictions=np.concatenate(predictions),
+        pushes_per_trial=np.array([len(p) for p in predictions]),
+        grid=np.array([g.as_array() for g in grid]),
+        predictor=np.array(predictor),
+    )
+
+
+def load_predictions(
+    path: Path, trials: Sequence[TrialData], grid: list[Eta]
+) -> list[np.ndarray]:
+    """Read predictions saved by save_predictions, checking they match
+    `trials` and `grid`."""
+    with np.load(path) as data:
+        if not np.allclose(data["grid"], [g.as_array() for g in grid]):
+            raise ValueError(f"{path} was predicted on a different grid")
+        counts = data["pushes_per_trial"]
+        if counts.tolist() != [len(t.observations) for t in trials]:
+            raise ValueError(f"{path} does not match the trials' push counts")
+        return np.split(data["predictions"], np.cumsum(counts)[:-1])
+
+
+def trial_record(index: int, track: TrialTracks, grid: list[Eta]) -> dict[str, object]:
+    """One trial's entry in the report: truth, pushes, and per-likelihood
+    final estimate.  Units: m, m/s, s; eta as (mu, bx, by)."""
+    pushes = [
+        {
+            "speed_m_per_s": obs.action.velocity,
+            "contact_time_s": obs.action.time,
+            "distance_m": obs.action.velocity * obs.action.time,
+            "contact_position_m": obs.action.contact.position.tolist(),
+            "contact_normal": obs.action.contact.normal.tolist(),
+            "true_eta_mahalanobis": distance,
+        }
+        for obs, distance in zip(
+            track.observations, track.true_eta_distance, strict=True
+        )
+    ]
+    likelihoods = {}
+    for name, steps in track.steps.items():
+        final = final_metrics(steps[-1], grid, track.eta)
+        likelihoods[name] = {
+            "map_eta": grid[steps[-1].map_index].as_array().tolist(),
+            "final_max_p": steps[-1].max_p,
+            "within_one_grid_step": final.within_one_grid_step,
+            "confidently_wrong": final.confidently_wrong,
+            "map_error_scaled": final.map_error_scaled,
+            "entropy_per_step": [step.entropy for step in steps],
+        }
+    return {
+        "trial": index,
+        "eta": track.eta.as_array().tolist(),
+        "pushes": pushes,
+        "likelihoods": likelihoods,
+    }
+
+
+def final_metrics(step: StepRecord, grid: list[Eta], eta: Eta) -> FinalMetrics:
+    """Score one trial's final step against its true parameters."""
+    points = np.array([g.as_array() for g in grid])
+    scaled = (points[step.map_index] - eta.as_array()) / grid_spans(grid)
+    step_error = np.abs(points[step.map_index] - eta.as_array()) / grid_step(grid)
+    within_one_grid_step = bool((step_error <= 1.0 + 1e-9).all())
+    return FinalMetrics(
+        within_one_grid_step=within_one_grid_step,
+        map_is_nearest_cell=step.map_index == nearest_index(grid, eta),
+        confidently_wrong=step.max_p >= CONFIDENT_PROB and not within_one_grid_step,
+        map_error_scaled=float(np.linalg.norm(scaled)),
+        abs_error_scaled=np.abs(scaled),
+    )
+
+
+def count(flags: Iterable[bool]) -> MetricCount:
+    """Tally one boolean metric over the scored trials."""
+    values = list(flags)
+    return MetricCount(
+        count=sum(values), total=len(values), rate=float(np.mean(values))
+    )
+
+
+def likelihood_report(
+    tracks: Sequence[TrialTracks], grid: list[Eta], name: str
+) -> LikelihoodReport:
+    """Aggregate one likelihood's final metrics and entropy curve."""
+    finals = [final_metrics(track.steps[name][-1], grid, track.eta) for track in tracks]
+    longest = max(len(track.steps[name]) for track in tracks)
+    curve = [
+        CurvePoint(
+            push=push,
+            mean_entropy=float(
+                np.mean(
+                    [
+                        track.steps[name][push].entropy
+                        for track in tracks
+                        if len(track.steps[name]) > push
+                    ]
+                )
+            ),
+        )
+        for push in range(longest)
+    ]
+    return LikelihoodReport(
+        within_one_grid_step=count(f.within_one_grid_step for f in finals),
+        map_is_nearest_cell=count(f.map_is_nearest_cell for f in finals),
+        confidently_wrong=count(f.confidently_wrong for f in finals),
+        map_error_scaled_mean=float(np.mean([f.map_error_scaled for f in finals])),
+        abs_error_scaled_mean={
+            parameter: float(mean)
+            for parameter, mean in zip(
+                ETA_PARAMETERS,
+                np.mean([f.abs_error_scaled for f in finals], axis=0),
+            )
+        },
+        final_max_p_mean=float(
+            np.mean([track.steps[name][-1].max_p for track in tracks])
+        ),
+        entropy_curve=curve,
+    )
+
+
+def build_report(
+    tracks: Sequence[TrialTracks],
+    grid: list[Eta],
+    metadata: dict[str, float | int | str],
+    dropped_empty: int,
+) -> ReplayReport:
+    """Aggregate replayed tracks into the report."""
+    return ReplayReport(
+        recorded_trials=len(tracks) + dropped_empty,
+        scored_trials=len(tracks),
+        dropped_empty_trials=dropped_empty,
+        mean_pushes=float(
+            np.mean([len(track.steps["student_t"]) - 1 for track in tracks])
+        ),
+        hypotheses=len(grid),
+        metadata=metadata,
+        likelihoods={
+            name: likelihood_report(tracks, grid, name) for name in LIKELIHOODS
+        },
+        trials=[trial_record(i, track, grid) for i, track in enumerate(tracks)],
+    )
+
+
+def format_report(report: ReplayReport) -> str:
+    """Render the report as the command's human-readable summary."""
+    summary = (
+        f"replayed {report.scored_trials}/{report.recorded_trials} trials "
+        f"({report.dropped_empty_trials} empty dropped), "
+        f"mean {report.mean_pushes:.1f} pushes, "
+        f"{report.hypotheses} hypotheses"
+    )
+    header = (
+        f"{'likelihood':<16} {'within-1-step':>14} {'nearest-cell':>13} "
+        f"{'confident-wrong':>16} {'MAP err':>8} {'mean max p':>10}"
+    )
+    lines = [summary, header]
+    for name, stats in report.likelihoods.items():
+        within, nearest, wrong = (
+            stats.within_one_grid_step,
+            stats.map_is_nearest_cell,
+            stats.confidently_wrong,
+        )
+        lines.append(
+            f"{name:<16} {within.count:>5}/{within.total:<3} "
+            f"{within.rate:.2f} {nearest.count:>4}/{nearest.total:<3} "
+            f"{nearest.rate:.2f} {wrong.count:>6}/{wrong.total:<3} "
+            f"{wrong.rate:.2f} {stats.map_error_scaled_mean:>10.2f} "
+            f"{stats.final_max_p_mean:>12.2f}"
+        )
+    return "\n".join(lines)
+
+
+def run_replay(
+    trials_path: Path,
+    workers: int,
+    report_path: Path,
+    predictor: str = "drake",
+    ensemble_path: Path | None = None,
+    n_subcells: int = SUBCELLS,
+    predictions_out: Path | None = None,
+    predictions_in: Path | None = None,
+) -> None:
+    """Replay the recorded trials and write the report JSON next to a
+    printed summary.  `predictor` picks the filter's prediction model: the
+    Drake plant, or the trained surrogate.  `predictions_in` replays saved
+    predictions instead of predicting; `predictions_out` saves them."""
+    trials, metadata = load_dataset(trials_path)
+    scored = [trial for trial in trials if trial.observations]
+    rod_mass = float(metadata["rod_mass"])
+    grid = make_grid(GridSpec(), reference_object(rod_mass).parts)
+    source = (
+        f"saved predictions {predictions_in}"
+        if predictions_in
+        else f"the {predictor} predictor"
+    )
+    print(
+        f"replaying {len(scored)}/{len(trials)} trials over {len(grid)} "
+        f"hypotheses with {source}, {n_subcells}^3 sub-cells"
+    )
+    r_matrix = CALIBRATED_R_SURROGATE if predictor == "surrogate" else CALIBRATED_R
+    if predictions_in is not None:
+        predictions = load_predictions(predictions_in, scored, grid)
+    elif predictor == "surrogate":
+        assert ensemble_path is not None
+        model: DynamicsModel = SurrogatePredictor(load_ensemble(ensemble_path))
+        predictions = [predict_trial(trial, grid, model) for trial in scored]
+    else:
+        model_config = PushModelConfig(
+            time_step=float(metadata["model_time_step"]), rod_mass=rod_mass
+        )
+        with ParallelPushModel(workers, model_config) as parallel:
+            predictions = [predict_trial(trial, grid, parallel) for trial in scored]
+    if predictions_out is not None:
+        save_predictions(predictions_out, predictions, grid, predictor)
+        print(f"wrote {predictions_out}")
+    tracks = [
+        replay_trial(trial, grid, predicted, r_matrix, n_subcells)
+        for trial, predicted in zip(scored, predictions, strict=True)
+    ]
+    report = build_report(
+        tracks,
+        grid,
+        {**metadata, "predictor": predictor, "n_subcells": n_subcells},
+        dropped_empty=len(trials) - len(scored),
+    )
+    print(format_report(report))
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(asdict(report), indent=2) + "\n")
+    print(f"wrote {report_path}")

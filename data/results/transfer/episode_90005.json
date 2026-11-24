@@ -1,0 +1,98 @@
+{
+  "episodes": 1,
+  "seed": 90005,
+  "predictor": "drake",
+  "drake_world": {
+    "learned": {
+      "episodes": 1,
+      "mean_reward": 0.37982378443931236,
+      "mean_error": 0.11380009391164107,
+      "mean_abs_friction_error": 0.031860104960422464,
+      "mean_abs_rod_x_error": 0.014017831674343,
+      "mean_abs_rod_y_error": 0.0012304691960116215,
+      "mean_pushes": 2.0
+    },
+    "random": {
+      "episodes": 1,
+      "mean_reward": 0.11173947558666748,
+      "mean_error": 0.11380009391164107,
+      "mean_abs_friction_error": 0.031860104960422464,
+      "mean_abs_rod_x_error": 0.014017831674343,
+      "mean_abs_rod_y_error": 0.0012304691960116215,
+      "mean_pushes": 2.0
+    },
+    "long_fast": {
+      "episodes": 1,
+      "mean_reward": 0.11199324354734336,
+      "mean_error": 0.28408742985229035,
+      "mean_abs_friction_error": 0.13186010496042255,
+      "mean_abs_rod_x_error": 0.030517831674343,
+      "mean_abs_rod_y_error": 0.0012304691960116215,
+      "mean_pushes": 2.0
+    }
+  },
+  "surrogate_world": {
+    "learned": {
+      "episodes": 1,
+      "mean_reward": 0.2913867467003372,
+      "mean_error": 0.04501708285360912,
+      "mean_abs_friction_error": 0.031860104960422464,
+      "mean_abs_rod_x_error": 0.0024821683256570012,
+      "mean_abs_rod_y_error": 0.0012304691960116215,
+      "mean_pushes": 4.0
+    }
+  },
+  "per_episode": [
+    {
+      "seed": 90005,
+      "drake_learned": {
+        "seed": 90005,
+        "policy": "learned",
+        "pushes": 2,
+        "reward": 0.37982378443931236,
+        "error": 0.11380009391164107,
+        "friction_error": -0.031860104960422464,
+        "rod_x_error": -0.014017831674343,
+        "rod_y_error": -0.0012304691960116215,
+        "entropy": 0.06764828359700237,
+        "reason": "stop"
+      },
+      "drake_random": {
+        "seed": 90005,
+        "policy": "random",
+        "pushes": 2,
+        "reward": 0.11173947558666748,
+        "error": 0.11380009391164107,
+        "friction_error": -0.031860104960422464,
+        "rod_x_error": -0.014017831674343,
+        "rod_y_error": -0.0012304691960116215,
+        "entropy": 2.7484913721234507,
+        "reason": "matched_budget"
+      },
+      "drake_long_fast": {
+        "seed": 90005,
+        "policy": "long_fast",
+        "pushes": 2,
+        "reward": 0.11199324354734336,
+        "error": 0.28408742985229035,
+        "friction_error": -0.13186010496042255,
+        "rod_x_error": -0.030517831674343,
+        "rod_y_error": -0.0012304691960116215,
+        "entropy": 1.0430803331101997,
+        "reason": "matched_budget"
+      },
+      "surrogate_learned": {
+        "seed": 90005,
+        "policy": "learned",
+        "pushes": 4,
+        "reward": 0.2913867467003372,
+        "error": 0.04501708285360912,
+        "friction_error": -0.031860104960422464,
+        "rod_x_error": 0.0024821683256570012,
+        "rod_y_error": -0.0012304691960116215,
+        "entropy": 0.6398487715670726,
+        "reason": "stop"
+      }
+    }
+  ]
+}

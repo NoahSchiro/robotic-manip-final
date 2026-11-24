@@ -1,0 +1,20 @@
+192/192 samples in 647 s (405 hypotheses, 2^3 sub-cells)
+rms error, nearest point: x=0.0021  y=0.0017  yaw=0.033  vx=0.019  vy=0.022  wz=0.32
+rms error,     true eta: x=0.0021  y=0.0016  yaw=0.032  vx=0.02  vy=0.022  wz=0.32
+R std devs: x=0.0021  y=0.0017  yaw=0.033  vx=0.019  vy=0.022  wz=0.32
+
+Paste into src/estimator.py, replacing CALIBRATED_R:
+
+# Calibrated by main.py calibrate: 192 truth pushes, seed 20000,
+# truth timestep 0.0001, model timestep 0.002, settle time 0.3 s,
+# 2^3 sub-cells.
+CALIBRATED_R = np.array(
+    [
+        [4.245e-06, -4.095e-07, -2.228e-05, 1.442e-05, -1.958e-06, -4.233e-05],
+        [-4.095e-07, 2.913e-06, 7.439e-06, -6.945e-07, 1.477e-05, -5.209e-05],
+        [-2.228e-05, 7.439e-06, 1.120e-03, -1.403e-05, 1.612e-04, 3.136e-03],
+        [1.442e-05, -6.945e-07, -1.403e-05, 3.773e-04, -2.504e-05, 1.779e-05],
+        [-1.958e-06, 1.477e-05, 1.612e-04, -2.504e-05, 4.697e-04, -9.305e-05],
+        [-4.233e-05, -5.209e-05, 3.136e-03, 1.779e-05, -9.305e-05, 1.018e-01],
+    ]
+)

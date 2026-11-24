@@ -1,0 +1,3209 @@
+{
+  "recorded_trials": 24,
+  "scored_trials": 24,
+  "dropped_empty_trials": 0,
+  "mean_pushes": 4.916666666666667,
+  "hypotheses": 405,
+  "metadata": {
+    "seed": 10000,
+    "trials": 24,
+    "pushes": 5,
+    "rod_mass": 0.2,
+    "truth_time_step": 0.0001,
+    "settle_time": 0.3,
+    "log_period": 0.001,
+    "model_time_step": 0.002,
+    "motion_version": 2,
+    "measurement_version": 1,
+    "predictor": "drake",
+    "n_subcells": 2
+  },
+  "likelihoods": {
+    "student_t": {
+      "within_one_grid_step": {
+        "count": 22,
+        "total": 24,
+        "rate": 0.9166666666666666
+      },
+      "map_is_nearest_cell": {
+        "count": 13,
+        "total": 24,
+        "rate": 0.5416666666666666
+      },
+      "confidently_wrong": {
+        "count": 0,
+        "total": 24,
+        "rate": 0.0
+      },
+      "map_error_scaled_mean": 0.08485272882010116,
+      "abs_error_scaled_mean": {
+        "mu": 0.05936701091848275,
+        "bx": 0.02618450187598512,
+        "by": 0.03599817966913928
+      },
+      "final_max_p_mean": 0.7861223945111581,
+      "entropy_curve": [
+        {
+          "push": 0,
+          "mean_entropy": 6.003887067106536
+        },
+        {
+          "push": 1,
+          "mean_entropy": 3.121481244655385
+        },
+        {
+          "push": 2,
+          "mean_entropy": 1.4625066660311086
+        },
+        {
+          "push": 3,
+          "mean_entropy": 0.7587000284967041
+        },
+        {
+          "push": 4,
+          "mean_entropy": 0.5927706851194136
+        },
+        {
+          "push": 5,
+          "mean_entropy": 0.535611136131837
+        }
+      ]
+    },
+    "gaussian": {
+      "within_one_grid_step": {
+        "count": 21,
+        "total": 24,
+        "rate": 0.875
+      },
+      "map_is_nearest_cell": {
+        "count": 13,
+        "total": 24,
+        "rate": 0.5416666666666666
+      },
+      "confidently_wrong": {
+        "count": 0,
+        "total": 24,
+        "rate": 0.0
+      },
+      "map_error_scaled_mean": 0.08957834698207662,
+      "abs_error_scaled_mean": {
+        "mu": 0.059858365193450704,
+        "bx": 0.03139283520931846,
+        "by": 0.03805745922327299
+      },
+      "final_max_p_mean": 0.7862237290277411,
+      "entropy_curve": [
+        {
+          "push": 0,
+          "mean_entropy": 6.003887067106536
+        },
+        {
+          "push": 1,
+          "mean_entropy": 3.351946201673789
+        },
+        {
+          "push": 2,
+          "mean_entropy": 1.6663097474014927
+        },
+        {
+          "push": 3,
+          "mean_entropy": 0.9830245348299164
+        },
+        {
+          "push": 4,
+          "mean_entropy": 0.7402219455238864
+        },
+        {
+          "push": 5,
+          "mean_entropy": 0.5754190884077899
+        }
+      ]
+    }
+  },
+  "trials": [
+    {
+      "trial": 0,
+      "eta": [
+        0.20797750803713522,
+        -0.025428644534202953,
+        -0.04066642614281231
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.038114705791811844,
+          "contact_time_s": 0.17706933511262074,
+          "distance_m": 0.006748945612569278,
+          "contact_position_m": [
+            -0.07,
+            -0.0623611574554207,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.06765731540584527
+        },
+        {
+          "speed_m_per_s": 0.050796575847783146,
+          "contact_time_s": 0.7002357323284092,
+          "distance_m": 0.03556957748854801,
+          "contact_position_m": [
+            -0.07,
+            -0.05334984619407057,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.36634760024437385
+        },
+        {
+          "speed_m_per_s": 0.043380354254555296,
+          "contact_time_s": 0.4582195176154411,
+          "distance_m": 0.019877725000509276,
+          "contact_position_m": [
+            -0.04132890372752281,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.19175806930863357
+        },
+        {
+          "speed_m_per_s": 0.03822125893191814,
+          "contact_time_s": 0.24516791188503148,
+          "distance_m": 0.00937062624195548,
+          "contact_position_m": [
+            0.01617251576281792,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.10294699148787285
+        },
+        {
+          "speed_m_per_s": 0.08926726845484562,
+          "contact_time_s": 0.577514884367783,
+          "distance_m": 0.051553176219528006,
+          "contact_position_m": [
+            -0.05823253815329992,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.8840975242874743
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.2,
+            -0.033,
+            -0.0495
+          ],
+          "final_max_p": 0.9910255351253449,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08870111172841502,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.897077604107182,
+            1.4730688239232863,
+            0.7378230484761956,
+            0.13150183328275641,
+            0.05328248120032299
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.2,
+            -0.033,
+            -0.0495
+          ],
+          "final_max_p": 0.9980543261345038,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08870111172841502,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.441689989954588,
+            2.201584604528214,
+            1.3719794602849615,
+            0.2887564262788861,
+            0.014323528283229076
+          ]
+        }
+      }
+    },
+    {
+      "trial": 1,
+      "eta": [
+        0.45080121301843645,
+        0.04803223523485567,
+        -0.000861958874318669
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.03973065151568461,
+          "contact_time_s": 0.9560073792933793,
+          "distance_m": 0.03798279603312817,
+          "contact_position_m": [
+            -0.019999999999999997,
+            0.057784786015194246,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.320302654074656
+        },
+        {
+          "speed_m_per_s": 0.12038200424250062,
+          "contact_time_s": 0.23565481889174053,
+          "distance_m": 0.028368599407591222,
+          "contact_position_m": [
+            0.02257694668492357,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.7041038016155101
+        },
+        {
+          "speed_m_per_s": 0.10808039751019079,
+          "contact_time_s": 0.5185985737929723,
+          "distance_m": 0.05605034000376245,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.03920134732397007,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.126111382902604
+        },
+        {
+          "speed_m_per_s": 0.0664800129417668,
+          "contact_time_s": 0.7576520077984759,
+          "distance_m": 0.05036871528379827,
+          "contact_position_m": [
+            -0.027369678639657065,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.095422800616269
+        },
+        {
+          "speed_m_per_s": 0.09708721913337912,
+          "contact_time_s": 0.9272283008290806,
+          "distance_m": 0.09002201722926371,
+          "contact_position_m": [
+            -0.05704673315412509,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.36386675841031324
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.4,
+            0.0495,
+            0.0
+          ],
+          "final_max_p": 0.6479863572483346,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.06479757003154756,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.505786724732275,
+            0.8506576473935745,
+            0.2726445193503343,
+            0.6865724735969179,
+            0.6495935863957647
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.5,
+            0.0495,
+            0.0
+          ],
+          "final_max_p": 0.5447668336069162,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.06283586566390187,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.682160051611083,
+            1.0295061075511858,
+            0.5340269439035357,
+            0.669814286586761,
+            0.6891508771239531
+          ]
+        }
+      }
+    },
+    {
+      "trial": 2,
+      "eta": [
+        0.41269294632986886,
+        -0.051689557530533475,
+        -0.004998009654694081
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.10264770151120953,
+          "contact_time_s": 0.378315989684462,
+          "distance_m": 0.03883326678604848,
+          "contact_position_m": [
+            0.02501566056023289,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.4146871819308453
+        },
+        {
+          "speed_m_per_s": 0.08550960021544957,
+          "contact_time_s": 0.35369310232017015,
+          "distance_m": 0.030244155778359847,
+          "contact_position_m": [
+            0.06117640063134096,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.15077502314927754
+        },
+        {
+          "speed_m_per_s": 0.04758704944662021,
+          "contact_time_s": 0.7274453853874064,
+          "distance_m": 0.034616979524146205,
+          "contact_position_m": [
+            0.0035679972506954954,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.4026757724189825
+        },
+        {
+          "speed_m_per_s": 0.03766486343255147,
+          "contact_time_s": 0.8799765296593833,
+          "distance_m": 0.03314419581347125,
+          "contact_position_m": [
+            0.07,
+            -0.016781970478120536,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.48059348957601833
+        },
+        {
+          "speed_m_per_s": 0.12230727035558944,
+          "contact_time_s": 0.245325514971334,
+          "distance_m": 0.030005094084723155,
+          "contact_position_m": [
+            0.054066035758497034,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.3899913733348641
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.4,
+            -0.0495,
+            0.0
+          ],
+          "final_max_p": 0.5508294598984292,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.04427802283951451,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.733325140204661,
+            2.3677293108585467,
+            1.2668885853465974,
+            0.8298154413477964,
+            0.7994099861653352
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.4,
+            -0.0495,
+            0.0
+          ],
+          "final_max_p": 0.4747530160522251,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.04427802283951451,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.091620466342342,
+            2.8789025168814506,
+            1.93262751512383,
+            1.5105751884234937,
+            1.3352875563654751
+          ]
+        }
+      }
+    },
+    {
+      "trial": 3,
+      "eta": [
+        0.45957863875636196,
+        -0.03237119150411317,
+        0.042253918592225895
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.05715728466184848,
+          "contact_time_s": 0.884991665155602,
+          "distance_m": 0.050583720528662036,
+          "contact_position_m": [
+            -0.07,
+            -0.01833529014244034,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.748181472712218
+        },
+        {
+          "speed_m_per_s": 0.07914312447338334,
+          "contact_time_s": 0.9983103064379966,
+          "distance_m": 0.07900939684548383,
+          "contact_position_m": [
+            -0.055409748595236945,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.0392926780516727
+        },
+        {
+          "speed_m_per_s": 0.12026877780489208,
+          "contact_time_s": 0.6262211007695293,
+          "distance_m": 0.07531484642518545,
+          "contact_position_m": [
+            0.004345589642458382,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.002645752261281
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.5,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.9442969904218176,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.07475996726959017,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.4254050314746376,
+            0.8563124749307853,
+            0.24743668370147287
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.5,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.9777257896373439,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.07475996726959017,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.7943735334490123,
+            0.4038564138750881,
+            0.11883796570241921
+          ]
+        }
+      }
+    },
+    {
+      "trial": 4,
+      "eta": [
+        0.6159591141636921,
+        -0.05276295568858338,
+        0.05253097814664945
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.11382133619053376,
+          "contact_time_s": 0.8510436710024625,
+          "distance_m": 0.0968669277899973,
+          "contact_position_m": [
+            -0.06034364357257837,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.1685630764457082
+        },
+        {
+          "speed_m_per_s": 0.04265047682190792,
+          "contact_time_s": 0.2794311424610212,
+          "distance_m": 0.011917871464853035,
+          "contact_position_m": [
+            -0.04778007460850467,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5654505075742042
+        },
+        {
+          "speed_m_per_s": 0.03652753403507289,
+          "contact_time_s": 0.4957805733620755,
+          "distance_m": 0.018109641767411165,
+          "contact_position_m": [
+            0.07,
+            0.016953768362765784,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6873060942081087
+        },
+        {
+          "speed_m_per_s": 0.12820707561588904,
+          "contact_time_s": 0.6961887202270014,
+          "distance_m": 0.08925631989707218,
+          "contact_position_m": [
+            0.04959594909297096,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.0999122258508995
+        },
+        {
+          "speed_m_per_s": 0.09864686295543301,
+          "contact_time_s": 0.6102349724701002,
+          "distance_m": 0.060197765699870405,
+          "contact_position_m": [
+            -0.06000241897693796,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.2091911392778956
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.6,
+            -0.0495,
+            0.0495
+          ],
+          "final_max_p": 0.6908558569890875,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.03919510874660826,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.9076283074332756,
+            2.7166842078906965,
+            2.1841128380004493,
+            1.4272898783516919,
+            1.0214573827252553
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.6,
+            -0.0495,
+            0.0495
+          ],
+          "final_max_p": 0.5445827220706858,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.03919510874660826,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.979065325236973,
+            2.904312054844243,
+            2.480221859900477,
+            1.7050023270844852,
+            1.327079554096737
+          ]
+        }
+      }
+    },
+    {
+      "trial": 5,
+      "eta": [
+        0.8652273012837458,
+        0.04908804778232473,
+        -0.008388946672394593
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.14579598130091764,
+          "contact_time_s": 0.47256837700099574,
+          "distance_m": 0.06889857025664217,
+          "contact_position_m": [
+            0.011789504416835031,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.5530273108100934
+        },
+        {
+          "speed_m_per_s": 0.03016272915427811,
+          "contact_time_s": 0.6201313937042348,
+          "distance_m": 0.01870485526836584,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.054470866984456384,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6977296916246055
+        },
+        {
+          "speed_m_per_s": 0.06381440580395414,
+          "contact_time_s": 0.27346378717947484,
+          "distance_m": 0.01745092908775716,
+          "contact_position_m": [
+            -0.0032316794218150355,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.55576181785489
+        },
+        {
+          "speed_m_per_s": 0.10037479146339814,
+          "contact_time_s": 0.398663814775418,
+          "distance_m": 0.04001579727208537,
+          "contact_position_m": [
+            -0.049180500595648394,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.5897380133911072
+        },
+        {
+          "speed_m_per_s": 0.04087410509841397,
+          "contact_time_s": 0.7779457402995799,
+          "distance_m": 0.031797835949868486,
+          "contact_position_m": [
+            0.034048307615289784,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5506869240035301
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.8,
+            0.0495,
+            0.0
+          ],
+          "final_max_p": 0.49598935994810384,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.10342383582684996,
+          "entropy_per_step": [
+            6.003887067106536,
+            1.7771654613861685,
+            1.178118905332057,
+            1.308409941620359,
+            0.7849055516656861,
+            1.0827020844303394
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.8,
+            0.0495,
+            0.0
+          ],
+          "final_max_p": 0.9507931621314614,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.10342383582684996,
+          "entropy_per_step": [
+            6.003887067106536,
+            1.3122740416982963,
+            0.97210607387284,
+            1.2058678306510804,
+            0.7806132640836485,
+            0.19930185030293915
+          ]
+        }
+      }
+    },
+    {
+      "trial": 6,
+      "eta": [
+        0.4638788592975368,
+        -0.0309082489847192,
+        0.039698468542381765
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.08809151634042117,
+          "contact_time_s": 0.5349872785579673,
+          "distance_m": 0.04712784059100664,
+          "contact_position_m": [
+            -0.047263374234476706,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.8116615012967078
+        },
+        {
+          "speed_m_per_s": 0.07956893980653261,
+          "contact_time_s": 0.782088639529053,
+          "distance_m": 0.0622299638820602,
+          "contact_position_m": [
+            -0.04207583208091433,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.0058660396579233
+        },
+        {
+          "speed_m_per_s": 0.08100904259051267,
+          "contact_time_s": 0.720353242372501,
+          "distance_m": 0.05835512649156783,
+          "contact_position_m": [
+            0.04284930768002036,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.46031933417445114
+        },
+        {
+          "speed_m_per_s": 0.1475164255598537,
+          "contact_time_s": 0.664691868733663,
+          "distance_m": 0.09805296857428945,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.05692041328574286,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.23863500804159252
+        },
+        {
+          "speed_m_per_s": 0.11830009416690337,
+          "contact_time_s": 0.6041335896907886,
+          "distance_m": 0.07146906054980966,
+          "contact_position_m": [
+            -0.07,
+            -0.0286650909583364,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 4.2498844814694055
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.5,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.9724824932418025,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0883370044322499,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.6687521082973986,
+            1.5981313180568435,
+            1.012849116597977,
+            0.9155102378918452,
+            0.13057130973378178
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.5,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.9864154632786283,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0883370044322499,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.9241011720101424,
+            1.6555461749995815,
+            1.21568831582618,
+            1.185281385714051,
+            0.07249964927529749
+          ]
+        }
+      }
+    },
+    {
+      "trial": 7,
+      "eta": [
+        0.44032250959980335,
+        0.026505865610347804,
+        0.012795642387302283
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.04496907147812078,
+          "contact_time_s": 0.8741276835496129,
+          "distance_m": 0.039308710282546684,
+          "contact_position_m": [
+            0.029120233850995207,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6222089539437661
+        },
+        {
+          "speed_m_per_s": 0.08000419079189439,
+          "contact_time_s": 0.17292956024973016,
+          "distance_m": 0.013835089531777808,
+          "contact_position_m": [
+            -0.019999999999999997,
+            0.06371150525177702,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5733020742329905
+        },
+        {
+          "speed_m_per_s": 0.10195321887724358,
+          "contact_time_s": 0.4349427743635166,
+          "distance_m": 0.04434381587375918,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.05725441790018229,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.40529347167500956
+        },
+        {
+          "speed_m_per_s": 0.05582914969328378,
+          "contact_time_s": 0.2600918391320121,
+          "distance_m": 0.014520706220902587,
+          "contact_position_m": [
+            -0.07,
+            0.044453243546114476,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.47602464034838343
+        },
+        {
+          "speed_m_per_s": 0.11472891144959312,
+          "contact_time_s": 0.42593114471852456,
+          "distance_m": 0.04886661658603544,
+          "contact_position_m": [
+            -0.00480014802681171,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.003371973526271
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.5,
+            0.033,
+            0.0165
+          ],
+          "final_max_p": 0.7701128670975301,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.09366260532238922,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.667504407138336,
+            1.3961042857820776,
+            0.8817586847431587,
+            0.5443184902950428,
+            0.6621357931336826
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.5,
+            0.033,
+            0.0165
+          ],
+          "final_max_p": 0.8652759987636789,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.09366260532238922,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.936308581936476,
+            1.992941011566912,
+            1.500105071561587,
+            1.0782550784777578,
+            0.4650548791962202
+          ]
+        }
+      }
+    },
+    {
+      "trial": 8,
+      "eta": [
+        0.6281828749425828,
+        -0.0332018938628999,
+        -0.043025894088451574
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.06841641895061265,
+          "contact_time_s": 0.31901283066044694,
+          "distance_m": 0.021825715473085986,
+          "contact_position_m": [
+            -0.05690282853642271,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.881959940873642
+        },
+        {
+          "speed_m_per_s": 0.14995183427237047,
+          "contact_time_s": 0.33564958677485157,
+          "distance_m": 0.050331271209652174,
+          "contact_position_m": [
+            0.05563629636006633,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6506521257820397
+        },
+        {
+          "speed_m_per_s": 0.03931815606977093,
+          "contact_time_s": 0.3908810527500107,
+          "distance_m": 0.015368722236741286,
+          "contact_position_m": [
+            -0.07,
+            0.03188204270032716,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6919736309189215
+        },
+        {
+          "speed_m_per_s": 0.1178535500473823,
+          "contact_time_s": 0.5558131711705336,
+          "distance_m": 0.06550455538554074,
+          "contact_position_m": [
+            0.0047010092208431414,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.09348873154608
+        },
+        {
+          "speed_m_per_s": 0.05215838154864052,
+          "contact_time_s": 0.6463815720882465,
+          "distance_m": 0.03371421666298885,
+          "contact_position_m": [
+            -0.07,
+            0.033955945704615166,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.7365674767614259
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.5,
+            -0.033,
+            -0.033
+          ],
+          "final_max_p": 0.7025438916590859,
+          "within_one_grid_step": false,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.17732600680445937,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.1190937127900518,
+            1.3201579277047395,
+            1.169765127621295,
+            1.142021743924915,
+            0.8620980170246427
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.5,
+            -0.033,
+            -0.033
+          ],
+          "final_max_p": 0.493464313040249,
+          "within_one_grid_step": false,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.17732600680445937,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.45551109208745,
+            1.5517605531693002,
+            1.395160611567583,
+            1.291145168025698,
+            1.189823469338114
+          ]
+        }
+      }
+    },
+    {
+      "trial": 9,
+      "eta": [
+        0.6693281760281794,
+        -0.032250674867888435,
+        -0.041818286543966174
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.06367356469780358,
+          "contact_time_s": 0.4093042089020944,
+          "distance_m": 0.02606185802661082,
+          "contact_position_m": [
+            -0.07,
+            -0.048296353527851846,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 3.4759218682156017
+        },
+        {
+          "speed_m_per_s": 0.04383612427447027,
+          "contact_time_s": 0.7158943214420221,
+          "distance_m": 0.031382032442120046,
+          "contact_position_m": [
+            -0.07,
+            0.030274070686066468,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 3.1306642867408514
+        },
+        {
+          "speed_m_per_s": 0.14884947821790553,
+          "contact_time_s": 0.6522239563567647,
+          "distance_m": 0.09708319558492241,
+          "contact_position_m": [
+            0.06314958962478891,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.859018675718355
+        },
+        {
+          "speed_m_per_s": 0.07887319802564131,
+          "contact_time_s": 0.36345302883224617,
+          "distance_m": 0.028666702716104876,
+          "contact_position_m": [
+            -0.07,
+            -0.05915663292342624,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 3.051134467409018
+        },
+        {
+          "speed_m_per_s": 0.09029789374648411,
+          "contact_time_s": 0.6412725768644101,
+          "distance_m": 0.05790556300823657,
+          "contact_position_m": [
+            -0.03724602913325354,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.9561502244531102
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.6,
+            -0.033,
+            -0.0495
+          ],
+          "final_max_p": 0.5698409967043657,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.10454115621377177,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.056915370764614,
+            1.8677990934298359,
+            1.4193082668001311,
+            0.9193984430566641,
+            0.9036381768544259
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.6,
+            -0.033,
+            -0.0495
+          ],
+          "final_max_p": 0.5317509379941603,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.10454115621377177,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.7644974529831785,
+            1.3262494167634449,
+            1.3909760620616032,
+            1.2734648667547912,
+            1.1431741639305166
+          ]
+        }
+      }
+    },
+    {
+      "trial": 10,
+      "eta": [
+        0.44678279989709,
+        0.011957520274549646,
+        -0.006510117270040014
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.10163208291764318,
+          "contact_time_s": 0.507000158135678,
+          "distance_m": 0.05152748211090343,
+          "contact_position_m": [
+            0.004735431785118566,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.3947397636125354
+        },
+        {
+          "speed_m_per_s": 0.06622832869330546,
+          "contact_time_s": 0.9964460051603397,
+          "distance_m": 0.06599295355489013,
+          "contact_position_m": [
+            0.07,
+            0.004720855544213611,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.1411629156221637
+        },
+        {
+          "speed_m_per_s": 0.09694031404516361,
+          "contact_time_s": 0.5727968038279957,
+          "distance_m": 0.055527102047151874,
+          "contact_position_m": [
+            0.025409666409375593,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.8241187238392436
+        },
+        {
+          "speed_m_per_s": 0.11118623138725636,
+          "contact_time_s": 0.8475974114927518,
+          "distance_m": 0.09424116191747264,
+          "contact_position_m": [
+            -0.07,
+            -0.06132012514860241,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.8088972165027952
+        },
+        {
+          "speed_m_per_s": 0.08752027878955289,
+          "contact_time_s": 0.3017051824903878,
+          "distance_m": 0.02640532168381167,
+          "contact_position_m": [
+            -0.03251332139167406,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.9472139640531658
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.4,
+            0.0165,
+            0.0
+          ],
+          "final_max_p": 0.9972739432824915,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08388290225375532,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.5567897169302753,
+            1.2723200965750263,
+            0.34487771538691725,
+            0.3216440236361512,
+            0.019495307224758757
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.4,
+            0.0165,
+            0.0
+          ],
+          "final_max_p": 0.9993886461882451,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08388290225375532,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.0101185031642106,
+            1.45015803307348,
+            0.6182385972918414,
+            0.3678225067732814,
+            0.005489484652148076
+          ]
+        }
+      }
+    },
+    {
+      "trial": 11,
+      "eta": [
+        0.20170464406197094,
+        -0.032182353282482215,
+        0.045513093027115106
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.11689359737731395,
+          "contact_time_s": 0.4347177612016154,
+          "distance_m": 0.05081572295066894,
+          "contact_position_m": [
+            -0.07,
+            0.05576996639405127,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.4735793647777732
+        },
+        {
+          "speed_m_per_s": 0.10253722792178915,
+          "contact_time_s": 0.2770417343756243,
+          "distance_m": 0.028407091461521157,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.0573637647237578,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5424024662262233
+        },
+        {
+          "speed_m_per_s": 0.05145643851746933,
+          "contact_time_s": 0.6732064165819033,
+          "distance_m": 0.03464080458441255,
+          "contact_position_m": [
+            0.07,
+            -0.0025424631421985394,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.26748922815640375
+        },
+        {
+          "speed_m_per_s": 0.043224786432842444,
+          "contact_time_s": 0.12605314177625226,
+          "distance_m": 0.0054486201324673135,
+          "contact_position_m": [
+            -0.05356727269610177,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.1477938130370616
+        },
+        {
+          "speed_m_per_s": 0.06679718801778155,
+          "contact_time_s": 0.10759136822416593,
+          "distance_m": 0.007186800852359979,
+          "contact_position_m": [
+            0.0063794396126368585,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.7020172944179915
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.2,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.9999038153801831,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.030906012250004705,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.6189675577586105,
+            0.12349967964144154,
+            0.027051977489337044,
+            0.007831522690579991,
+            0.0010107919887496356
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.2,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.996270557806472,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.030906012250004705,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.8233603123506037,
+            0.29036010559702413,
+            0.12963218774977983,
+            0.06472424418317063,
+            0.02557928737039734
+          ]
+        }
+      }
+    },
+    {
+      "trial": 12,
+      "eta": [
+        0.870105878749971,
+        -0.056553602078184065,
+        -0.03284021144890589
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.09725556970107824,
+          "contact_time_s": 0.8134537515919488,
+          "distance_m": 0.07911290803655435,
+          "contact_position_m": [
+            0.021352717909069938,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.1144202190626151
+        },
+        {
+          "speed_m_per_s": 0.10539859192591006,
+          "contact_time_s": 0.11121231703821989,
+          "distance_m": 0.011721621620646272,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.0432778439853628,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6167815027823652
+        },
+        {
+          "speed_m_per_s": 0.10646991638699398,
+          "contact_time_s": 0.5657149623355437,
+          "distance_m": 0.06023162473873679,
+          "contact_position_m": [
+            -0.05755753649544464,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.250699034147568
+        },
+        {
+          "speed_m_per_s": 0.05663207218037998,
+          "contact_time_s": 0.45691848099375154,
+          "distance_m": 0.025876240396187716,
+          "contact_position_m": [
+            0.012838945591649872,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.8716569470901674
+        },
+        {
+          "speed_m_per_s": 0.08535639210272561,
+          "contact_time_s": 0.5481512566588554,
+          "distance_m": 0.04678821359497505,
+          "contact_position_m": [
+            0.07,
+            -0.001858232449834546,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.9169180176903894
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.9,
+            -0.0495,
+            -0.033
+          ],
+          "final_max_p": 0.8746776402472369,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0652169715764359,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.5118592192343296,
+            2.828205524220572,
+            1.162713797782048,
+            1.0713823623396128,
+            0.508915827717257
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.9,
+            -0.0495,
+            -0.033
+          ],
+          "final_max_p": 0.7798713923265675,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0652169715764359,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.6407716734342594,
+            3.101398836155585,
+            1.4835280033508005,
+            1.0612532184915455,
+            0.7537065015124428
+          ]
+        }
+      }
+    },
+    {
+      "trial": 13,
+      "eta": [
+        0.5498198613199483,
+        0.001961007397167397,
+        -0.011734057351151253
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.0838177634183033,
+          "contact_time_s": 0.8392601876372439,
+          "distance_m": 0.07034491185377933,
+          "contact_position_m": [
+            0.0646949629924146,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.895125968946325
+        },
+        {
+          "speed_m_per_s": 0.05646363712128146,
+          "contact_time_s": 0.738498167770213,
+          "distance_m": 0.04169829255970855,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.05818753512620832,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 5.480175605472303
+        },
+        {
+          "speed_m_per_s": 0.048844922189311676,
+          "contact_time_s": 0.7772564546056,
+          "distance_m": 0.037965031046350795,
+          "contact_position_m": [
+            -0.07,
+            -0.06225952175554361,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.4675058840808828
+        },
+        {
+          "speed_m_per_s": 0.03904262639340643,
+          "contact_time_s": 0.8351385714240588,
+          "distance_m": 0.032606003230832695,
+          "contact_position_m": [
+            -0.07,
+            0.0322239333249308,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.8412087883245776
+        },
+        {
+          "speed_m_per_s": 0.04481284496100783,
+          "contact_time_s": 0.9496141919802,
+          "distance_m": 0.04255491355798143,
+          "contact_position_m": [
+            0.06171417457757137,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.2704556975411978
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.5,
+            0.0,
+            -0.0165
+          ],
+          "final_max_p": 0.5765908222838294,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0735015270189986,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.1133600696566806,
+            1.6532551722242623,
+            0.42470766872643934,
+            0.6294538776093389,
+            0.6857620210818841
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.5,
+            0.0,
+            -0.0165
+          ],
+          "final_max_p": 0.814907643598948,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0735015270189986,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.515993780836337,
+            1.2530843714376374,
+            0.5490186087420899,
+            0.3011203262374341,
+            0.482226598402129
+          ]
+        }
+      }
+    },
+    {
+      "trial": 14,
+      "eta": [
+        0.7667645247006677,
+        0.03640672233414337,
+        0.004575584415282247
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.08448491694607899,
+          "contact_time_s": 0.8251909818453277,
+          "distance_m": 0.06971619156585589,
+          "contact_position_m": [
+            -0.07,
+            0.03214343175704065,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5988619354938672
+        },
+        {
+          "speed_m_per_s": 0.12832529654647246,
+          "contact_time_s": 0.10074224042019213,
+          "distance_m": 0.012927777876677178,
+          "contact_position_m": [
+            -0.07,
+            -0.05229681587066916,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5484867832721214
+        },
+        {
+          "speed_m_per_s": 0.11119242355506598,
+          "contact_time_s": 0.387979291235821,
+          "distance_m": 0.043140357681687704,
+          "contact_position_m": [
+            -0.07,
+            -0.06433501962675109,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6497815600572083
+        },
+        {
+          "speed_m_per_s": 0.032019777820910186,
+          "contact_time_s": 0.24930253438066702,
+          "distance_m": 0.00798261176105878,
+          "contact_position_m": [
+            -0.07,
+            -0.044138401128884786,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.7416215417806448
+        },
+        {
+          "speed_m_per_s": 0.03149516050889741,
+          "contact_time_s": 0.3935232323389589,
+          "distance_m": 0.01239407736649564,
+          "contact_position_m": [
+            -0.02723240772715521,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.8757744737748929
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.8,
+            0.033,
+            0.0
+          ],
+          "final_max_p": 0.9837100007159933,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.05994639966159226,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.492161727018298,
+            0.6678690430394122,
+            0.2676455822959369,
+            0.23403638726599413,
+            0.09723605326672863
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.8,
+            0.033,
+            0.0
+          ],
+          "final_max_p": 0.8762164725758583,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.05994639966159226,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.7373981776991023,
+            0.9850297593634906,
+            0.6562007656592632,
+            0.6274228134457303,
+            0.46267313890402395
+          ]
+        }
+      }
+    },
+    {
+      "trial": 15,
+      "eta": [
+        0.8506537098754983,
+        -0.059721956291507686,
+        0.04973185433353679
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.07045393148125695,
+          "contact_time_s": 0.17857470891102975,
+          "distance_m": 0.012581290305903095,
+          "contact_position_m": [
+            -0.07,
+            0.000900114654140069,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 3.2752308975294837
+        },
+        {
+          "speed_m_per_s": 0.1415514434127858,
+          "contact_time_s": 0.27301571170492644,
+          "distance_m": 0.03864576806620134,
+          "contact_position_m": [
+            0.07,
+            0.012468359994175393,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 5.5439743786419795
+        },
+        {
+          "speed_m_per_s": 0.12071472349650733,
+          "contact_time_s": 0.7466861003437957,
+          "distance_m": 0.09013600614168663,
+          "contact_position_m": [
+            0.05665653846778244,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.1380518999350815
+        },
+        {
+          "speed_m_per_s": 0.11549185678084581,
+          "contact_time_s": 0.19521907358434942,
+          "distance_m": 0.022546213287293084,
+          "contact_position_m": [
+            -0.005114695670938606,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 5.690428153431828
+        },
+        {
+          "speed_m_per_s": 0.07604943116627078,
+          "contact_time_s": 0.38493551959162775,
+          "distance_m": 0.02927412730063617,
+          "contact_position_m": [
+            0.020191515498243627,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.7067955315854944
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.6,
+            -0.0495,
+            0.0495
+          ],
+          "final_max_p": 0.6001498786030501,
+          "within_one_grid_step": false,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.32274993756455805,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.754115625858777,
+            1.4794019866246688,
+            1.0747130045051778,
+            0.9717418847994526,
+            1.1118910597446336
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.6,
+            -0.0495,
+            0.0495
+          ],
+          "final_max_p": 0.8379638566877206,
+          "within_one_grid_step": false,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.32274993756455805,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.0480539043102333,
+            1.7763639376578508,
+            1.0756884819124393,
+            0.5117405537241291,
+            0.6426078309036047
+          ]
+        }
+      }
+    },
+    {
+      "trial": 16,
+      "eta": [
+        0.44448178594187104,
+        -0.029633229927591945,
+        -0.011511898813747812
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.06723170677567308,
+          "contact_time_s": 0.3912848081546002,
+          "distance_m": 0.026306745487625578,
+          "contact_position_m": [
+            -0.07,
+            0.044582839794455195,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.47793607593136944
+        },
+        {
+          "speed_m_per_s": 0.11453472426603319,
+          "contact_time_s": 0.6601034039268283,
+          "distance_m": 0.0756047613558292,
+          "contact_position_m": [
+            -0.07,
+            0.022879108309188746,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.9244647359730915
+        },
+        {
+          "speed_m_per_s": 0.060298797726350314,
+          "contact_time_s": 0.8152678694597889,
+          "distance_m": 0.04915967235334839,
+          "contact_position_m": [
+            -0.06455690190418237,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.9107928369330899
+        },
+        {
+          "speed_m_per_s": 0.04326775604851829,
+          "contact_time_s": 0.14628808924566225,
+          "distance_m": 0.006329557358285187,
+          "contact_position_m": [
+            0.03369626041099823,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.22694398202777097
+        },
+        {
+          "speed_m_per_s": 0.13696282162634,
+          "contact_time_s": 0.2631414286359006,
+          "distance_m": 0.03604059255275913,
+          "contact_position_m": [
+            -0.07,
+            0.023024484996039228,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 6.357401750366181
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.4,
+            -0.033,
+            -0.0165
+          ],
+          "final_max_p": 0.4498663439289781,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0719036684066382,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.938869047004811,
+            1.6432064293782411,
+            0.4499517206110427,
+            0.42939877322723835,
+            1.246204621593628
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.5,
+            -0.0495,
+            0.0
+          ],
+          "final_max_p": 0.44294618747365105,
+          "within_one_grid_step": false,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.18728020866169506,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.207334885000687,
+            2.1463706766210446,
+            0.8820823339687255,
+            0.8694677576897608,
+            1.1204527846082675
+          ]
+        }
+      }
+    },
+    {
+      "trial": 17,
+      "eta": [
+        0.3692155828090843,
+        0.013814146856483883,
+        -0.01596621642016042
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.05053623852144511,
+          "contact_time_s": 0.2504881335883194,
+          "distance_m": 0.012658728065810915,
+          "contact_position_m": [
+            0.037114631627259115,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.15244809732424894
+        },
+        {
+          "speed_m_per_s": 0.07441475576008172,
+          "contact_time_s": 0.948978172525943,
+          "distance_m": 0.07061797893016673,
+          "contact_position_m": [
+            -0.05620814829869321,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6494306253151653
+        },
+        {
+          "speed_m_per_s": 0.1177083347265675,
+          "contact_time_s": 0.7562646729234983,
+          "distance_m": 0.08901865526235722,
+          "contact_position_m": [
+            -0.019999999999999997,
+            0.04834799141107715,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.9338209107802815
+        },
+        {
+          "speed_m_per_s": 0.09264683723749893,
+          "contact_time_s": 0.8005884511326963,
+          "distance_m": 0.07417198792631229,
+          "contact_position_m": [
+            -0.07,
+            -0.0038580696083107685,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.3430648242220874
+        },
+        {
+          "speed_m_per_s": 0.07369547626053294,
+          "contact_time_s": 0.27677400215379616,
+          "distance_m": 0.020396991905257778,
+          "contact_position_m": [
+            0.036112727488916,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.18514003380932
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.4,
+            0.0165,
+            -0.0165
+          ],
+          "final_max_p": 0.538905187527889,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0437163417187599,
+          "entropy_per_step": [
+            6.003887067106536,
+            5.2896518685143255,
+            2.000521344122519,
+            1.5447348922718236,
+            1.3685784124474485,
+            1.3024153656148911
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.4,
+            0.0165,
+            -0.0165
+          ],
+          "final_max_p": 0.3816197241706675,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.0437163417187599,
+          "entropy_per_step": [
+            6.003887067106536,
+            5.496451531638891,
+            2.3390640136561958,
+            1.8661389120724143,
+            1.7801124317423183,
+            1.7260952731603847
+          ]
+        }
+      }
+    },
+    {
+      "trial": 18,
+      "eta": [
+        0.3013473368820453,
+        -0.03660505951032071,
+        0.035077879413695265
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.11170617445471598,
+          "contact_time_s": 0.6340058396592877,
+          "distance_m": 0.07082236693028908,
+          "contact_position_m": [
+            -0.043022631428707575,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.7702186953871456
+        },
+        {
+          "speed_m_per_s": 0.05568742874878521,
+          "contact_time_s": 0.6789326326939275,
+          "distance_m": 0.03780801260836825,
+          "contact_position_m": [
+            0.06106706556828698,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.20106489048904966
+        },
+        {
+          "speed_m_per_s": 0.10541798577554116,
+          "contact_time_s": 0.7031370919387824,
+          "distance_m": 0.07412329595625794,
+          "contact_position_m": [
+            0.007318265850706586,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.8165773308879303
+        },
+        {
+          "speed_m_per_s": 0.1374828149117973,
+          "contact_time_s": 0.5663092664892715,
+          "distance_m": 0.07785779206758021,
+          "contact_position_m": [
+            0.010018990847785202,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 3.023411669151953
+        },
+        {
+          "speed_m_per_s": 0.12909020857364084,
+          "contact_time_s": 0.25191518412382274,
+          "distance_m": 0.032519783661411415,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.040482161503639424,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.9727673519231108
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.30000000000000004,
+            -0.033,
+            0.033
+          ],
+          "final_max_p": 0.9978990443039414,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.031567790871813266,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.2728116736002404,
+            0.6152457763351257,
+            0.00476400782847062,
+            0.006385593328527296,
+            0.015094117690303981
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.30000000000000004,
+            -0.033,
+            0.033
+          ],
+          "final_max_p": 0.9959105514797305,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.031567790871813266,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.4727625542089493,
+            1.121183198329284,
+            0.014578136565339486,
+            0.01268317157619897,
+            0.026586891087485885
+          ]
+        }
+      }
+    },
+    {
+      "trial": 19,
+      "eta": [
+        0.23240135417659147,
+        -0.03934407173551198,
+        -0.04280163904455386
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.03149510912909472,
+          "contact_time_s": 0.2257365803909222,
+          "distance_m": 0.007109598233840758,
+          "contact_position_m": [
+            -0.07,
+            -0.028413133614963254,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.2903852619592727
+        },
+        {
+          "speed_m_per_s": 0.10126484620773293,
+          "contact_time_s": 0.21924430197822964,
+          "distance_m": 0.02220174052174718,
+          "contact_position_m": [
+            0.07,
+            -0.0021564609782409976,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.316635242569863
+        },
+        {
+          "speed_m_per_s": 0.0920485744957299,
+          "contact_time_s": 0.1751385923102286,
+          "distance_m": 0.016121257761345344,
+          "contact_position_m": [
+            -0.04057029743281054,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5537240054602917
+        },
+        {
+          "speed_m_per_s": 0.09617344734530005,
+          "contact_time_s": 0.9674038853976421,
+          "distance_m": 0.09303856663392882,
+          "contact_position_m": [
+            0.0376881967354586,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.3189242075328721
+        },
+        {
+          "speed_m_per_s": 0.08441912032568122,
+          "contact_time_s": 0.5610100660743771,
+          "distance_m": 0.04735997627185121,
+          "contact_position_m": [
+            0.029429197768753662,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.2967936694408428
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.2,
+            -0.0495,
+            -0.0495
+          ],
+          "final_max_p": 0.8958870625563137,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.10067296044444948,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.230005809936015,
+            1.950909147072025,
+            1.4455214100151978,
+            0.7042137068232122,
+            0.3867064855543242
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.2,
+            -0.0495,
+            -0.0495
+          ],
+          "final_max_p": 0.5513327331291843,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.10067296044444948,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.630377771187515,
+            2.3964437041704976,
+            1.7208876988028103,
+            0.981909023199987,
+            0.9329212091984957
+          ]
+        }
+      }
+    },
+    {
+      "trial": 20,
+      "eta": [
+        0.10072744788024163,
+        -0.05250545187424405,
+        -0.05447510786729853
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.034079269382227134,
+          "contact_time_s": 0.7937049100514659,
+          "distance_m": 0.027048883439640264,
+          "contact_position_m": [
+            -0.03082022878727328,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.14287408637970453
+        },
+        {
+          "speed_m_per_s": 0.036671490400309,
+          "contact_time_s": 0.7126957022712839,
+          "distance_m": 0.02613561360418287,
+          "contact_position_m": [
+            0.04039409720283213,
+            -0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.1496179887115434
+        },
+        {
+          "speed_m_per_s": 0.08305661184890192,
+          "contact_time_s": 0.49220687814703235,
+          "distance_m": 0.04088103562761783,
+          "contact_position_m": [
+            -0.019999999999999997,
+            -0.03912911597982387,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6004374735081928
+        },
+        {
+          "speed_m_per_s": 0.11520284215607518,
+          "contact_time_s": 0.17530410880433955,
+          "distance_m": 0.02019553157589776,
+          "contact_position_m": [
+            -0.03088948599890084,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5893608457691502
+        },
+        {
+          "speed_m_per_s": 0.08232103805894289,
+          "contact_time_s": 0.8984420806909583,
+          "distance_m": 0.07396068471831622,
+          "contact_position_m": [
+            -0.07,
+            -0.0031147322556468876,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6456499488102538
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.1,
+            -0.0495,
+            -0.0495
+          ],
+          "final_max_p": 0.9999999999981259,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.044043011443476374,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.2353472548924738,
+            1.0599669845197637,
+            0.00047790023576365227,
+            1.0098457894476476e-05,
+            5.2525642250545495e-11
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.1,
+            -0.0495,
+            -0.0495
+          ],
+          "final_max_p": 1.0,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.044043011443476374,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.681618762644208,
+            1.4628439979017007,
+            8.222928626708363e-05,
+            4.214726154206626e-09,
+            2.0226628623006524e-18
+          ]
+        }
+      }
+    },
+    {
+      "trial": 21,
+      "eta": [
+        0.6630303958432064,
+        -0.015750776671587877,
+        0.020483313511320073
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.14071778690067532,
+          "contact_time_s": 0.1347854678625429,
+          "distance_m": 0.018966712743989134,
+          "contact_position_m": [
+            -0.06145073896361186,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.138664953989071
+        },
+        {
+          "speed_m_per_s": 0.09757440895592111,
+          "contact_time_s": 0.5193916092831874,
+          "distance_m": 0.050679329292471716,
+          "contact_position_m": [
+            -0.07,
+            -0.04933287509348035,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 1.2859265844006356
+        },
+        {
+          "speed_m_per_s": 0.06960298857246083,
+          "contact_time_s": 0.8513121797511786,
+          "distance_m": 0.05925387191881801,
+          "contact_position_m": [
+            -0.07,
+            -0.0028573864894794604,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5307863069354153
+        },
+        {
+          "speed_m_per_s": 0.08812436721834482,
+          "contact_time_s": 0.893159874304729,
+          "distance_m": 0.07870914874792065,
+          "contact_position_m": [
+            -0.036298784545886316,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.9262517440197446
+        },
+        {
+          "speed_m_per_s": 0.055846016550453584,
+          "contact_time_s": 0.723461675480388,
+          "distance_m": 0.04040245270249663,
+          "contact_position_m": [
+            -0.0384376489177169,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.8596991028735806
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.6,
+            -0.0165,
+            0.0165
+          ],
+          "final_max_p": 0.6390709273980355,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08455999408602767,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.7765913149551764,
+            0.832761807698102,
+            0.02586112848145952,
+            0.35099325107401425,
+            0.653950968954514
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.6,
+            -0.0165,
+            0.0165
+          ],
+          "final_max_p": 0.9999999999999999,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08455999408602767,
+          "entropy_per_step": [
+            6.003887067106536,
+            2.820520712032936,
+            1.061292691576986,
+            0.07520013832767777,
+            -1.1102195014555024e-15,
+            1.1102662175449575e-16
+          ]
+        }
+      }
+    },
+    {
+      "trial": 22,
+      "eta": [
+        0.3685678909198201,
+        -0.0343098498694664,
+        0.04960078055106169
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.046961145841629984,
+          "contact_time_s": 0.6920138292529026,
+          "distance_m": 0.032497762359970386,
+          "contact_position_m": [
+            -0.03931194213277018,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.3992214260583878
+        },
+        {
+          "speed_m_per_s": 0.1383804829907308,
+          "contact_time_s": 0.6986742830296107,
+          "distance_m": 0.09668288473884007,
+          "contact_position_m": [
+            -0.02871033847132591,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.459985758208229
+        },
+        {
+          "speed_m_per_s": 0.13660779383969573,
+          "contact_time_s": 0.5574290248728655,
+          "distance_m": 0.07614914931009503,
+          "contact_position_m": [
+            0.05244273694842491,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.3033858467756164
+        },
+        {
+          "speed_m_per_s": 0.1334693224042049,
+          "contact_time_s": 0.321005506397194,
+          "distance_m": 0.04284438742685214,
+          "contact_position_m": [
+            0.022950803663020505,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.9651731033224614
+        },
+        {
+          "speed_m_per_s": 0.04291995843386544,
+          "contact_time_s": 0.8616885307128134,
+          "distance_m": 0.03698363592113253,
+          "contact_position_m": [
+            0.05121114366117654,
+            0.025,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.1443248522001955
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.30000000000000004,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.9806536089437495,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08628575581529013,
+          "entropy_per_step": [
+            6.003887067106536,
+            3.9352065286616353,
+            1.653348671016711,
+            0.4301616817634849,
+            0.10519201508016145,
+            0.09886160768230168
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.30000000000000004,
+            -0.033,
+            0.0495
+          ],
+          "final_max_p": 0.8935117355377629,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.08628575581529013,
+          "entropy_per_step": [
+            6.003887067106536,
+            4.224899692803845,
+            2.0998929685204484,
+            0.6584311169995268,
+            0.37383250222066666,
+            0.3642220250076328
+          ]
+        }
+      }
+    },
+    {
+      "trial": 23,
+      "eta": [
+        0.7000262429463698,
+        -0.060998547227270064,
+        0.010618333292586976
+      ],
+      "pushes": [
+        {
+          "speed_m_per_s": 0.1330034215419315,
+          "contact_time_s": 0.13708820211055436,
+          "distance_m": 0.018233199933735567,
+          "contact_position_m": [
+            -0.07,
+            -0.010608107344698636,
+            0.015
+          ],
+          "contact_normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.0920022890373895
+        },
+        {
+          "speed_m_per_s": 0.04087919128611197,
+          "contact_time_s": 0.42800837020482496,
+          "distance_m": 0.017496636037660065,
+          "contact_position_m": [
+            -0.03395218697045745,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.6507505070305049
+        },
+        {
+          "speed_m_per_s": 0.08932178019436968,
+          "contact_time_s": 0.715345082655916,
+          "distance_m": 0.06389589623611494,
+          "contact_position_m": [
+            -0.05450172507087596,
+            0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            -1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 2.0237185879695874
+        },
+        {
+          "speed_m_per_s": 0.05962397814239691,
+          "contact_time_s": 0.11764451757202032,
+          "distance_m": 0.007014434144286969,
+          "contact_position_m": [
+            -0.05342251879674298,
+            -0.07,
+            0.015
+          ],
+          "contact_normal": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.5165372474690157
+        },
+        {
+          "speed_m_per_s": 0.1048796722902729,
+          "contact_time_s": 0.19921682927028575,
+          "distance_m": 0.020893795768574815,
+          "contact_position_m": [
+            0.07,
+            0.006724884352318439,
+            0.015
+          ],
+          "contact_normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "true_eta_mahalanobis": 0.9118305983061464
+        }
+      ],
+      "likelihoods": {
+        "student_t": {
+          "map_eta": [
+            0.7000000000000001,
+            -0.066,
+            0.0165
+          ],
+          "final_max_p": 0.996385384764074,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.058489829355232184,
+          "entropy_per_step": [
+            6.003887067106536,
+            1.4311585893789904,
+            1.694884326976292,
+            0.5046213842698294,
+            0.0515297555535699,
+            0.026623085202203238
+          ]
+        },
+        "gaussian": {
+          "map_eta": [
+            0.7000000000000001,
+            -0.066,
+            0.0165
+          ],
+          "final_max_p": 0.931847432981126,
+          "within_one_grid_step": true,
+          "confidently_wrong": false,
+          "map_error_scaled": 0.058489829355232184,
+          "entropy_per_step": [
+            6.003887067106536,
+            1.7554448715496254,
+            1.5911827155223428,
+            0.7173899886057595,
+            0.29010820212086613,
+            0.25638248065967484
+          ]
+        }
+      }
+    }
+  ]
+}

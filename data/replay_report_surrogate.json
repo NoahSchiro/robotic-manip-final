@@ -1,0 +1,122 @@
+{
+  "recorded_trials": 19,
+  "scored_trials": 19,
+  "dropped_empty_trials": 0,
+  "mean_pushes": 5.0,
+  "hypotheses": 405,
+  "metadata": {
+    "seed": 0,
+    "trials": 19,
+    "pushes": 5,
+    "rod_mass": 0.2,
+    "push_density": 200.0,
+    "site_clearance": 0.001,
+    "truth_time_step": 0.0001,
+    "settle_time": 0.1,
+    "log_period": 0.001,
+    "model_time_step": 0.002,
+    "predictor": "surrogate"
+  },
+  "likelihoods": {
+    "student_t": {
+      "within_one_grid_step": {
+        "count": 5,
+        "total": 19,
+        "rate": 0.2631578947368421
+      },
+      "map_is_nearest_cell": {
+        "count": 1,
+        "total": 19,
+        "rate": 0.05263157894736842
+      },
+      "confidently_wrong": {
+        "count": 0,
+        "total": 19,
+        "rate": 0.0
+      },
+      "map_error_scaled_mean": 0.2946842142440332,
+      "abs_error_scaled_mean": {
+        "mu": 0.21834294242976124,
+        "bx": 0.0982904085065458,
+        "by": 0.0802501174001172
+      },
+      "final_max_p_mean": 0.20229368044821458,
+      "entropy_curve": [
+        {
+          "push": 0,
+          "mean_entropy": 6.0038870671065405
+        },
+        {
+          "push": 1,
+          "mean_entropy": 5.1307724242745705
+        },
+        {
+          "push": 2,
+          "mean_entropy": 4.236305476727051
+        },
+        {
+          "push": 3,
+          "mean_entropy": 3.8619282327969024
+        },
+        {
+          "push": 4,
+          "mean_entropy": 3.4701087634097645
+        },
+        {
+          "push": 5,
+          "mean_entropy": 3.1741423497671275
+        }
+      ]
+    },
+    "gaussian": {
+      "within_one_grid_step": {
+        "count": 6,
+        "total": 19,
+        "rate": 0.3157894736842105
+      },
+      "map_is_nearest_cell": {
+        "count": 2,
+        "total": 19,
+        "rate": 0.10526315789473684
+      },
+      "confidently_wrong": {
+        "count": 0,
+        "total": 19,
+        "rate": 0.0
+      },
+      "map_error_scaled_mean": 0.2577396622045106,
+      "abs_error_scaled_mean": {
+        "mu": 0.17496585096810965,
+        "bx": 0.09938251744477322,
+        "by": 0.08682906476853823
+      },
+      "final_max_p_mean": 0.26346123173165903,
+      "entropy_curve": [
+        {
+          "push": 0,
+          "mean_entropy": 6.0038870671065405
+        },
+        {
+          "push": 1,
+          "mean_entropy": 5.129213403149601
+        },
+        {
+          "push": 2,
+          "mean_entropy": 3.8108741891679387
+        },
+        {
+          "push": 3,
+          "mean_entropy": 3.4264272837355327
+        },
+        {
+          "push": 4,
+          "mean_entropy": 3.087359563473405
+        },
+        {
+          "push": 5,
+          "mean_entropy": 2.7719492137513857
+        }
+      ]
+    }
+  }
+}

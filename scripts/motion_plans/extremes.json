@@ -1,0 +1,14 @@
+{
+  "friction": 0.5,
+  "yaw": 0.0,
+  "pushes": [
+    {"face": 7, "s": 0.5, "speed": 0.15, "duration": 0.667},
+    {"face": 3, "s": 0.5, "speed": 0.03, "duration": 0.1},
+    {"face": 0, "s": 0.0, "speed": 0.1, "duration": 1.0},
+    {"face": 1, "s": 1.0, "speed": 0.15, "duration": 0.667},
+    {"face": 5, "s": 0.0, "speed": 0.03, "duration": 1.0},
+    {"face": 6, "s": 1.0, "speed": 0.15, "duration": 0.1},
+    {"face": 4, "s": 0.0, "speed": 0.075, "duration": 0.3},
+    {"face": 2, "s": 0.0, "speed": 0.15, "duration": 0.667}
+  ]
+}
