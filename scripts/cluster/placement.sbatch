@@ -1,7 +1,8 @@
 #!/bin/bash
 # Placement episodes, one (seed, condition) per array task
-# (src/evaluation/placement.py).  Task i runs seed SEED0 + i / N_CONDITIONS under
-# condition i % N_CONDITIONS, so the array size must be seeds x conditions.
+# (src/evaluation/placement.py).  Task i runs seed SEED0 + i / N_CONDITIONS (or
+# line i / N_CONDITIONS of SEED_FILE) under condition i % N_CONDITIONS, so the
+# array size must be seeds x conditions.
 # Submit from the repo root; a task whose output exists is skipped, so
 # resubmitting (or a preemption requeue) only fills in the rest.
 #
@@ -14,6 +15,14 @@
 # Fixed wrong eta on the same seeds (does eta matter, or is the estimator good?):
 #   TASK=near CONDITIONS="nominal_eta farthest_eta" OUT=data/results/headroom/near sbatch -a 0-59 scripts/cluster/placement.sbatch
 #   TASK=far CONDITIONS="nominal_eta farthest_eta" OUT=data/results/headroom/far sbatch -a 0-59 scripts/cluster/placement.sbatch
+# Probers before MPC on the same seeds (30 seeds x 9 conditions per task):
+#   PROBES="learned:1 learned:2 learned:3 random:1 random:2 random:3 long_fast:1 long_fast:2 long_fast:3"
+#   TASK=near CONDITIONS="$PROBES" OUT=data/results/probing/near sbatch -a 0-269%64 scripts/cluster/placement.sbatch
+#   TASK=far CONDITIONS="$PROBES" OUT=data/results/probing/far sbatch -a 0-269%64 scripts/cluster/placement.sbatch
+# Low friction (far task, 30 seeds with true mu <= 0.3, from scripts/select_seeds.py; 13 conditions):
+#   SEED_FILE=data/results/low_mu/seeds.txt TASK=far CONDITIONS="true_eta none nominal_eta farthest_eta $PROBES" OUT=data/results/low_mu/far sbatch -a 0-389%64 scripts/cluster/placement.sbatch
+# High friction for contrast (30 seeds with true mu >= 0.6; the eta conditions only):
+#   SEED_FILE=data/results/high_mu/seeds.txt TASK=far CONDITIONS="true_eta none nominal_eta farthest_eta" OUT=data/results/high_mu/far sbatch -a 0-119%64 scripts/cluster/placement.sbatch
 # Full run (30 seeds x 17 conditions = 510 tasks):
 #   sbatch -a 0-509%64 scripts/cluster/placement.sbatch
 #
@@ -37,7 +46,12 @@ CONDITIONS=${CONDITIONS:-"true_eta none learned:1 learned:2 learned:3 learned:4 
 
 read -r -a LIST <<<"$CONDITIONS"
 N=${#LIST[@]}
-SEED=$((SEED0 + SLURM_ARRAY_TASK_ID / N))
+if [ -n "${SEED_FILE:-}" ]; then
+    mapfile -t SEEDS <"$SEED_FILE"
+    SEED=${SEEDS[$((SLURM_ARRAY_TASK_ID / N))]}
+else
+    SEED=$((SEED0 + SLURM_ARRAY_TASK_ID / N))
+fi
 CONDITION=${LIST[$((SLURM_ARRAY_TASK_ID % N))]}
 REPORT="$OUT/${SEED}_${CONDITION/:/_}.json"
 

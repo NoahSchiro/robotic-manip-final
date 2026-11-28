@@ -26,6 +26,9 @@ CONDITION_LABELS = {
     "none": "MPC, η unknown (estimated)",
     "nominal_eta": "MPC, η fixed at nominal",
     "farthest_eta": "MPC, η fixed at farthest",
+    "learned:3": "3 learned probes, then MPC",
+    "random:3": "3 random probes, then MPC",
+    "long_fast:3": "3 long-fast probes, then MPC",
 }
 
 # (position m, yaw deg): the episode tolerance and two looser ones.
@@ -183,6 +186,9 @@ def plot(summary: dict[str, Any], out: Path) -> None:
         "none": ("#2a78d6", "o", 7.0, True),
         "nominal_eta": ("#eb6834", "s", 4.0, False),
         "farthest_eta": ("#b3261e", "^", 4.5, False),
+        "learned:3": ("#1f8a4c", "D", 4.0, False),
+        "random:3": ("#8a8880", "v", 4.5, False),
+        "long_fast:3": ("#7a4fb5", "P", 5.0, False),
     }
     budgets = np.arange(max(BUDGETS) + 1)
     figure = Figure(
