@@ -1,0 +1,64 @@
+{
+ "seed": 95008,
+ "task": "near",
+ "condition": "farthest_eta",
+ "prober": null,
+ "probes": 0,
+ "true_eta": [
+  0.45783365671266474,
+  -0.0373223687909512,
+  -0.019025276985064794
+ ],
+ "eta_source": "farthest",
+ "plan_eta": [
+  0.9,
+  0.066,
+  0.0165
+ ],
+ "plan_eta_error": 0.9952927033357104,
+ "start_pose": [
+  0.5832394090081591,
+  -0.0717066861852375,
+  0.9342453484129063
+ ],
+ "goal": [
+  0.5875707970908172,
+  -0.035912632621023156,
+  0.8409917737763766
+ ],
+ "success": true,
+ "stop_reason": "at goal",
+ "probe_pushes": 0,
+ "mpc_pushes": 3,
+ "position_error": 0.001489435161872761,
+ "yaw_error": 0.04589960883002764,
+ "sim_time": 8.180381246628261,
+ "planning_time": 38.637433266005246,
+ "estimation_time": 0.0,
+ "goal_errors": [
+  [
+   0.03605516874569356,
+   0.09325357463652972
+  ],
+  [
+   0.009362005767771136,
+   0.2493526498700298
+  ],
+  [
+   0.005862873898009768,
+   0.07682191220965517
+  ],
+  [
+   0.001489435161872761,
+   0.04589960883002764
+  ]
+ ],
+ "probe_map_eta": null,
+ "probe_estimation_error": null,
+ "final_estimation_error": null,
+ "wall_time": 70.69311413899413,
+ "max_pushes": 20,
+ "position_tolerance": 0.005,
+ "yaw_tolerance": 0.08726646259971647,
+ "commit": "1bde83f"
+}

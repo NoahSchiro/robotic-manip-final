@@ -1,12 +1,11 @@
 """Score placement episode records (main.py placement-eval) after the fact.
 
-Each record holds the distance and yaw to the goal at the start and after
-every push, so success is scored here at several tolerances and push budgets
-without rerunning.  An episode that stopped early keeps its last pose for the
-remaining budget.  Conditions are compared on the seeds they share.  Neither
-"true_eta" nor "none" probes: the MPC plans with the true eta, or with the
-estimate the filter builds from the MPC's own pushes.  Their paired gap is
-the most any probing strategy could gain.
+Each record holds the distance and yaw to the goal at the start and after every
+push, so success is scored at several tolerances and push budgets without
+rerunning.  An episode that stopped early keeps its last pose for the remaining
+budget.  Conditions are compared on shared seeds.  "true_eta" (the MPC plans
+with the true eta) and "none" (the MPC estimates eta from its own pushes) do no
+probing, so their paired gap bounds what probing could gain.
 
     uv run python -m scripts.summarize_placement data/results/headroom/near data/results/headroom/far --out data/results/headroom
 """
@@ -177,8 +176,8 @@ def plot(summary: dict[str, Any], out: Path) -> None:
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    # (color, marker, marker size, hollow) per condition: the larger hollow
-    # rings stay visible around the smaller filled markers where they coincide.
+    # (color, marker, size, hollow) per condition; hollow rings stay visible
+    # where markers coincide.
     styles = {
         "true_eta": ("#0b0b0b", "o", 3.5, False),
         "none": ("#2a78d6", "o", 7.0, True),
@@ -196,8 +195,7 @@ def plot(summary: dict[str, Any], out: Path) -> None:
     for row, (task, task_summary) in zip(axes, summary.items(), strict=True):
         for ax, (position, yaw) in zip(row, TOLERANCES, strict=True):
             tol = tolerance_key(position, yaw)
-            # Budgets are whole pushes, so each condition is a dot per budget;
-            # hollow rings stay visible around filled dots where they coincide.
+            # One dot per whole-push budget.
             for name, st in task_summary["conditions"].items():
                 reached = np.array(
                     [np.inf if k is None else k for k in st["pushes_to_reach"][tol]]
@@ -252,74 +250,83 @@ def plot(summary: dict[str, Any], out: Path) -> None:
     figure.savefig(out, dpi=150)
 
 
-PAIRED_RANGE = (-3, 3)  # extra pushes shown; larger gaps are clipped to the ends
+PAIRED_RANGE = (-3, 6)  # pushes saved shown; the top column also holds larger gaps
+# The conditions compared with eta known, and how each row names its eta.
+PAIRED_SOURCES = {
+    "none": "η estimated",
+    "nominal_eta": "η fixed at nominal",
+    "farthest_eta": "η fixed at farthest",
+}
 
 
 def plot_paired(tasks: dict[str, dict[str, dict[int, Record]]], out: Path) -> None:
     """Per seed, the pushes saved by knowing eta: the pushes the MPC needs to
-    reach each tolerance with eta unknown ("none", planning with the filter's
-    estimate) minus with eta known ("true_eta"), as stacked dots; seeds where
-    only one condition, or neither, reaches it get their own columns."""
+    reach each tolerance with another eta source (PAIRED_SOURCES) minus with
+    eta known ("true_eta"), as stacked dots.  One row per task and source, one
+    column per tolerance; seeds where only one condition, or neither, reaches
+    the tolerance get their own columns."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
     low, high = PAIRED_RANGE
-    only_estimated, only_true, neither = low - 2, high + 2, high + 4
-    colors = {
-        only_estimated: "#2a78d6",
-        only_true: "#0b0b0b",
-        neither: "#b8b6ad",
-    }
-    shown = {t: c for t, c in sorted(tasks.items()) if "none" in c and "true_eta" in c}
-    figure = Figure(
-        figsize=(4 * len(TOLERANCES), 3.2 * len(shown)), facecolor="#fcfcfb"
-    )
+    only_other, only_known, neither = low - 2, high + 2, high + 4
+    colors = {only_other: "#2a78d6", only_known: "#0b0b0b", neither: "#b8b6ad"}
+    rows = [
+        (task, source, conditions)
+        for task, conditions in sorted(tasks.items())
+        if "true_eta" in conditions
+        for source in PAIRED_SOURCES
+        if source in conditions
+    ]
+    figure = Figure(figsize=(4 * len(TOLERANCES), 2.6 * len(rows)), facecolor="#fcfcfb")
     FigureCanvasAgg(figure)
     axes = np.atleast_2d(
-        figure.subplots(len(shown), len(TOLERANCES), sharex=True, sharey=True)
+        figure.subplots(len(rows), len(TOLERANCES), sharex=True, sharey=True)
     )
-    for row, (task, conditions) in zip(axes, shown.items(), strict=True):
-        estimated, true = conditions["none"], conditions["true_eta"]
-        seeds = sorted(set(estimated) & set(true))
+    for row, (task, source, conditions) in zip(axes, rows, strict=True):
+        other, known = conditions[source], conditions["true_eta"]
+        seeds = sorted(set(other) & set(known))
         for ax, (position, yaw) in zip(row, TOLERANCES, strict=True):
             stacked: dict[int, int] = defaultdict(int)
             for seed in seeds:
-                a = pushes_to_reach(estimated[seed], position, yaw)
-                b = pushes_to_reach(true[seed], position, yaw)
+                a = pushes_to_reach(other[seed], position, yaw)
+                b = pushes_to_reach(known[seed], position, yaw)
                 if np.isinf(a) and np.isinf(b):
                     x = neither
                 elif np.isinf(a):
-                    x = only_true
+                    x = only_known
                 elif np.isinf(b):
-                    x = only_estimated
+                    x = only_other
                 else:
                     x = int(np.clip(a - b, low, high))
                 stacked[x] += 1
                 color = colors.get(
                     x, "#0b0b0b" if x > 0 else "#2a78d6" if x < 0 else "#8a8880"
                 )
-                ax.plot(x, stacked[x], "o", ms=6.5, color=color)
+                ax.plot(x, stacked[x], "o", ms=5, color=color)
             ax.axvline(0, color="#e1e0d9", lw=1, zorder=0)
-            ticks = [only_estimated, *range(low, high + 1), only_true, neither]
-            names = [
-                "only\nunknown η\nreaches",
-                *[f"{v:+d}" if v else "0" for v in range(low, high + 1)],
-                "only\nknown η\nreaches",
-                "neither",
-            ]
-            ax.set_xticks(ticks, names, fontsize=7.5)
-            ax.set_xlim(only_estimated - 1, neither + 1)
             ax.set_title(
-                f"{task} task, tolerance {position * 100:g} cm / {yaw:g}°",
-                fontsize=9.5,
+                f"{task} task, {PAIRED_SOURCES[source]}, "
+                f"tolerance {position * 100:g} cm / {yaw:g}°",
+                fontsize=8.5,
                 loc="left",
             )
             ax.set_facecolor("#fcfcfb")
             for side in ("top", "right"):
                 ax.spines[side].set_visible(False)
         row[0].set_ylabel(f"seeds (of {len(seeds)})")
+    ticks = [only_other, *range(low, high + 1), only_known, neither]
+    names = [
+        "only\nother η\nreaches",
+        *[f"{v:+d}" if v else "0" for v in range(low, high)],
+        f"≥{high:+d}",
+        "only\nknown η\nreaches",
+        "neither",
+    ]
     for ax in axes[-1]:
-        ax.set_xlabel("pushes saved by knowing η (unknown − known)", fontsize=8.5)
+        ax.set_xticks(ticks, names, fontsize=7)
+        ax.set_xlim(only_other - 1, neither + 1)
+        ax.set_xlabel("pushes saved by knowing η (other − known)", fontsize=8.5)
     figure.tight_layout()
     figure.savefig(out, dpi=150)
 
