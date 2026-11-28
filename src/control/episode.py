@@ -69,6 +69,9 @@ class EpisodeResult:
     goal_errors: tuple[tuple[float, float], ...] = ()
     # The filter's MAP when probing ended (None without a filter).
     probe_map_eta: Eta | None = None
+    # The filter's MAP (mu, bx m, by m) after each push, probes included;
+    # empty without a filter.
+    map_etas: tuple[tuple[float, float, float], ...] = ()
 
 
 def push_line(number: int, label: str, obs: PushObservation, extra: str) -> str:
@@ -218,9 +221,16 @@ def run_episode(
     started = truth_sim.context.get_time()
     state = ProbingState(truth_sim=truth_sim, obj=obj, belief=belief, task=task)
     goal_errors = [goal_error(obj.pose, obj.goal)]
+    map_etas: list[tuple[float, float, float]] = []
+
+    def record_map() -> None:
+        if belief is not None:
+            mu, bx, by = belief.map_eta().as_array()
+            map_etas.append((float(mu), float(bx), float(by)))
 
     def report_probe(current: ProbingState, record: PushRecord) -> None:
         goal_errors.append(goal_error(current.obj.pose, current.obj.goal))
+        record_map()
         report_push(current, record, "probe", "", meshcat, dashboard)
 
     probe_outcome = run_probing(
@@ -238,6 +248,7 @@ def run_episode(
 
     def report_mpc(current: ProbingState, record: PushRecord) -> None:
         goal_errors.append(goal_error(current.obj.pose, current.obj.goal))
+        record_map()
         chosen = selector.chosen
         assert chosen is not None, "a placement push has a chosen candidate"
         report_push(
@@ -276,4 +287,5 @@ def run_episode(
         ),
         goal_errors=tuple(goal_errors),
         probe_map_eta=probe_map_eta,
+        map_etas=tuple(map_etas),
     )

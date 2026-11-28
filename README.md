@@ -173,8 +173,17 @@ can be scored afterwards; run at the tightest tolerance of interest.
 10 cm of (0.55, 0) m, the task the PPO policy was trained on) or `far` (both
 0.50–0.65 m from the arm base within ±55°, where the arm reaches every lattice
 push, and 0.30–0.45 m apart). A seed has the same true parameters in both.
-`scripts/cluster/placement.sbatch` runs one (seed, condition) per array task;
-its header lists the benchmark, headroom and full-comparison submissions.
+On the far task the learned prober sees positions shifted so the episode
+starts at (0.55, 0) m, inside its training workspace; its action mask uses the
+true pose. Records hold the estimator's MAP error after every push.
+`scripts/cluster/placement.sbatch` runs one (seed, condition) per array task,
+for consecutive seeds or a `SEED_FILE`; its header lists the submissions.
+Pick seeds by true friction with:
+
+```sh
+uv run python -m scripts.select_seeds --max-mu 0.3 --start 96000 --count 30 --out data/results/low_mu/seeds.txt
+```
+
 Score the records with the command below. It writes `summary.json`,
 `success.png` (success by push budget at tolerances 0.5 cm/5°, 1 cm/10° and
 2 cm/20°) and `paired.png` (per seed, the pushes saved by knowing η: the MPC
@@ -285,6 +294,7 @@ per measurement component, and the friction each trial's pushes favour. About
 | `scripts/plot_belief.py` | Push-by-push belief figure |
 | `scripts/cluster/` | Slurm batch scripts for the Engaging cluster (PPO training, Drake transfer evaluation) |
 | `scripts/summarize_placement.py` | Placement records scored by tolerance and push budget, and the paired gap between conditions |
+| `scripts/select_seeds.py` | Episode seeds whose true friction lies in a range, for targeted placement runs |
 | `scripts/merge_evaluations.py` | Paired statistics over per-episode evaluation reports |
 
 ## Implementation notes

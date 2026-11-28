@@ -25,7 +25,13 @@ from pathlib import Path
 import numpy as np
 from sb3_contrib import MaskablePPO
 
-from src.constants import MPC_LENGTH, MPC_TIME_WEIGHT, MPC_YAW_WEIGHT, ROD_MASS
+from src.constants import (
+    MPC_LENGTH,
+    MPC_TIME_WEIGHT,
+    MPC_YAW_WEIGHT,
+    ROD_MASS,
+    WORKSPACE_CENTER,
+)
 from src.control.episode import run_episode
 from src.control.mpc import GoalTolerance, MpcController, PoseCostWeights
 from src.control.probing import Selector, lattice_selector, long_fast
@@ -47,6 +53,7 @@ from src.world.iiwa import Pusher
 from src.world.recording import TruthSim
 
 PROBERS = ("learned", "random", "long_fast")
+POLICY_TASK = "near"  # the task the PPO policy was trained on
 
 
 # Where the MPC's eta comes from: the filter's MAP, or a fixed eta.
@@ -125,10 +132,20 @@ def run_placement(
     obj = episode_object(eta, start_pose, ROD_MASS)
     obj.goal = goal
     config = make_probing_env_config(None, family_path=None)
+    # The policy trained on the near task; elsewhere it sees positions shifted
+    # so the episode starts at the workspace center.
+    observed_shift = (
+        None
+        if task_name == POLICY_TASK
+        else np.array(WORKSPACE_CENTER) - np.asarray(start_pose[:2], dtype=float)
+    )
     probe_selector: Selector = lattice_selector(config.actions, action_rng)
     if condition.prober == "learned":
         probe_selector = policy_selector(
-            MaskablePPO.load(policy_path), config, min_pushes=condition.probes
+            MaskablePPO.load(policy_path),
+            config,
+            min_pushes=condition.probes,
+            observed_shift=observed_shift,
         )
     elif condition.prober == "long_fast":
         probe_selector = lattice_selector(long_fast(config.actions), action_rng)
@@ -184,6 +201,12 @@ def run_placement(
         "probes": condition.probes,
         "true_eta": eta.as_array().tolist(),
         "eta_source": condition.eta_source,
+        # Added to the positions the learned prober sees; None when unshifted.
+        "observed_shift": (
+            observed_shift.tolist()
+            if observed_shift is not None and condition.prober == "learned"
+            else None
+        ),
         # The fixed eta the MPC planned with; None when it used the filter.
         "plan_eta": fixed_eta.as_array().tolist() if fixed_eta is not None else None,
         "plan_eta_error": normalized_error(fixed_eta, eta, config.grid),
@@ -199,6 +222,10 @@ def run_placement(
             result.probe_map_eta, eta, config.grid
         ),
         "final_estimation_error": normalized_error(final_map, eta, config.grid),
+        # After each push, probes included (empty without a filter).
+        "estimation_errors": [
+            normalized_error(Eta(*m), eta, config.grid) for m in result.map_etas
+        ],
         "wall_time": wall_time,
         "max_pushes": max_pushes,
         "position_tolerance": tolerance.position,

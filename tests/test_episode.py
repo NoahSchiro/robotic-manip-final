@@ -154,6 +154,7 @@ def test_reaching_goal_stops_at_goal_and_updates_belief_per_push() -> None:
     assert result.mpc_pushes == 2
     assert result.position_error < TOLERANCE.position
     assert belief.updates == 2
+    assert result.map_etas == ((0.3, 0.0, 0.0), (0.3, 0.0, 0.0))
 
 
 def test_no_improving_candidate_is_stuck() -> None:

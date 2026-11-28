@@ -10,11 +10,16 @@ from src.world.action import Action
 
 
 def policy_selector(
-    model: MaskablePPO, config: ProbingEnvConfig, min_pushes: int = 0
+    model: MaskablePPO,
+    config: ProbingEnvConfig,
+    min_pushes: int = 0,
+    observed_shift: np.ndarray | None = None,
 ) -> Selector:
     """The trained policy's masked choice from the probing lattice, or "stop".
     Stopping is masked until `min_pushes` pushes are done. Lattice pushes that
-    share a contact point with a failed arm plan at this decision are masked."""
+    share a contact point with a failed arm plan at this decision are masked.
+    `observed_shift` (2,) m shifts the positions the policy sees (see
+    select_push_action)."""
 
     def select(state: ProbingState, failed: list[Action]) -> Action | str:
         assert state.belief is not None, "the policy chooses from the belief"
@@ -33,6 +38,7 @@ def policy_selector(
             config,
             excluded,
             allow_stop=state.pushes >= min_pushes,
+            observed_shift=observed_shift,
         )
         return "stop" if chosen is None else config.actions[chosen]
 

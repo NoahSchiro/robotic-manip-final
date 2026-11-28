@@ -224,12 +224,25 @@ def select_push_action(
     config: ProbingEnvConfig,
     excluded: np.ndarray,
     allow_stop: bool = True,
+    observed_shift: np.ndarray | None = None,
 ) -> int | None:
     """The deployment action selection: the trained policy picks the next
     push index from the lattice under the reachability mask, never one of
     the `excluded` (A,) pushes.  None when the policy stops; without
-    `allow_stop` it must push, unless no push is legal."""
-    obs = observation_vector(belief, pose, last_measurement, last_action, pushes)
+    `allow_stop` it must push, unless no push is legal.
+
+    `observed_shift` (2,) m is added to the world positions the policy sees
+    (the pose's and the last measurement's x, y), so a block outside the
+    training workspace looks like one inside it; planar pushing is
+    translation-invariant.  The reachability mask uses the true pose."""
+    seen_pose, seen_measurement = pose, last_measurement
+    if observed_shift is not None:
+        seen_pose = pose.copy()
+        seen_pose[:2] += observed_shift
+        if pushes > 0:  # before the first push the measurement stays zero
+            seen_measurement = last_measurement.copy()
+            seen_measurement[:2] += observed_shift
+    obs = observation_vector(belief, seen_pose, seen_measurement, last_action, pushes)
     mask = reachability_mask(pose, config) & ~excluded
     chosen = policy_decision(model, obs, np.append(mask, allow_stop or not mask.any()))
     return None if chosen == config.n_actions - 1 else chosen
