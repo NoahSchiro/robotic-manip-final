@@ -1,6 +1,6 @@
-"""Values shared across modules, defined once.  Values used by a single module
-live next to their use (the arm's maneuver timing in world.iiwa, the push
-space's ranges in world.push_space, the PPO rewards in policy.env).
+"""Values shared across modules.  Values used by one module live next to their
+use: the arm's maneuver timing in world.iiwa, push-space ranges in
+world.push_space, PPO rewards in policy.env.
 
 Units: m, s, kg, rad.  World frame: the arm's base is the origin.
 """
@@ -17,11 +17,9 @@ WORKSPACE_RADIUS = 0.25  # m, the block center must stay within
 START_RADIUS = 0.1  # m, start poses are drawn within this of the center
 GOAL_RADIUS = 0.1  # m, goals likewise
 
-# The far placement task.  Start and goal lie on the band where the arm
-# reaches every lattice push from any block yaw (block center 0.50-0.65 m from
-# the base), 0.30-0.45 m apart; the straight line between them then stays at
-# least about 0.45 m from the base, where most pushes are still reachable.
-# Angles are measured from the world +x axis about the base.
+# Far placement task: start and goal lie on the band where the arm reaches
+# every lattice push from any block yaw (block center 0.50-0.65 m from the
+# base).  Angles are measured from the world +x axis about the base.
 FAR_BAND_RADII = (0.50, 0.65)  # m
 FAR_BAND_HALF_ANGLE = 0.96  # rad, 55 deg
 FAR_GOAL_DISTANCES = (0.30, 0.45)  # m, start to goal

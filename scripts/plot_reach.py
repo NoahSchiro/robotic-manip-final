@@ -1,8 +1,7 @@
-"""Top-down maps of where the block can sit: for each block centre position,
-the share of the 396 lattice pushes the arm can reach, averaged over block
-yaw.  The first figure draws the near task's workspace and start/goal disks
-on top; the second draws both placement tasks' regions and the start and
-goal of each seed's episode.
+"""Top-down maps of where the block center can sit: for each center position,
+the share of the 396 lattice pushes the arm can reach, averaged over block yaw.
+The first figure marks the near task's workspace and start/goal disks; the
+second shows both placement tasks' regions and each seed's start and goal.
 
     uv run python -m scripts.plot_reach
 """

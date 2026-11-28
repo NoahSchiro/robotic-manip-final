@@ -1,12 +1,8 @@
-"""Planar geometry of a footprint built from axis-aligned boxes ("parts").
+"""Planar geometry of a footprint built from axis-aligned boxes ("parts"):
+outline extraction, containment tests and push-contact sampling.
 
-Everything here is math on the parts' coordinates:
-- outline extraction
-- containment tests
-- push-contact sampling
-
-Coordinates are in the body frame: x and y centered on the
-footprint's bounding box, z = 0 at the footprint's bottom face.
+Coordinates are in the body frame: x and y centered on the footprint's
+bounding box, z = 0 at the footprint's bottom face.
 """
 
 import itertools
@@ -100,6 +96,15 @@ def trace_outline(edges: list[SurfaceEdge]) -> list[SurfaceEdge]:
     if len(loop) != len(ordered):
         raise ValueError("footprint outline is not a single loop")
     return loop
+
+
+def outline_vertices(parts: list[SurfacePart]) -> np.ndarray:
+    """(V, 2) outline vertices (m) about the footprint center,
+    counterclockwise."""
+    loop = trace_outline(boundary_edges(parts))
+    vertices = np.array([start for start, _end in loop], dtype=float)
+    centered: np.ndarray = vertices - footprint_center(parts)
+    return centered
 
 
 def sample_outline(

@@ -237,8 +237,8 @@ def plot_push_choices(config: ProbingEnvConfig, actions: list[int], out: Path) -
     from matplotlib.figure import Figure
     from matplotlib.patches import Polygon
 
-    from scripts.plot_belief import outline_vertices
     from src.experiment import reference_object
+    from src.world.geometry import outline_vertices
 
     chosen = np.asarray(actions)
     contact_xy = np.round(config.contact_positions[:, :2], 4)
@@ -259,7 +259,7 @@ def plot_push_choices(config: ProbingEnvConfig, actions: list[int], out: Path) -
     figure = Figure(figsize=(10, 4.3), facecolor="#fcfcfb")
     FigureCanvasAgg(figure)
     left, right = figure.subplots(1, 2, width_ratios=(1.15, 1))
-    outline = outline_vertices(np.array(reference_object().parts)) * 100
+    outline = outline_vertices(reference_object().parts) * 100
     left.add_patch(
         Polygon(outline, closed=True, facecolor="#f0efec", edgecolor="#52514e", lw=1)
     )

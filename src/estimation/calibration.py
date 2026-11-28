@@ -1,17 +1,14 @@
-"""Calibrate the estimator's prediction-error covariance R.
+"""Calibrate the estimator's prediction-error covariance R from truth pushes.
 
-Each sample is one episode's first push: off-grid true parameters and a start
-pose from episode_conditions, a random push from the push space, run in the
-truth sim.  The push is predicted at the belief point nearest the true
-parameters (`n_subcells` points per axis in each grid cell, its error
-interpolated from the grid's; match estimator.SUBCELLS), so R covers the
-prediction model's mismatch, the interpolation, and the remaining discretization.  R
-is the errors' second moment about zero (the likelihood assumes zero-mean
-errors) plus a diagonal floor.
+Each sample is one episode's first random push, run in the truth sim from
+off-grid true parameters. Its prediction error at the belief point nearest
+the true parameters (matching estimator.SUBCELLS) gives R as the errors'
+second moment about zero plus a diagonal floor, so R covers the prediction
+model's mismatch, the interpolation and the grid's discretization.
 
-R lives in the code as estimator.CALIBRATED_R.  Rerun this after changing
-the prediction model, the measurement, the grid, or the push space, then
-paste the constant it prints into src/estimation/estimator.py:
+R lives in estimator.CALIBRATED_R. Rerun after changing the prediction
+model, the measurement, the grid or the push space, then paste the printed
+constant into src/estimation/estimator.py:
 
     uv run python main.py calibrate --samples 192 --seed 20000
 """
@@ -155,8 +152,8 @@ def format_constant(
     model: PushModelConfig,
     n_subcells: int,
 ) -> str:
-    """Render R as the CALIBRATED_R source block for src/estimator.py.  Four
-    significant figures is well inside the estimate's sampling error."""
+    """Render R as the CALIBRATED_R source block for src/estimation/estimator.py.
+    Four significant figures is well inside the sampling error."""
     rows = "\n".join(
         "        [" + ", ".join(f"{v:.3e}" for v in row) + "]," for row in R
     )
@@ -195,7 +192,7 @@ def calibrate(samples: int, seed: int, workers: int, setup: SampleSetup) -> None
     R = second_moment_R(nearest, FLOOR_STD)
     print(f"R std devs: {labeled(np.sqrt(np.diag(R)))}")
     print(
-        "\nPaste into src/estimator.py, replacing CALIBRATED_R:\n\n"
+        "\nPaste into src/estimation/estimator.py, replacing CALIBRATED_R:\n\n"
         + format_constant(
             rounded_R(R),
             len(results),

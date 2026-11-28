@@ -1,4 +1,4 @@
-"""Package E's condition names (no physics)."""
+"""Placement condition names and fixed etas (no physics)."""
 
 import numpy as np
 import pytest

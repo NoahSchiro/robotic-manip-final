@@ -34,9 +34,9 @@ class Eta:
         """Get the rod this hypothesis places."""
         return Rod(x=self.bx, y=self.by, mass=mass)
 
-    def to_object(self, rng: np.random.Generator, rod_mass: float) -> Object:
+    def to_object(self, rod_mass: float) -> Object:
         """Build the object this hypothesis describes."""
-        return Object(rng, rod=self.rod(rod_mass), friction=self.mu)
+        return Object(rod=self.rod(rod_mass), friction=self.mu)
 
 
 @dataclass(frozen=True)

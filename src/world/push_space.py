@@ -1,15 +1,14 @@
 """The push space: where a push can contact the block and how it is commanded.
 
-A push contacts one straight face of the block's outline at a point along the
-face's usable span, at a commanded speed and contact time.  The span stops
-INNER_CORNER_INSET short of an inner (concave) corner, so the lowered stick
-clears the other part of the T, and OUTER_CORNER_INSET short of an outer
-corner, so arm tracking error (a few mm) keeps the contact on one face.
-Sampling, the MPC's candidate grid, reachability and the demo all use this one
-definition.
+A push contacts one straight face of the outline, at a point along its usable
+span, at a commanded speed and contact time. Each span stops INNER_CORNER_INSET
+short of an inner (concave) corner, so the lowered stick clears the other part
+of the T, and OUTER_CORNER_INSET short of an outer corner, so arm tracking error
+(a few mm) keeps the contact on one face. Sampling, the MPC's candidate grid
+and reachability all use this definition.
 
 Body frame: x and y in m, z = 0 at the footprint's bottom face; contacts sit at
-mid-height.  Angles are radians and times seconds.
+mid-height. Angles are radians and times seconds.
 """
 
 from dataclasses import dataclass

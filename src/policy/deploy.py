@@ -12,10 +12,9 @@ from src.world.action import Action
 def policy_selector(
     model: MaskablePPO, config: ProbingEnvConfig, min_pushes: int = 0
 ) -> Selector:
-    """The trained policy's masked choice from the probing lattice, returning
-    "stop" when it stops; stopping is masked until `min_pushes` pushes are
-    done.  Every lattice push sharing a contact point with a push whose arm
-    plan failed at this decision is masked."""
+    """The trained policy's masked choice from the probing lattice, or "stop".
+    Stopping is masked until `min_pushes` pushes are done. Lattice pushes that
+    share a contact point with a failed arm plan at this decision are masked."""
 
     def select(state: ProbingState, failed: list[Action]) -> Action | str:
         assert state.belief is not None, "the policy chooses from the belief"

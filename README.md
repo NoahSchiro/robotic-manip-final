@@ -273,8 +273,9 @@ per measurement component, and the friction each trial's pushes favour. About
 | `src/control/` | The shared Drake push loop and selectors (`probing`); MPC (`mpc`); placement episodes (`episode`) |
 | `src/evaluation/` | Drake transfer of the prober (`transfer`), placement under probing conditions (`placement`), training report (`report`) |
 | `src/constants.py` | Values shared across modules, defined once: rod mass, simulation timing, workspace, push lattice, MPC cost |
-| `src/experiment.py` | The setup built from them: simulation configs, the push lattice, the reference block, and how a seed becomes an episode |
-| `src/paths.py`, `src/cli.py`, `src/dataset_file.py` | Data layout; shared command-line options; dataset files |
+| `src/experiment.py` | The setup built from them: simulation configs, the push lattice, the reference block, the placement tasks, and how a seed becomes an episode |
+| `src/demo.py` | The interactive `simulate` command: one demo push, a run of estimation pushes, or a placement episode |
+| `src/paths.py`, `src/cli.py`, `src/dataset_file.py`, `src/provenance.py` | Data layout; shared command-line options; dataset files; the code version recorded with results |
 | `scripts/diagnose_motion.py` | Motion checks for random or listed pushes: joint speeds, tracking, release, post-measurement motion; optional Meshcat replay |
 | `scripts/motion_plans/` | Push lists for the motion checks (extreme pushes, stress pushes) |
 | `scripts/model_bias.py` | Prediction model against the truth sim on recorded pushes: mismatch, timestep effect, best-fit friction |

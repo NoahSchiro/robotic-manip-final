@@ -1,11 +1,10 @@
 """Recorded random-push trials from the truth sim: the offline dataset the
-estimator is evaluated on, and later the surrogate predictor is validated
-against.
+estimator is evaluated on.
 
-One trial draws off-grid true parameters, runs up to `pushes` random pushes
-from the push space in one continuous TruthSim and serializes every PushObservation to
-plain arrays.  Serialization happens inside the worker process: Drake objects
-need not cross process boundaries, and the stored dataset stays readable
+One trial draws off-grid true parameters and runs up to `pushes` random pushes
+from the push space in one continuous TruthSim, serializing each
+PushObservation to plain arrays. Serialization runs in the worker process, so
+Drake objects never cross process boundaries and the dataset is readable
 without pydrake.
 
 Dataset schema (one .npz):
@@ -75,6 +74,25 @@ def make_record_setup(
         truth=truth,
         push_space=make_push_space(reference.parts, reference.height),
     )
+
+
+def trials_metadata(
+    setup: RecordSetup, trials: int, seed: int, model_time_step: float
+) -> dict[str, float | int]:
+    """The settings a trials dataset was recorded under, for its file, so a
+    replay can rebuild the same setup."""
+    return {
+        "seed": seed,
+        "trials": trials,
+        "pushes": setup.pushes,
+        "rod_mass": setup.rod_mass,
+        "truth_time_step": setup.truth.time_step,
+        "settle_time": setup.truth.settle_time,
+        "log_period": setup.truth.log_period,
+        "model_time_step": model_time_step,
+        "motion_version": 2,
+        "measurement_version": 1,
+    }
 
 
 def record_trial(seed: int, setup: RecordSetup) -> TrialData:

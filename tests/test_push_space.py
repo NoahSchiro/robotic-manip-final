@@ -25,7 +25,7 @@ GRID_SIZE = 396  # candidates on the T at SPACING with 3 speeds and 3 distances
 
 @pytest.fixture(scope="module")
 def obj() -> Object:
-    return Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.2))
+    return Object(rod=Rod(0.0, 0.0, 0.2))
 
 
 @pytest.fixture(scope="module")

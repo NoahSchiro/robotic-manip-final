@@ -1,17 +1,14 @@
 """Train the surrogate's MLP ensemble on `gen-surrogate-data`'s dataset.
 
-Each member is a configurable 49-input, six-output ReLU MLP trained with
-AdamW and cosine LR decay on standardized inputs and outputs (statistics
-from the training split), with early stopping on the development split's
-weighted loss. The loss weights each component by the Drake calibration
-scale (sqrt diag CALIBRATED_R).
-Inference runs in numpy (see model.py); this module is the only torch
-user.
+Each member is a 49-input, six-output ReLU MLP trained with AdamW and cosine
+LR decay on standardized inputs and outputs (statistics from the training
+split). Early stopping uses the development split's loss, with per-output
+weights from `loss_weights`. This module is the only torch user;
+inference runs in numpy (see model.py).
 
-The command's summary reports development errors on world measurement axes
-against both the Drake model's and the deployed surrogate's calibrated
-residual scales (CALIBRATED_R, CALIBRATED_R_SURROGATE). It does
-not score or select on the held-out split.
+The summary reports development errors in world measurement axes against the
+Drake and deployed-surrogate calibration scales (CALIBRATED_R,
+CALIBRATED_R_SURROGATE). It does not score or select on the held-out split.
 """
 
 import time
@@ -145,9 +142,8 @@ def shard_arrays(paths: Sequence[Path]) -> tuple[np.ndarray, np.ndarray, np.ndar
 
 
 def loss_weights(output_std: np.ndarray) -> np.ndarray:
-    """Get per-output loss weights that make the standardized MSE measure
-    what the acceptance gate measures: each component's raw error against
-    its tolerated plant-vs-truth std (sqrt diag R)."""
+    """Per-output loss weights (output_std / sqrt(diag CALIBRATED_R))^2, so the
+    standardized MSE weighs each error against its tolerated plant-vs-truth std."""
     tolerated = np.sqrt(np.diag(CALIBRATED_R))
     return (output_std / tolerated) ** 2
 
@@ -296,8 +292,8 @@ def train_ensemble(
     train, val = split == 0, split == 1
     input_mean, input_std = x[train].mean(axis=0), x[train].std(axis=0)
     output_mean, output_std = y[train].mean(axis=0), y[train].std(axis=0)
-    # A near-zero std means a constant column (float dust included); its
-    # standardized values would explode on any deploy-time deviation.
+    # Near-zero std marks a constant column; dividing by it would blow up
+    # standardized values at deploy time.
     input_std[input_std < 1e-6] = 1.0
     output_std[output_std < 1e-6] = 1.0
 
@@ -363,8 +359,7 @@ def train_ensemble(
     )
     save_ensemble(out_path, ensemble)
 
-    # Acceptance check: mean prediction's val RMSE in the world frame
-    # against the estimator's tolerated plant-vs-truth error.
+    # Acceptance check: validation RMSE of the mean prediction, world frame.
     predictions = ensemble.predict(x[val])
     residuals = world_frame_errors(predictions, y[val], x[val, 5])
     rmse = np.sqrt((residuals**2).mean(axis=0))

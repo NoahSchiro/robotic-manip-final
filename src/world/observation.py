@@ -1,17 +1,15 @@
 """What one push produces for the estimator: the object's state before and
-after, plus the pusher tip's measured path in between.  Also where the push
+after, plus the pusher tip's measured path in between. Also where the push
 leaves the object, for chaining pushes.
 
 The push window opens once the tip has dwelt at rest at its standoff point
 (before contact) and closes `settle_time` after the push segment ends.
 
-The estimator's measurement is the object's pose at the window's end and
-its velocity at the push segment's end.  The late pose carries the
-post-release slide, which depends on friction.  The velocity is read while
-the stick still pushes steadily: by the window's end the arm is reversing,
-and its PD lag makes the stick tap the block, so a velocity read then lands
-mid-collision and is noise.  Reading the velocity at the push segment's end
-avoids almost all such prediction outliers.
+The measurement is the object's pose at the window's end and its velocity at
+the push segment's end. The pose includes the post-release slide, which
+depends on friction. The velocity is read at the push segment's end because
+by the window's end the arm is reversing, and its PD lag makes the stick tap
+the block, which would corrupt a velocity read.
 """
 
 from dataclasses import dataclass

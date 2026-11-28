@@ -135,8 +135,7 @@ def starting_posture(
 
 class TruthSim:
     """One continuous simulation of the arm, table and block, starting with
-    `obj` at its current pose.  The table shares the object's friction, as in
-    main.py."""
+    `obj` at its current pose. The table shares the object's friction."""
 
     def __init__(
         self,
@@ -184,8 +183,8 @@ class TruthSim:
         now = self.context.get_time()
         window = push_window(q_traj, self.settle_time, now)
         self.reference.UpdateTrajectory(shift_trajectory(q_traj, now))
-        # Wall time since the last push isn't the sim falling behind: left
-        # counted, the pacer would race through it instead of tracking real time.
+        # Clear wall time spent between pushes, so the real-time pacer does not
+        # race to catch up.
         self.simulator.ResetStatistics()
 
         self.simulator.AdvanceTo(window.start)

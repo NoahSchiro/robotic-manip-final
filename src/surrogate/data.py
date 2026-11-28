@@ -34,10 +34,15 @@ from dataclasses import dataclass
 import numpy as np
 from pydrake.all import SpatialVelocity
 
+from src.constants import START_RADIUS, WORKSPACE_CENTER
 from src.estimation.dynamics import DrakePushModel, PushModelConfig
 from src.estimation.params import GridSpec, sample_eta
 from src.experiment import reference_object
-from src.surrogate.model import nominal_action_tip_path, path_downsample
+from src.surrogate.model import (
+    SAMPLE_PERIOD,
+    nominal_action_tip_path,
+    path_downsample,
+)
 from src.surrogate.path_family import PathFamily, perturb_tip_positions
 from src.world.geometry import SurfacePart
 from src.world.iiwa import transfer_height
@@ -51,7 +56,7 @@ SPLIT_MODULUS = 10
 
 @dataclass(frozen=True)
 class SurrogateSetup:
-    """What every surrogate sample shares."""
+    """Settings shared by all surrogate samples."""
 
     spec: GridSpec
     parts: list[SurfacePart]
@@ -68,8 +73,8 @@ def make_surrogate_setup(
     family: PathFamily,
     model: PushModelConfig,
 ) -> SurrogateSetup:
-    """Collect what every surrogate sample shares.  The footprint, and with
-    it the push space, is the same for every eta."""
+    """Collect the settings shared by all samples. The footprint, and so the
+    push space, is the same for every eta."""
     reference = reference_object(rod_mass)
     return SurrogateSetup(
         spec=GridSpec(),
@@ -82,17 +87,56 @@ def make_surrogate_setup(
     )
 
 
+def surrogate_metadata(
+    setup: SurrogateSetup, samples: int, seed: int
+) -> dict[str, float | int]:
+    """Generation settings and schema versions, stored in the dataset file."""
+    space = setup.push_space
+    return {
+        "seed": seed,
+        "samples": samples,
+        "rod_mass": setup.rod_mass,
+        "speed_min": space.speed_range[0],
+        "speed_max": space.speed_range[1],
+        "duration_min": space.duration_range[0],
+        "duration_max": space.duration_range[1],
+        "max_push_distance": space.max_distance,
+        "model_time_step": setup.model.time_step,
+        "settle_time": setup.settle_time,
+        "sample_period": SAMPLE_PERIOD,
+        "schema_version": 3,
+        "feature_version": 1,
+        "target_version": 1,
+        "action_target_version": 1,
+    }
+
+
+def sample_start_pose(rng: np.random.Generator) -> tuple[float, float, float]:
+    """A start pose uniform within START_RADIUS of the workspace center, yaw
+    uniform in [0, 2 pi).  Three more draws are discarded so that existing
+    datasets regenerate identically from their sample seeds."""
+    rho = START_RADIUS * np.sqrt(rng.uniform())
+    theta = rng.uniform(0.0, 2.0 * np.pi)
+    pose = (
+        WORKSPACE_CENTER[0] + rho * np.cos(theta),
+        WORKSPACE_CENTER[1] + rho * np.sin(theta),
+        rng.uniform(0.0, 2.0 * np.pi),
+    )
+    rng.uniform(size=3)
+    return pose
+
+
 def surrogate_sample(
     seed: int, setup: SurrogateSetup, model: DrakePushModel
 ) -> dict[str, np.ndarray]:
-    """Draw one sample and predict its outcome.  Deterministic in `seed`."""
+    """Draw one sample and predict its outcome. Deterministic in `seed`."""
     rng = np.random.default_rng(seed)
     eta = sample_eta(rng, setup.spec, setup.parts)
-    obj = eta.to_object(rng, setup.rod_mass)
+    obj = eta.to_object(setup.rod_mass)
+    obj.pose = sample_start_pose(rng)
     action = setup.push_space.sample(rng)
-    # An exactly-zero start velocity is a degenerate contact state the
-    # discrete solver rejects; the truth sim's states always carry ~1e-10
-    # of numerical dust, so match that here.
+    # The discrete solver rejects an exactly-zero start velocity; truth-sim
+    # states carry ~1e-10 of numerical dust, so match that.
     start_velocity = SpatialVelocity(np.zeros(3), rng.uniform(-1e-9, 1e-9, size=3))
 
     path = nominal_action_tip_path(
@@ -110,8 +154,8 @@ def surrogate_sample(
         [path.push_end_time, path.window_end, path.action_end],
     )
 
-    # Push effects in the start pose's frame: rotate world xy by R(-yaw);
-    # yaw offsets wrap, wz passes through.
+    # Push effects in the start pose's frame: xy rotated by R(-yaw), yaw
+    # offsets wrapped, wz unchanged.
     start = np.array(obj.pose, dtype=float)
     c, s = np.cos(start[2]), np.sin(start[2])
     rot = np.array([[c, s], [-s, c]])
@@ -157,8 +201,8 @@ def surrogate_sample(
 def surrogate_samples(
     seeds: Sequence[int], setup: SurrogateSetup
 ) -> list[dict[str, np.ndarray]]:
-    """Predict the outcomes of `seeds`' samples, running in a worker process
-    with one shared prediction model."""
+    """Predict the outcomes of `seeds`' samples in one worker process, sharing
+    one prediction model."""
     model = DrakePushModel(setup.model)
     return [surrogate_sample(seed, setup, model) for seed in seeds]
 

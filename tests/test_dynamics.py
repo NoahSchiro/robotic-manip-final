@@ -17,7 +17,7 @@ from src.world.object import Object, Rod
 
 
 def make_push() -> tuple[Object, Action]:
-    obj = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.2))
+    obj = Object(rod=Rod(0.0, 0.0, 0.2))
     obj.pose = (0.5, 0.0, 0.7)
     # The stem's +x end, pushed toward -x.
     site = SurfaceNormal(

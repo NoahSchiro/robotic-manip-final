@@ -1,28 +1,22 @@
-"""The PPO training environment: planar pushing with unknown parameters,
-run entirely on the trained surrogate. No Drake simulation in the loop
-(pydrake loads transitively for geometry constants, construction-time
-only).
+"""The PPO training environment: planar pushing with unknown parameters, run
+entirely on the trained surrogate (no Drake simulation in the loop; pydrake
+is used only at construction, for geometry constants).
 
-One episode: a true eta and a start pose are sampled, the filter starts
-uniform over the grid, and the agent repeatedly picks a push from the
-push-space lattice (the MPC's candidates) or `stop`.  Each push executes a
-sampled arm-lag path, whose outcome a sampled ensemble member predicts with
-deployment-scale
-measurement noise (`CALIBRATED_R_SURROGATE` minus the members' own
-spread).  The filter updates from the noisy measurement, and the block
-chains from the noisily measured pose.
+Each episode samples a true eta and start pose; the filter starts uniform
+over the grid. The agent picks pushes from the lattice (`experiment.lattice`,
+the MPC's candidates) or `stop`. A push's outcome is predicted by a sampled
+ensemble member with deployment-scale measurement noise
+(`CALIBRATED_R_SURROGATE` minus the members' own spread). The filter updates
+from the noisy measurement, and the block continues from the measured pose.
 
 Rewards:
 - push: `entropy_weight * (H_before - H_after) - step_cost`
-- stop, or a forced stop at `max_pushes`:
-  `-||(eta_map - eta*) / spans||` — the MAP's normalized estimation
-  error, what MPC consumes
+- stop, or a forced stop at `max_pushes`: `-||(eta_map - eta*) / spans||`
 - leaving the workspace: the stop reward minus `out_of_bounds_penalty`
 
-Action space: Discrete(len(actions) + 1) over the push space's lattice
-(`experiment.lattice`).  The last
-action is `stop` and is never masked; pushes are masked when the arm cannot
-reach their approach or end point (push_space.reachable).
+Action space: Discrete(len(actions) + 1). The last action is `stop` and is
+never masked. Pushes are masked when the arm cannot reach their approach or
+end point (push_space.reachable).
 """
 
 import typing
@@ -73,10 +67,9 @@ OUT_OF_BOUNDS_PENALTY = 1.0
 
 @dataclass(frozen=True)
 class ProbingEnvConfig:
-    """Everything one environment instance runs on.  Built once by
-    make_probing_env_config; the env's steps are pure numpy.  Push action i
-    is actions[i]; the arrays hold its body-frame contact point and inward
-    normal (A, 3), speed (A,) m/s and contact time (A,) s."""
+    """Everything one environment runs on, built by make_probing_env_config.
+    Push action i is actions[i]; the arrays give its body-frame contact point
+    and inward normal (A, 3), speed (A,) m/s and contact time (A,) s."""
 
     ensemble: SurrogateEnsemble | None
     grid: list[Eta]
@@ -141,10 +134,10 @@ def member_spread(
     config: ProbingEnvConfig,
     rows: int = 64,
 ) -> np.ndarray:
-    """Estimate the (6,) std of the members' disagreement over the
-    measurement, on random lattice pushes from random workspace poses.  The
-    env's injected noise is R minus this spread squared, since the
-    truth-vs-predictor mismatch already contributes it."""
+    """Estimate the (6,) std of the members' disagreement over the measurement,
+    on random lattice pushes from random workspace poses. The injected noise is
+    R minus this spread squared, since the truth-vs-predictor mismatch already
+    contributes part of R."""
     rng = np.random.default_rng(0)
     inputs = []
     for _ in range(rows):
@@ -173,7 +166,7 @@ def member_spread(
                 path_downsample(path.tip_times, path.tip_positions)[:2].reshape(-1),
             )
         )
-    # One push's 405 rows at a time keeps the peak memory to one batch.
+    # One predict call per push keeps peak memory to one 405-row batch.
     spreads = [
         np.stack(
             [ensemble.predict(rows_in, member=m) for m in range(len(ensemble.members))]
@@ -190,8 +183,7 @@ def observation_vector(
     last_action: np.ndarray,
     pushes: int,
 ) -> np.ndarray:
-    """The policy's observation from a filter state (shared with the
-    Drake-world transfer evaluation)."""
+    """The policy's observation vector (float32) from a filter state."""
     probs = belief.probs
     log_probs = np.log(np.maximum(probs, 1e-8))
     return np.asarray(
@@ -245,10 +237,9 @@ def select_push_action(
 
 def policy_decision(model: MaskablePPO, obs: np.ndarray, mask: np.ndarray) -> int:
     """The policy's deterministic choice under `mask` (stop last): stop when
-    its probability exceeds that of all pushes together, else the most
-    probable push.  With one stop action against hundreds of pushes, the
-    single most probable action is stop long before the policy actually
-    prefers stopping, so a plain argmax would stop too early."""
+    its probability is at least that of all pushes together, else the most
+    probable push. A plain argmax would stop too early, since stop is the single
+    most probable action long before it is preferred overall."""
     tensor, _ = model.policy.obs_to_tensor(obs)
     distribution = model.policy.get_distribution(tensor, action_masks=mask)
     categorical = distribution.distribution
@@ -269,8 +260,8 @@ def planar_transform(pose: np.ndarray) -> RigidTransform:
 
 
 class ProbingEnv(gymnasium.Env):
-    """Gymnasium environment wrapping the surrogate world.  Deterministic
-    in `reset`'s seed; every step is pure numpy."""
+    """Gymnasium environment over the surrogate world. Deterministic in
+    `reset`'s seed; every step is pure numpy."""
 
     metadata: typing.ClassVar[dict[str, list[str]]] = {"render_modes": []}  # type: ignore[misc]
 
@@ -287,9 +278,8 @@ class ProbingEnv(gymnasium.Env):
         self.family = config.family
         self.predictor = SurrogatePredictor(config.ensemble)
 
-        # Measurement noise: the deployment error minus the members' own
-        # spread, shrunk along R's correlation structure so the result
-        # stays positive definite.
+        # Measurement noise: deployment R minus the members' spread, keeping
+        # R's correlations so the result stays positive definite.
         spread = member_spread(self.ensemble, config.grid, config)
         r_diag = np.diag(CALIBRATED_R_SURROGATE)
         corr = CALIBRATED_R_SURROGATE / np.sqrt(np.outer(r_diag, r_diag))
@@ -315,8 +305,7 @@ class ProbingEnv(gymnasium.Env):
         return 3 + len(self.config.grid) + 2 + 3 + 3 + 6 + 8 + 1
 
     def _reachable(self) -> np.ndarray:
-        """Mask over push actions: the approach and push-end tip targets
-        must both sit inside the reach band."""
+        """Mask over push actions (see reachability_mask)."""
         return reachability_mask(self._pose, self.config)
 
     def _action_mask(self) -> np.ndarray:
@@ -327,22 +316,12 @@ class ProbingEnv(gymnasium.Env):
 
     def _observation(self) -> np.ndarray:
         assert self.belief is not None
-        probs = self.belief.probs
-        log_probs = np.log(np.maximum(probs, 1e-8))
-        return np.asarray(
-            np.concatenate(
-                [
-                    self._pose,
-                    log_probs,
-                    [self.belief.entropy(), probs.max()],
-                    self.belief.map_eta().as_array(),
-                    self.belief.mean_eta().as_array(),
-                    self._last_measurement,
-                    self._last_action,
-                    [float(self._pushes)],
-                ]
-            ),
-            dtype=np.float32,
+        return observation_vector(
+            self.belief,
+            self._pose,
+            self._last_measurement,
+            self._last_action,
+            self._pushes,
         )
 
     def _info(self, reason: str) -> dict[str, object]:
@@ -398,8 +377,7 @@ class ProbingEnv(gymnasium.Env):
         push = self.config.actions[index]
         entropy_before = self.belief.entropy()
 
-        # The executed path: the commanded maneuver run with this push's
-        # sampled arm lag.
+        # Executed path: the commanded maneuver with this push's sampled arm lag.
         path = nominal_tip_path(
             planar_transform(self._pose),
             push,
@@ -423,8 +401,8 @@ class ProbingEnv(gymnasium.Env):
             path_block,
         )
 
-        # Truth outcome: a sampled member's prediction of the executed path,
-        # plus deployment-scale measurement noise (world frame).
+        # Truth outcome: a sampled member's prediction for the executed path,
+        # plus deployment-scale noise (world frame).
         member = int(self.np_random.integers(len(self.ensemble.members)))
         truth = world_measurement(
             start,
@@ -436,8 +414,8 @@ class ProbingEnv(gymnasium.Env):
         measured = truth + noise
         measured[2] = wrap_angle(measured[2])
 
-        # The filter predicts under every grid hypothesis from the same
-        # measured path, then updates from the noisy measurement.
+        # Predict under every grid hypothesis for the same path, then update
+        # from the noisy measurement.
         predicted = self.predictor.predict_from_parts(self.config.grid, start, *parts)
         self.belief.update_from_predictions(measured, predicted)
 

@@ -1,9 +1,9 @@
-"""The pushed object: a T-shaped block whose inertial parameters are knobs.
+"""The pushed T-shaped block and the table: exactly-touching box composites
+with knobs for inertia, friction and an optional welded rod.
 
-Composite SDFs written here place the body frame at the center of the
-footprint's bounding-box *bottom* face and require exactly touching
-parts, so uniform-density volumes compose exactly.  Contact is compliant
-hydroelastic on every part. Planar footprint geometry lives in geometry.py
+Body frame: origin at the footprint's bottom-face center. Parts must exactly
+touch so uniform-density volumes compose exactly. Contacts are compliant
+hydroelastic. Planar footprint geometry lives in geometry.py.
 """
 
 import itertools
@@ -15,7 +15,7 @@ import numpy as np
 from pydrake.all import MultibodyPlant, Parser, RigidTransform, RotationMatrix
 
 from src import ASSET_DIR
-from src.constants import GOAL_RADIUS, START_RADIUS, WORKSPACE_CENTER
+from src.constants import WORKSPACE_CENTER
 from src.world.geometry import (
     SurfaceNormal,
     contains_disk,
@@ -36,11 +36,8 @@ class Rod:
 
 
 class BoxComposite:
-    """A prism built from exactly-touching axis-aligned boxes ("parts").
-
-    The shared writer behind the pushed object and the table: name,
-    parts, height, mass, color, friction, and an optional welded-in rod
-    are per-instance knobs that can be tuned.
+    """A prism built from exactly-touching axis-aligned boxes ("parts"), with
+    an optional welded-in Rod. Shared by the pushed object and the table.
     """
 
     body_box = "base_link"
@@ -233,14 +230,15 @@ class BoxComposite:
 
 class Object(BoxComposite):
     """The pushed object: a T-shaped prism built from two exactly-touching
-    boxes, a free body whose pose gets set per-run and which must be pushed
-    to a random goal orientation."""
+    boxes, a free body with a planar `pose` and `goal` (x m, y m, yaw rad) in
+    the world frame.  Both default to the workspace center at yaw 0."""
 
     def __init__(
         self,
-        rng: np.random.Generator,
         rod: Rod,
         friction: float = 0.3,
+        pose: tuple[float, float, float] = (*WORKSPACE_CENTER, 0.0),
+        goal: tuple[float, float, float] | None = None,
     ):
         super().__init__(
             name="object",
@@ -255,21 +253,8 @@ class Object(BoxComposite):
             friction=friction,
             rod=rod,
         )
-        rho_start = START_RADIUS * np.sqrt(rng.uniform())
-        theta_start = rng.uniform(0.0, 2.0 * np.pi)
-        # x, y, yaw (rad), resting on the table top
-        self.pose = (
-            WORKSPACE_CENTER[0] + rho_start * np.cos(theta_start),
-            WORKSPACE_CENTER[1] + rho_start * np.sin(theta_start),
-            rng.uniform(0.0, 2.0 * np.pi),
-        )
-        rho_goal = GOAL_RADIUS * np.sqrt(rng.uniform())
-        theta_goal = rng.uniform(0.0, 2.0 * np.pi)
-        self.goal = (
-            WORKSPACE_CENTER[0] + rho_goal * np.cos(theta_goal),
-            WORKSPACE_CENTER[1] + rho_goal * np.sin(theta_goal),
-            rng.uniform(0.0, 2.0 * np.pi),
-        )
+        self.pose = pose
+        self.goal = goal if goal is not None else pose
 
     def x_wo(self) -> RigidTransform:
         """Get the transformation from world origin to object."""
@@ -279,8 +264,7 @@ class Object(BoxComposite):
         )
 
     def x_wg(self) -> RigidTransform:
-        """Get the goal transformation from world origin to object: its start
-        position with the goal yaw."""
+        """Get the transformation from world origin to the goal pose."""
         return RigidTransform(
             RotationMatrix.MakeZRotation(self.goal[2]),
             np.array([self.goal[0], self.goal[1], 0.0]),

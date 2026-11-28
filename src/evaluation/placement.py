@@ -1,24 +1,22 @@
-"""Package E: one placement episode under one probing condition, in the Drake
-truth sim with the Drake filter, written as a JSON record.
+"""One placement episode under one probing condition, in the Drake truth sim
+with the Drake filter, written as a JSON record.
 
 Conditions, all on the seed's paired true eta, start pose and goal:
-- "true_eta": MPC plans with the true parameters, no filter (the ceiling);
-- "none": no probing, MPC plans with the filter's MAP from the first push;
-- "nominal_eta": MPC plans with a fixed, uninformed eta (the grid point
-  nearest the grid's mean), no filter;
+- "true_eta": MPC plans with the true eta, no filter (the ceiling);
+- "none": no probing; MPC plans with the filter's MAP from the first push;
+- "nominal_eta": MPC plans with a fixed uninformed eta (the grid point nearest
+  the grid's mean), no filter;
 - "farthest_eta": MPC plans with the grid hypothesis farthest from the true
-  eta (range-normalized), no filter: the worst fixed model;
-- "<prober>:<k>": k probe pushes, then MPC; the prober is "learned" (the
-  trained policy choosing pushes, stop masked), "random" (uniform over the
-  probing lattice) or "long_fast" (uniform over its long, fast subset).
+  eta, no filter (the worst fixed model);
+- "<prober>:<k>": k probe pushes, then MPC. Prober "learned" is the trained
+  policy (stop masked), "random" is uniform over the probing lattice, and
+  "long_fast" is uniform over its long, fast subset.
 
-Probe and placement pushes share one budget.  The episode stops at the
-tolerance given, so run it at the tightest tolerance of interest: the
-recorded goal error after every push gives success at any looser tolerance
-and any smaller budget afterwards (the one-push MPC never looks at either).
+Probe and placement pushes share one budget. The episode stops at the tolerance
+given, so run at the tightest tolerance of interest: the recorded goal errors
+give success at looser tolerances and smaller budgets afterwards.
 """
 
-import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -44,6 +42,7 @@ from src.experiment import (
 )
 from src.policy.deploy import policy_selector
 from src.policy.env import make_probing_env_config
+from src.provenance import git_state
 from src.world.iiwa import Pusher
 from src.world.recording import TruthSim
 
@@ -84,9 +83,9 @@ def parse_condition(name: str) -> Condition:
 
 
 def nominal_eta(grid: list[Eta]) -> Eta:
-    """The grid hypothesis nearest the grid's mean (range-normalized): what a
-    system without an estimator would assume.  A grid point, since the mean
-    rod position itself can fall outside the block."""
+    """The grid hypothesis nearest the grid's mean (range-normalized), as a
+    system without an estimator might assume. A grid point, since the mean rod
+    position can fall outside the block."""
     points = np.array([g.as_array() for g in grid])
     offsets = (points - points.mean(axis=0)) / grid_spans(grid)
     return grid[int(np.argmin(np.linalg.norm(offsets, axis=1)))]
@@ -106,18 +105,6 @@ def normalized_error(estimate: Eta | None, truth: Eta, grid: list[Eta]) -> float
     return float(
         np.linalg.norm((estimate.as_array() - truth.as_array()) / grid_spans(grid))
     )
-
-
-def git_commit() -> str:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except OSError, subprocess.CalledProcessError:
-        return "unknown"
 
 
 def run_placement(
@@ -216,6 +203,6 @@ def run_placement(
         "max_pushes": max_pushes,
         "position_tolerance": tolerance.position,
         "yaw_tolerance": tolerance.yaw,
-        "commit": git_commit(),
+        **git_state(),
     }
     return record, summary

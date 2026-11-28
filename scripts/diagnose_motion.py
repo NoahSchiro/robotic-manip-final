@@ -1,11 +1,10 @@
 """Motion diagnostics for truth-simulation pushes.
 
-Pushes come either from seeded random draws (--seed) or from a JSON plan of
-listed pushes (--plan), run one after another on one continuous truth sim.
-Each push is measured on the sim's state log and its PushObservation: transfer
-clearance, joint speed, tracking of the commanded push line, release clearance
-from the block, and block drift after the release.  World frame unless noted;
-lengths in m, speeds in m/s, angles in rad, times in s.
+Pushes come from seeded random draws (--seed) or a JSON plan (--plan), run in
+order on one continuous truth sim.  Each push is measured from the sim's state
+log and its PushObservation: transfer clearance, joint speed, tracking of the
+commanded push line, release clearance, and block drift after release.  World
+frame unless noted; lengths in m, speeds in m/s, angles in rad, times in s.
 """
 
 import argparse
@@ -424,14 +423,15 @@ def start_sim(
     rod: tuple[float, float],
     friction: float,
     yaw: float,
-    rng: np.random.Generator,
     meshcat: Meshcat | None,
 ) -> tuple[Object, Pusher, TruthSim]:
     """The block with its rod at `rod` (m), resting at BLOCK_START_XY with `yaw`
-    (rad), and a truth sim holding it.  `rng` seeds the block's random start and
-    goal, which this overrides."""
-    obj = Object(rng, rod=Rod(rod[0], rod[1], ROD_MASS), friction=friction)
-    obj.pose = (BLOCK_START_XY[0], BLOCK_START_XY[1], yaw)
+    (rad), and a truth sim holding it."""
+    obj = Object(
+        rod=Rod(rod[0], rod[1], ROD_MASS),
+        friction=friction,
+        pose=(BLOCK_START_XY[0], BLOCK_START_XY[1], yaw),
+    )
     pusher = Pusher()
     sim = TruthSim(
         obj,
@@ -461,9 +461,7 @@ def run_random(
     meshcat: Meshcat | None = None,
 ) -> dict[str, object]:
     """Diagnose `pushes` random reachable pushes drawn with `seed`."""
-    obj, pusher, sim = start_sim(
-        (0.0, 0.0), friction, yaw, np.random.default_rng(seed), meshcat
-    )
+    obj, pusher, sim = start_sim((0.0, 0.0), friction, yaw, meshcat)
     action_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
     run = MotionRun(sim, obj, pusher)
     state = ProbingState(truth_sim=sim, obj=obj, belief=None)
@@ -493,9 +491,7 @@ def run_plan(plan: Plan, meshcat: Meshcat | None = None) -> dict[str, object]:
     """Execute the plan's pushes in order and diagnose each one.  Pushes whose
     arm plan fails are reported with `ik_failed`; pushes not reached are reported
     with `not_run` and the stop reason."""
-    obj, pusher, sim = start_sim(
-        plan.rod, plan.friction, plan.yaw, np.random.default_rng(0), meshcat
-    )
+    obj, pusher, sim = start_sim(plan.rod, plan.friction, plan.yaw, meshcat)
     space = make_push_space(obj.parts, obj.height)
     actions = [spec_action(space, spec) for spec in plan.pushes]
     sequence = PlanSequence(actions)
@@ -577,8 +573,7 @@ def main() -> None:
 
     meshcat = None
     if args.html is not None:
-        # StartMeshcat lives in pydrake's unannotated _geometry_extra.py,
-        # so strict mypy sees the call as untyped.
+        # pydrake's StartMeshcat is unannotated; strict mypy needs the ignore.
         meshcat = StartMeshcat()  # type: ignore[no-untyped-call]
     if args.plan is not None:
         plan = load_plan(args.plan)

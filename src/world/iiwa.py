@@ -158,9 +158,8 @@ def solve_tip_ik(
     )
     ik.AddOrientationConstraint(stick, RotationMatrix(), world, X_WT.rotation(), 0.0)
 
-    # Elbow-forward, tool-down IK fallback seeds at a spread of shoulder yaws:
-    # the problem is nonconvex, so a diverse seed rescues the occasional
-    # locally-infeasible solve.
+    # Elbow-forward, tool-down fallback seeds spread over shoulder yaw: the IK
+    # is nonconvex, so a diverse seed can rescue a locally infeasible solve.
     ik_fallback_shoulder_yaws = (0.0, 0.5, -0.5, 1.0)
     ik_fallback_seed = np.array([0.0, 1.0, 0.0, -1.8, 0.0, 1.4, 0.0])
 
@@ -188,9 +187,8 @@ def transfer_height(obj: Object) -> float:
 def hover_tip_pose(obj: Object) -> RigidTransform:
     """The tip pose parked a few centimeters above the block, tool pointing
     straight down."""
-    # The block's body frame sits at the footprint's bottom center, so
-    # obj.pose's x, y is a point directly over the block and its top face
-    # is at z = obj.height.
+    # The body frame sits at the footprint's bottom center, so obj.pose's x, y
+    # lies over the block, whose top face is at z = obj.height.
     x_block, y_block = obj.pose[:2]
     return RigidTransform(TOOL_DOWN, np.array([x_block, y_block, transfer_height(obj)]))
 
@@ -247,9 +245,8 @@ def _tool_down(position: np.ndarray) -> RigidTransform:
 
 def maneuver_time(obj: Object, action: Action) -> float:
     """Get `action`'s nominal maneuver time (s): push_maneuver's durations plus
-    the final hold. It ignores the joint-speed stretching make_push_trajectory
-    applies to free-space legs, since that depends on the IK solutions, which
-    planning cannot compute for candidates it has not scored."""
+    the final hold. Ignores the joint-speed stretching of free-space legs in
+    make_push_trajectory, which needs IK solutions planning does not compute."""
     maneuver = push_maneuver(obj.x_wo(), action, transfer_height(obj))
     return sum(duration for _pose, duration in maneuver) + HOLD_TIME
 

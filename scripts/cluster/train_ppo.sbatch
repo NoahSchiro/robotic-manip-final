@@ -1,8 +1,8 @@
 #!/bin/bash
-# PPO training on the MIT Engaging cluster, inside the project's Apptainer
-# image (Drake's wheels need a newer glibc than the cluster's).  Submit from
-# the repo root; every run resumes from the latest checkpoint in OUT, so
-# resubmitting the same command continues a run that hit the time limit.
+# PPO training on the MIT Engaging cluster, in the project's Apptainer image
+# (Drake's wheels need a newer glibc than the cluster has).  Submit from the
+# repo root; each run resumes from the latest checkpoint in OUT, so resubmitting
+# the same command continues a run that hit the time limit.
 #
 #   sbatch scripts/cluster/train_ppo.sbatch
 #   OUT=data/work/ppo_bench TIMESTEPS=50000 N_ENVS=32 sbatch -t 00:30:00 scripts/cluster/train_ppo.sbatch

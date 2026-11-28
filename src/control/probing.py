@@ -3,8 +3,7 @@ recorders and the MPC's probe phase.
 
 Each push is chosen by a Selector, planned against the arm's current state,
 executed in the truth sim, and folded into the belief when there is one.
-ProbingState is the one authoritative live episode; the loop leaves it at the
-true final state so a later phase can continue from it.
+ProbingState is the single authoritative live episode.
 """
 
 import time
@@ -23,17 +22,16 @@ from src.world.push_space import PushSpace, reachable
 from src.world.recording import TruthSim
 
 MAX_IK_RETRIES = 40
-LONG_PUSH = 0.068  # m: the long third of the push-distance range
-FAST_PUSH = 0.11  # m/s: the fast third of the push-speed range
+LONG_PUSH = 0.068  # m: lower bound of the long pushes
+FAST_PUSH = 0.11  # m/s: lower bound of the fast pushes
 
 
 @dataclass
 class ProbingState:
-    """The live episode.  `obj.pose` is the block's planar pose (x m, y m, yaw
-    rad) in the world frame; `belief` is None when no filter runs;
-    `last_measurement` is the (6,) estimator measurement of the last push and
-    `last_action` the (8,) vector [contact position (3), contact normal (3), speed
-    m/s, contact time s].  `task` sets where the block must stay."""
+    """The live episode. `obj.pose` is the block's planar pose (x m, y m, yaw
+    rad) in the world frame; `belief` is None when no filter runs.
+    `last_measurement` is the (6,) measurement of the last push; `last_action`
+    is (8,) [contact position (3), contact normal (3), speed m/s, time s]."""
 
     truth_sim: TruthSim
     obj: Object
@@ -108,8 +106,7 @@ def lattice_selector(actions: Sequence[Action], rng: np.random.Generator) -> Sel
 
 
 def long_fast(actions: Sequence[Action]) -> list[Action]:
-    """The pushes the informativeness study found most useful: at least
-    LONG_PUSH m and at least FAST_PUSH m/s."""
+    """The pushes with distance >= LONG_PUSH (m) and speed >= FAST_PUSH (m/s)."""
     return [
         a
         for a in actions
@@ -124,10 +121,9 @@ def run_probing(
     on_push: Callable[[ProbingState, PushRecord], None] | None = None,
 ) -> ProbingOutcome:
     """Execute pushes chosen by `selector` until a stop condition, updating
-    `state` in place.  Stops before selecting once `budget` pushes have run,
-    and returns the selector's reason when it stops.  A push whose arm plan
-    fails is re-selected with that push in the failed list; more than
-    MAX_IK_RETRIES consecutive failures stop the loop."""
+    `state` in place. Stops before selecting once `budget` pushes have run.
+    A push whose arm plan fails is re-selected with it in the failed list; more
+    than MAX_IK_RETRIES consecutive failures stop the loop."""
     records: list[PushRecord] = []
     failed: list[Action] = []
     attempts = 0

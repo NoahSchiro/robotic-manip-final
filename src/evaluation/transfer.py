@@ -1,18 +1,12 @@
-"""Evaluate learned and baseline probing in the continuous Drake truth sim.
+"""Paired evaluation of the learned probing policy in the Drake truth sim,
+against random and long-fast probing, with the same episodes also run in the
+surrogate world to measure the sim-to-real gap. The random-only mode needs
+no learned assets.
 
-The paired comparison runs the learned policy and its baselines through the
-same arm pipeline.  The random-only mode needs no learned assets.
-
-Each episode samples the true eta and start pose
-(episode_conditions); the learned policy runs first, then two baselines
-reuse its push count on the identical episode, so the comparison isolates
-push selection: random pushes from the policy's lattice, and random pushes
-from the lattice's long, fast subset (what the informativeness study
-recommends; probing.long_fast).  The same
-episodes also run in the surrogate world as the reference, which
-quantifies the sim-to-real gap of the surrogate pipeline directly.
-
-Every push runs the arm and a full-grid prediction when Drake is selected.
+Each episode's true eta and start pose come from `episode_conditions`. The
+learned policy runs first; both baselines then reuse its push count on the
+identical episode, so the comparison isolates push selection. With the Drake
+predictor, every push also runs a full-grid Drake prediction.
 """
 
 import json
@@ -106,8 +100,8 @@ def stop_reward(belief: GridBayesFilter, true_eta: Eta, spans: np.ndarray) -> fl
 
 
 def _entropy_drop(record: PushRecord) -> float:
-    """Nats the push removed from the belief; evaluation episodes always run
-    with a belief, so the entropies are present."""
+    """Nats removed from the belief by the push. Evaluation episodes always
+    carry a belief."""
     assert record.entropy_before is not None and record.entropy_after is not None
     return record.entropy_before - record.entropy_after
 
@@ -134,11 +128,10 @@ def _drake_episode(
     strategy: str,
     r_matrix: np.ndarray,
 ) -> EpisodeRecord:
-    """One episode in the Drake world.  `strategy` "learned" runs the trained
-    policy, which decides when to stop, or with `forced_pushes` makes exactly
-    that many; "random" and "long_fast" run
-    `forced_pushes` pushes drawn uniformly from the probing lattice or its
-    long, fast subset (the paired baselines)."""
+    """One episode in the Drake world. `strategy` "learned" runs the trained
+    policy, which decides when to stop unless `forced_pushes` fixes the count.
+    "random" and "long_fast" draw `forced_pushes` pushes uniformly from the
+    probing lattice or its long, fast subset."""
     eta, start_pose, action_rng = episode_conditions(seed)
     obj = episode_object(eta, start_pose, ROD_MASS)
     spans = grid_spans(config.grid)
@@ -294,11 +287,9 @@ def run_evaluation(
     random_pushes: int | None = None,
     fixed_pushes: int | None = None,
 ) -> str:
-    """Run the paired evaluation — the learned policy and the
-    random-probing baseline through the identical Drake pipeline — and
-    write the report.  `predictor` picks the filter's prediction model:
-    the Drake plant (gold-standard accuracy), or the surrogate (online
-    speed, calibrated to CALIBRATED_R_SURROGATE)."""
+    """Run the paired evaluation through the Drake pipeline and write the
+    report. `predictor` picks the filter's prediction model: the Drake plant,
+    or the surrogate (calibrated to CALIBRATED_R_SURROGATE)."""
     truth_config = truth_sim_config()
     started = time.perf_counter()
     if random_only:

@@ -1,13 +1,12 @@
 """How well a push separates neighbouring hypotheses, by speed at matched push
 distance.
 
-For each contact on the MPC grid and each (distance, speed) pair, the Drake
-prediction model predicts the estimator measurement along the nominal tip path
-under a base hypothesis and under that hypothesis moved one grid step in one
-parameter (friction, rod x, or rod y).  The separation is the Mahalanobis
-distance between the two predictions under CALIBRATED_R: about 1 or more means
-one push noticeably shifts the belief between them.  Planning-only; no truth
-simulation.
+For each MPC-grid contact and each (distance, speed) pair, the Drake prediction
+model predicts the measurement along the nominal tip path under a base
+hypothesis and under that hypothesis moved one grid step in one parameter.  The
+separation is the Mahalanobis distance between the two under CALIBRATED_R
+(about 1 or more: one push noticeably shifts the belief).  Planning-only; no
+truth simulation.
 
     uv run python -m scripts.push_informativeness --out data/results/push_informativeness.json
     # Plot saved results without re-simulating
@@ -300,9 +299,9 @@ def plot_contact_maps(contacts: Sequence[ContactSeparation], out: Path) -> None:
     from matplotlib.figure import Figure
     from matplotlib.patches import Polygon
 
-    from scripts.plot_belief import outline_vertices
+    from src.world.geometry import outline_vertices
 
-    outline = outline_vertices(np.array(reference_object().parts)) * 100
+    outline = outline_vertices(reference_object().parts) * 100
     figure = Figure(figsize=(12, 5.0), facecolor="#fcfcfb")
     FigureCanvasAgg(figure)
     axes = figure.subplots(1, len(MAP_TITLES))

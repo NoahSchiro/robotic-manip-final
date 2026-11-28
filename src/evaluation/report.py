@@ -1,6 +1,5 @@
-"""The evaluation report renderer: from an evaluation report json it
-produces the paired-results table, the learning-curve plot and the
-behavioral summary — the submission-ready artifacts.
+"""Renders an evaluation report json as the paired-results table, the
+learning-curve plot, the push histogram and the behavioral summary.
 
     uv run python -u main.py evaluation-report --report data/results/evaluation_report.json
 """
@@ -94,8 +93,8 @@ def _behavioral_probe(
     episodes: int = 24,
     seed: int = 60000,
 ) -> list[str]:
-    """The policy's behavior on fresh episodes: push count, action
-    diversity, stop-timing adaptation to belief difficulty."""
+    """The policy's behavior on fresh episodes: push count, action diversity
+    and entropy at stop."""
     env = ProbingEnv(config)
     pushes_list, errors, action_counts = (
         [],

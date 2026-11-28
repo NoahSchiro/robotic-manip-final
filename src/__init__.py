@@ -1,6 +1,6 @@
-"""Planar pushing testbed modules: arm (iiwa), object, table, controller."""
+"""Planar pushing testbed package."""
 
 from pathlib import Path
 
-# Where generated SDFs land: written per-run, parsed right back.
+# Generated SDF files: written per run, then parsed back.
 ASSET_DIR = Path(__file__).resolve().parents[1] / "assets"

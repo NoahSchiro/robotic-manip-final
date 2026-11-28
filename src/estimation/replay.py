@@ -1,24 +1,12 @@
-"""Offline replay of recorded trials through the grid Bayes filter: the
-frozen reference the estimator is judged by
+"""Offline replay of recorded trials through the grid Bayes filter: the frozen
+reference the estimator is judged by.
 
     uv run python main.py record-trials   # the dataset (slow, Drake truth)
     uv run python main.py replay          # this report (minutes)
 
-Each recorded trial replays push by push: one prediction pass over every
-hypothesis feeds two filters that differ only in likelihood, the Student-t
-(nu = 3) the estimator ships with and the proposal's Gaussian.  Metrics per
-likelihood, scored against the true parameters: MAP within one grid step,
-MAP in the nearest cell, confidently wrong (max probability >= CONFIDENT_PROB
-with the MAP more than a step off), range-normalized MAP error, final max
-probability, and the mean entropy after each push.
-
-The report also lists every trial: its true parameters, each push's action
-and how far its measurement lies from the prediction at the true parameters
-(Mahalanobis distance under R, so model mismatch shows apart from weak pushes),
-and each likelihood's final estimate and entropy after every push.
-
-Trials recorded with zero pushes carry no signal (their MAP is an arbitrary
-tie-break), so they are dropped from the metrics and counted in the report.
+One prediction pass feeds a Student-t (nu = 3) and a Gaussian filter that
+differ only in likelihood. Zero-push trials are dropped from the metrics
+but counted, since their MAP is an arbitrary tie-break.
 """
 
 import json
@@ -45,7 +33,7 @@ from src.world.observation import PushObservation, planar_error
 CONFIDENT_PROB = 0.9
 
 # The likelihoods every replay compares, by name and degrees of freedom
-# (None: the Gaussian the proposal specifies).
+# (None: Gaussian).
 LIKELIHOODS: dict[str, float | None] = {"student_t": 3.0, "gaussian": None}
 
 # Eta's components, in as_array() order, for labeling per-parameter errors.
@@ -76,7 +64,10 @@ class TrialTracks:
 
 @dataclass(frozen=True)
 class FinalMetrics:
-    """One trial's final-step scores against its true parameters."""
+    """One trial's final-step scores against its true parameters. A MAP is
+    within one grid step when every |MAP - true| is at most that parameter's
+    grid step; it is confidently wrong when the final max probability is at
+    least CONFIDENT_PROB and the MAP is not within one step."""
 
     within_one_grid_step: bool
     map_is_nearest_cell: bool
@@ -226,7 +217,8 @@ def load_predictions(
 
 def trial_record(index: int, track: TrialTracks, grid: list[Eta]) -> dict[str, object]:
     """One trial's entry in the report: truth, pushes, and per-likelihood
-    final estimate.  Units: m, m/s, s; eta as (mu, bx, by)."""
+    final estimate. Units: m, m/s, s; eta as (mu, bx, by). true_eta_mahalanobis
+    is each measurement's distance under R from the true-parameter prediction."""
     pushes = [
         {
             "speed_m_per_s": obs.action.velocity,

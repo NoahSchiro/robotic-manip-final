@@ -1,16 +1,14 @@
 """Train the probing policy with MaskablePPO in the surrogate world.
 
 The policy acts in `src.policy.env.ProbingEnv`: a Discrete head over the
-probing lattice plus `stop`, with per-step action masks (reachability) and a
-431-dim observation.  Training runs on a SubprocVecEnv across the machine's
-cores; every `eval_every` steps a paired evaluation runs the current policy
-against a random-probing baseline on identical episodes (same seed: same
-true eta, start pose and noise stream), where the baseline reuses the
-policy's own push count.
+probing lattice plus `stop`, with per-step reachability masks and a 431-dim
+observation. Training runs on a SubprocVecEnv. Every `eval_every` steps, a
+paired evaluation runs the current policy and a random-probing baseline on
+identical episodes (same seed: same true eta, start pose and noise stream);
+the baseline uses the policy's own push count.
 
-BLAS libraries are pinned to one thread per process below (and in the
-cluster script): each vector-env worker runs its own numpy matrix products,
-and threads oversubscribed across the workers are slow.
+BLAS is pinned to one thread per process (the cluster script does the same),
+since each vector-env worker runs its own matrix products.
 """
 
 import json

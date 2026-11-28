@@ -15,7 +15,7 @@ TRUE_ETA = Eta(mu=0.42, bx=0.012, by=-0.018)
 def synthetic_record(pushes: int) -> BeliefRecord:
     """A prior and `pushes` posteriors that sharpen around TRUE_ETA, with
     contacts taken from the block's own outline sampling."""
-    obj = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.2))
+    obj = Object(rod=Rod(0.0, 0.0, 0.2))
     grid = make_grid(GridSpec(), obj.parts)
     hypotheses = np.array([eta.as_array() for eta in grid])
     true = TRUE_ETA.as_array()

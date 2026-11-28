@@ -57,7 +57,7 @@ def push_model_config(
 def reference_object(rod_mass: float = ROD_MASS) -> Object:
     """The block with its rod at the center: its outline and height are the
     same for every eta, so it serves wherever only the shape matters."""
-    return Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, rod_mass))
+    return Object(rod=Rod(0.0, 0.0, rod_mass))
 
 
 def lattice(space: PushSpace) -> list[Action]:
@@ -149,10 +149,9 @@ def sample_episode_conditions(
     parts: list[tuple[float, float, float, float]],
     task: Task = TASKS["near"],
 ) -> tuple[Eta, np.ndarray]:
-    """The true eta and start pose from `rng`; the PPO environment's reset and
-    the Drake episodes both draw this way, so paired evaluations see identical
-    conditions.  Eta is drawn first, so a seed's eta is the same in every
-    task."""
+    """The true eta and start pose from `rng`, shared by the PPO environment's
+    reset and the Drake episodes.  Eta is drawn first, so a seed's eta is the
+    same in every task."""
     eta = sample_eta(rng, GridSpec(), parts)
     x, y = task.start_xy(rng)
     return eta, np.array([x, y, rng.uniform(-np.pi, np.pi)])
@@ -186,7 +185,7 @@ def episode_object(
     eta: Eta, start_pose: np.ndarray, rod_mass: float = ROD_MASS
 ) -> Object:
     """The block for `eta` resting at `start_pose`."""
-    obj = eta.to_object(np.random.default_rng(0), rod_mass)
+    obj = eta.to_object(rod_mass)
     obj.pose = (float(start_pose[0]), float(start_pose[1]), float(start_pose[2]))
     return obj
 

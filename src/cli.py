@@ -1,7 +1,8 @@
 """The command-line options main.py's subcommands share.
 
-The defaults come from src.experiment: simulate must run with the settings
-R was calibrated under, so no subcommand may define its own.
+Defaults come from src.constants.  The calibrated covariance
+(estimator.CALIBRATED_R) assumes these settings, so no subcommand may define
+its own.
 """
 
 import argparse

@@ -1,12 +1,9 @@
-"""Live views of the estimator's belief, for watching it work in --estimate
-or an MPC episode.
+"""Live views of the estimator's belief, refreshed after every push.
 
-Two views, both refreshed after every push:
-- in Meshcat, the belief over the rod's position drawn onto the block's top
-  face, next to the red marker that shows where the rod truly is;
-- a matplotlib window charting the belief over the rod's position and over
-  friction, with the entropy, the most likely hypothesis's probability and
-  the MAP's error over the pushes so far.
+- Meshcat: the belief over the rod's position drawn onto the block's top
+  face, beside the red marker at the true rod position.
+- matplotlib: the belief over the rod's position and over friction, with
+  the entropy, the MAP's probability and the MAP's error per push.
 """
 
 from collections.abc import Sequence
@@ -22,8 +19,8 @@ from src.estimation.params import Eta
 from src.world.geometry import SurfacePart, boundary_edges
 from src.world.object import Object
 
-# A grid position holding all the probability gets a disc this big, smaller
-# than the true rod's marker so a ring of the marker shows around it.
+# Disc radius (m) for a grid position holding all the probability; smaller
+# than the true rod's marker, so a ring of the marker shows around it.
 _DISC_MAX_RADIUS = 0.006
 _DISC_MIN_RADIUS = 0.001
 _DISC_THICKNESS = 0.0005
@@ -160,8 +157,8 @@ class BeliefDashboard:
         ax.set_xlabel("rod x (cm, body frame)")
         ax.set_ylabel("rod y (cm, body frame)")
         ax.set_title(title, fontsize=10)
-        # The T leaves its upper right corner empty.  Fixed legend marker sizes
-        # keep a large belief disc from swelling the legend.
+        # The T leaves the upper right corner empty for the legend.  Fixed
+        # legend marker sizes keep a large belief disc from swelling it.
         legend = ax.legend(loc="upper right", fontsize=8)
         for handle in legend.legend_handles:
             if isinstance(handle, PathCollection):

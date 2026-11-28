@@ -1,16 +1,12 @@
-"""Prediction models for the estimator and the MPC: where a push leaves the
-object under a hypothesized eta.
+"""Prediction models: where a push leaves the object under a hypothesized eta.
 
-DrakePushModel drives a tip path in a small plant: the table, the object,
-and a lone stick tip on x/y/z prismatic joints that Drake's built-in
-actuator PD drives along the path (no arm, IK, or arm PD).  For the
-estimator, predict replays a push's measured tip path under each
-hypothesis.  For the MPC, predict_pushes runs pushes not yet made under
-one eta, along their nominal tip path: straight and at the commanded
-speed, without the real arm's lag.  One plant serves every prediction:
-each swaps eta's inertia and friction into the context.
-ParallelPushModel fans predictions out over worker processes, each chunk
-on its own DrakePushModel.
+DrakePushModel simulates a small plant (table, object, and a lone stick tip
+on x/y/z prismatic joints that PD actuators drive along a tip path; no arm,
+IK or arm PD). For the estimator, predict replays a measured tip path under
+each hypothesis. For the MPC, predict_pushes runs unmade pushes along their
+nominal tip path: straight, at the commanded speed, without the arm's lag.
+Every prediction uses one plant, with eta's inertia and friction swapped in.
+ParallelPushModel fans predictions out over worker processes.
 """
 
 from collections.abc import Sequence
@@ -85,14 +81,12 @@ class PlanningModel(Protocol):
 
 
 def nominal_tip_path(obj: Object, action: Action) -> PiecewisePolynomial:
-    """Get the tip's commanded path for `action` from `obj`'s current pose,
-    as push_maneuver lays it out: from the standoff point, push at the
-    commanded speed, release along the push line, and rise clear of the
-    block, each leg straight and at constant speed.  Times start at 0 at the
-    standoff, like a push window's.
+    """Get the tip's commanded path for `action` from `obj`'s current pose:
+    push_maneuver's standoff, push, release and rise, as straight
+    constant-speed legs. Times start at 0 at the standoff, as in a push window.
 
-    The rise matters: the release retraces the push line, which a block the
-    push has rotated can strike, so the stick rises clear of its top.
+    The rise clears the block's top: the release retraces the push line, which
+    a block the push has rotated can strike.
     """
     maneuver = push_maneuver(obj.x_wo(), action, transfer_height(obj))
     (standoff, _), (push_end, t_push), (released, t_release), (raised, t_rise) = (
@@ -200,9 +194,7 @@ def spatial_inertia(obj: Object) -> SpatialInertia:
 
 def hypothesis_object(eta: Eta, rod_mass: float) -> Object:
     """Build `eta`'s object for its physical properties only."""
-    # Object draws a random pose and goal on construction; predictions set the
-    # state explicitly, so the draws never matter and any seed will do.
-    return eta.to_object(np.random.default_rng(0), rod_mass)
+    return eta.to_object(rod_mass)
 
 
 class DrakePushModel(DynamicsModel, PlanningModel):
@@ -365,9 +357,9 @@ class DrakePushModel(DynamicsModel, PlanningModel):
 
 
 class ParallelPushModel(DynamicsModel, PlanningModel):
-    """DrakePushModel's predictions split across `workers` processes.  What
-    runs in parallel is simulated predictions for one decision; real pushes
-    still happen one at a time.  Use as a context manager, or call close()."""
+    """DrakePushModel's predictions split across `workers` processes. Only one
+    decision's predictions run in parallel; real pushes stay sequential. Use as
+    a context manager, or call close()."""
 
     def __init__(self, workers: int, config: PushModelConfig) -> None:
         self.workers = workers
@@ -379,8 +371,8 @@ class ParallelPushModel(DynamicsModel, PlanningModel):
         config: PushModelConfig, etas: list[Eta], obs: PushObservation
     ) -> np.ndarray:
         """Predict one chunk of hypotheses, running in a worker process."""
-        # A model per chunk keeps workers stateless: building one takes tens of
-        # milliseconds, against seconds simulating the chunk.
+        # One model per chunk keeps workers stateless; building one is cheap
+        # next to simulating a chunk.
         return DrakePushModel(config).predict(etas, obs)
 
     @staticmethod

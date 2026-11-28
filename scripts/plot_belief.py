@@ -4,14 +4,14 @@
     uv run python -m scripts.plot_belief plot data/work/belief_seed123.npz --out docs/figures/belief_seed123.png
 
 `record` runs the truth sim and the Drake prediction model.  `plot` reads only
-the .npz and uses numpy, matplotlib and the outline geometry in src/geometry.py.
+the .npz and uses numpy, matplotlib and the outline geometry in
+src/world/geometry.py.
 """
 
 import argparse
 import dataclasses
 import json
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,22 +26,16 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Polygon
 
 from src import paths
-from src.world.geometry import (
-    SurfacePart,
-    boundary_edges,
-    footprint_center,
-    trace_outline,
-)
+from src.provenance import git_state
+from src.world.geometry import SurfacePart, outline_vertices
 
 if TYPE_CHECKING:
     from src.control.probing import ProbingState, PushRecord
 
 SCHEMA_VERSION = 1
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Palette (docs-facing values from the dataviz reference palette).  The
-# sequential ramp is blue steps 100-700; orange is categorical slot 2 and marks
-# the push; everything else is text or neutral tokens.
+# Palette: a blue sequential ramp, orange for the push, neutral tokens for text
+# and structure.
 SEQUENTIAL_BLUE = ("#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b")
 BAR_BLUE = "#2a78d6"
 PUSH_ORANGE = "#eb6834"
@@ -171,28 +165,6 @@ class _Trace:
         self.duration.append(push.observation.duration)
 
 
-def git_state() -> dict[str, Any]:
-    """The checkout's commit and whether it has uncommitted changes."""
-    try:
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-    except OSError, subprocess.CalledProcessError:
-        return {"commit": "unknown", "dirty": None}
-    return {"commit": commit, "dirty": bool(status.strip())}
-
-
 def record_episode(args: argparse.Namespace) -> BeliefRecord:
     """Run one episode through the shared probing loop with random pushes and
     a grid Bayes filter, collecting the belief after each push."""
@@ -275,19 +247,6 @@ def record_episode(args: argparse.Namespace) -> BeliefRecord:
 # -- plotting (numpy and matplotlib only) --------------------------------------
 
 
-def outline_vertices(parts: np.ndarray) -> np.ndarray:
-    """(V, 2) vertices in meters of the block outline in the body frame,
-    counterclockwise."""
-    surface_parts: list[SurfacePart] = [
-        (float(sx), float(sy), float(cx), float(cy)) for sx, sy, cx, cy in parts
-    ]
-    loop = trace_outline(boundary_edges(surface_parts))
-    center = footprint_center(surface_parts)
-    vertices: np.ndarray = np.array([start for start, _end in loop], dtype=float)
-    offset: np.ndarray = vertices - center
-    return offset
-
-
 def marginal_groups(
     grid: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -313,7 +272,10 @@ def build_figure(record: BeliefRecord) -> Figure:
         ]
     )
     rod_cm = rod_xy * M_TO_CM
-    outline_cm = outline_vertices(record.parts) * M_TO_CM
+    parts: list[SurfacePart] = [
+        (float(sx), float(sy), float(cx), float(cy)) for sx, sy, cx, cy in record.parts
+    ]
+    outline_cm = outline_vertices(parts) * M_TO_CM
     rod_max = max(float(rod_marginal.max()), 1e-12)
     mu_top = 1.1 * float(mu_marginal.max())
     cmap = LinearSegmentedColormap.from_list("belief_blue", SEQUENTIAL_BLUE)

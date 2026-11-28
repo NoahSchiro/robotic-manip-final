@@ -83,7 +83,7 @@ def test_one_seed_cannot_cross_splits(tmp_path: Path) -> None:
 
 
 def make_push() -> tuple[Object, Action]:
-    obj = Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.2))
+    obj = Object(rod=Rod(0.0, 0.0, 0.2))
     obj.pose = (0.55, 0.0, 0.4)
     action = Action(
         SurfaceNormal(

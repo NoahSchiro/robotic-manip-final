@@ -1,17 +1,14 @@
 """How far the prediction model is from the truth sim on recorded pushes.
 
-Every push in a recorded trials file is re-predicted with the Drake prediction
-model along its measured tip path:
+Each push in a recorded trials file is re-predicted along its measured tip path
+with the Drake prediction model: at the true eta, at the model's timestep and at
+a fine one (default: the truth sim's); at the nearest grid hypothesis, which R
+is calibrated on; and over a friction sweep with the rod at its true and nearest
+grid positions.  Mismatch is the Mahalanobis distance under CALIBRATED_R between
+measured and predicted measurements.  Writes every prediction to an .npz and
+prints a summary by friction band and per trial.
 
-- at the true eta, at the model's timestep and at a fine one (by default the
-  truth sim's), to separate timestep error from the rest of the model gap;
-- at the nearest grid hypothesis, the error R is calibrated on;
-- over a friction sweep with the rod at its true position and at the nearest
-  grid position, to find the friction each trial's pushes favour.
-
-Mismatch is the Mahalanobis distance under CALIBRATED_R between the measured
-and the predicted measurement.  Writes every prediction to an .npz and prints a
-summary by friction band and per trial.
+    uv run python -m scripts.model_bias --out data/results/model_bias.npz
 
     uv run python -m scripts.model_bias --out data/results/model_bias.npz
 """

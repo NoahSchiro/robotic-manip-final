@@ -1,25 +1,22 @@
-"""One-push MPC: predict where every candidate push leaves the object under
-the estimator's MAP eta, and rank the pushes by cost.
+"""One-push MPC: predict where each candidate push leaves the object under the
+estimator's MAP eta, and rank the pushes by cost.
 
-A push's cost is the proposal's pose cost at its predicted outcome,
+A push's cost is the pose cost at its predicted outcome,
 
     V(q) = |r - r_g|^2 / l^2 + lambda_phi wrap(phi - phi_g)^2,
 
-plus an action cost proportional to its maneuver time (moving to the
-push, pushing, backing off, lifting, and holding).  Only pushes inside the
-arm's reach band from the current pose (push_space.reachable_mask) are
-predicted, and a push is ranked only if, from its predicted end pose, at
-least MIN_REACHABLE_SHARE of the candidates stay reachable (or, when the
-block is already below that share, no fewer than now).  The one-push
-lookahead would otherwise drive the block toward the arm base, where it can
-no longer be pushed.  The caller executes the best push whose arm plan
-succeeds, updates the estimator, and replans.
+plus a term proportional to its maneuver time. Only pushes inside the arm's
+reach band from the current pose (push_space.reachable_mask) are predicted.
+A push is ranked only if, from its predicted end pose, at least
+MIN_REACHABLE_SHARE of the candidates stay reachable (or no fewer than now,
+when the block is already below that share); otherwise the one-push lookahead
+drives the block toward the arm base, where it can no longer be pushed. The
+caller executes the best push whose arm plan succeeds, then updates the
+estimator and replans.
 
-The candidates are a lattice on the push space (push_space.PushSpace.grid):
-contacts along each face inset from its corners, so the lowered stick clears
-the other part of the T, at a grid of speeds and push distances.  A contact
-at an inner corner would start the nominal tip path with the stick inside the
-block.
+The candidates are a lattice on the push space (push_space.PushSpace.grid).
+Contacts are inset from the corners, so the lowered stick clears the other
+part of the T.
 """
 
 from collections.abc import Sequence
@@ -125,7 +122,7 @@ class MpcController:
         self.actions = list(actions)
         self.pose_weights = pose_weights
         self.time_weight = time_weight
-        # Body-frame contact xy and inward normal xy (A, 2), push distance (A,) m.
+        # Body-frame contact xy and inward normal xy (A, 2); push distance (A,) m.
         self._contact_xy = np.array([a.contact.position[:2] for a in self.actions])
         self._normal_xy = np.array([a.contact.normal[:2] for a in self.actions])
         self._distance = np.array([a.velocity * a.time for a in self.actions])
@@ -152,10 +149,9 @@ class MpcController:
         return float(pose_cost(np.array(obj.pose), obj.goal, self.pose_weights))
 
     def plan(self, obj: Object, eta: Eta) -> list[Candidate]:
-        """Score every reachable candidate push from `obj`'s current pose
-        toward its goal under `eta`, cheapest first, keeping those that leave
-        enough of the candidates reachable (see the module docstring); empty
-        when none qualifies."""
+        """Score the reachable candidate pushes from `obj`'s pose under `eta`,
+        cheapest first, keeping those that leave enough candidates reachable
+        (see the module docstring). Empty when none qualifies."""
         actions = self.reachable(obj.pose)
         if not actions:
             return []

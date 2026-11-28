@@ -1,12 +1,10 @@
 """Combine per-episode `main.py evaluate` reports (for example from a cluster
-array job) into paired statistics.
+array job) into per-strategy and paired statistics.
 
-Each strategy's final MAP error is range-normalized (EpisodeRecord.error);
-paired differences compare strategies on identical episodes, so the
-standard error reflects push selection rather than episode difficulty.
-Each comparison reports a paired t-test and, since tied episodes (both
-strategies reaching the same grid estimate) make the differences far from
-normal, a Wilcoxon signed-rank test; both p-values are two-sided.
+Errors are range-normalized final MAP errors (EpisodeRecord.error).  Paired
+differences are taken per seed.  Each comparison reports a paired t-test and a
+Wilcoxon signed-rank test, since ties (both strategies reaching the same grid
+estimate) make the differences far from normal.  Both p-values are two-sided.
 
     uv run python -m scripts.merge_evaluations data/results/transfer/episode_*.json --out data/results/transfer/summary.json
 """

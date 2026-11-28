@@ -1,38 +1,10 @@
-"""Grid Bayes filter over eta = (mu, b).
+"""Grid Bayes filter over eta = (mu, b): one probability per hypothesis cell,
+reweighted after each push by the likelihood of its residual e = measured minus
+predicted (yaw wrapped), with q = e^T R^-1 e. The likelihood is Student-t with
+nu degrees of freedom, or Gaussian when nu is None.
 
-After each push t, every hypothesis i is reweighted by the likelihood of
-the measured outcome D_t:
-
-    p_(t+1, i) = p_(t, i) P(D_t | eta_i) / sum_j p_(t, j) P(D_t | eta_j)
-
-where e_(t,i) is the measured minus predicted measurement (x, y, yaw at
-the push window's end; vx, vy, wz at the push segment's end; see
-observation.py), yaw wrapped, and q = e^T R^-1 e.
-
-The likelihood is a multivariate Student-t,
-
-    P(D_t | eta_i) ~ (1 + q / nu)^(-(nu + 6) / 2),
-
-with R as its scale matrix, rather than the proposal's Gaussian
-exp(-q / 2) (nu=None).  Under a Gaussian, a single badly mispredicted push
-costs the correct hypothesis hundreds of nats and a wrong one takes over
-with near certainty; the t's log-penalty grows only logarithmically in q,
-so no single push can eliminate a hypothesis.  Mispredicted pushes are rare
-(see observation.py), so the t is a safety net against them; the replay
-(replay.py) scores both likelihoods.
-
-The true parameters are continuous, so they usually lie between grid
-hypotheses.  Each hypothesis therefore stands for its cell (the box within
-half a grid step of it), and the belief is held on `subcells`^3 points evenly
-spread inside every cell.  A point's error interpolates the grid's
-wrapped errors (params.subcells), so no extra simulation is needed; a cell's
-probability is the sum over its points.  Scoring only the grid points let the
-nearest hypothesis lose to a wrong neighbour for an off-grid truth (a rod
-between grid positions traded against friction), and the filter could then
-rule the right cell out with near certainty.
-
-Probabilities are kept as logs so long push sequences don't underflow.  A
-wait (no push) yields no observation, so it makes no update.
+Log-probabilities avoid underflow over long push sequences. A wait (no push)
+yields no observation and no update.
 """
 
 from collections.abc import Sequence
@@ -64,15 +36,14 @@ CALIBRATED_R = np.array(
     ]
 )
 
-# Sub-cell points per axis in each grid cell (see the module docstring);
-# CALIBRATED_R is calibrated for this setting.
+# Belief points per axis in each grid cell (see params.subcells); CALIBRATED_R
+# is calibrated for this value.
 SUBCELLS = 2
 
-# CALIBRATED_R_SURROGATE covers the trained surrogate predicting from
-# measured tip paths.  Its errors include the arm's tracking deviation, which
-# the training paths' synthetic deviations reproduce only in part; the PPO
-# environment's estimator noise is scaled to this, so the policy trains with
-# a belief that sharpens as slowly as the deployed surrogate filter's.
+# CALIBRATED_R_SURROGATE covers the trained surrogate's predictions from
+# measured tip paths. Its errors include arm tracking deviation, which the
+# training paths' synthetic deviations reproduce only in part. The PPO
+# environment's estimator noise is scaled to this covariance.
 # Calibrated by main.py calibrate --predictor surrogate: 192 truth pushes,
 # seed 20000, truth timestep 0.0001, settle time 0.3 s, 2^3 sub-cells,
 # ensemble trained on 140k samples.
@@ -142,7 +113,6 @@ class GridBayesFilter:
             raise ValueError(f"n_subcells must be at least 1, got {n_subcells}")
         if R.shape != (6, 6):
             raise ValueError(f"R must be 6x6, got {R.shape}")
-        # Cholesky fails unless R is symmetric positive-definite.
         np.linalg.cholesky(R)
         self.grid = list(grid)
         self.model = model
@@ -174,12 +144,12 @@ class GridBayesFilter:
     def update_from_predictions(
         self, measured: np.ndarray, predicted: np.ndarray
     ) -> None:
-        """Reweight the belief by the likelihood of `measured` given the
-        (N, 6) `predicted` measurement of each grid hypothesis, the errors
-        interpolated to the sub-cell points.  Split from update() so an offline replay can
-        score several likelihoods against one prediction pass."""
-        # Interpolate the wrapped errors, not the predictions: a linear blend
-        # of yaws on either side of +-pi would land near 0.
+        """Reweight the belief by the likelihood of `measured` given the (N, 6)
+        `predicted` measurement of each grid hypothesis, with errors interpolated
+        to the sub-cell points. Split from update() so replay can reuse one
+        prediction pass."""
+        # Interpolate wrapped errors, not predictions: blending yaws across +-pi
+        # would land near 0.
         errors = self.cells.weights @ planar_error(measured, predicted)
         q = squared_mahalanobis(errors, self.R_inv)
         log_likelihood = (
@@ -203,8 +173,7 @@ class GridBayesFilter:
         return Eta(float(mu), float(bx), float(by))
 
     def entropy(self) -> float:
-        """Get the belief's Shannon entropy H(p) = -sum p log p (nats), the
-        learned prober's reward signal."""
+        """Get the belief's Shannon entropy H(p) = -sum p log p (nats)."""
         p = self.probs
         nonzero = p > 0.0
         return float(-(p[nonzero] * self.log_probs[nonzero]).sum())

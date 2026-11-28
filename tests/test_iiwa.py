@@ -39,7 +39,7 @@ SITES_PER_M = 200.0
 
 
 def make_object() -> Object:
-    return Object(np.random.default_rng(0), rod=Rod(0.0, 0.0, 0.2))
+    return Object(rod=Rod(0.0, 0.0, 0.2))
 
 
 def key(site: SurfaceNormal) -> tuple[float, float]:

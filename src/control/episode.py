@@ -1,10 +1,8 @@
 """One placement episode: optional probing, then the one-push MPC toward the
 goal, on one live ProbingState and one push budget.
 
-With no probe pushes this is the no-probing baseline: the MPC plans with
-the MAP eta from the first push, and the estimator learns from the
-placement pushes themselves.  Probe pushes count against the episode's
-push budget, so probing has to earn back the pushes it spends.
+With no probe pushes this is the no-probing baseline: the MPC plans with the
+filter's MAP eta from the first push. Probe pushes count against the budget.
 """
 
 import time
@@ -66,8 +64,8 @@ class EpisodeResult:
     planning_time: float  # s of wall time in MPC planning
     estimation_time: float  # s of wall time in estimator updates
     # (position m, absolute yaw rad) to the goal at the start and after each
-    # push, probes included: success within any smaller budget follows,
-    # since the one-push MPC never looks at the pushes left.
+    # push, probes included. Success under a smaller budget follows, since the
+    # one-push MPC ignores the budget.
     goal_errors: tuple[tuple[float, float], ...] = ()
     # The filter's MAP when probing ended (None without a filter).
     probe_map_eta: Eta | None = None
@@ -99,7 +97,7 @@ def goal_line(position_error: float, yaw_error: float) -> str:
 
 
 def _same_push(a: Action, b: Action) -> bool:
-    """Whether `a` and `b` command the same push: contact position, speed and time."""
+    """Whether `a` and `b` have the same contact position, speed and time."""
     return bool(
         np.array_equal(a.contact.position, b.contact.position)
         and a.velocity == b.velocity
@@ -110,12 +108,9 @@ def _same_push(a: Action, b: Action) -> bool:
 class MpcSelector:
     """Chooses placement pushes by MPC on the shared probing state.
 
-    A decision is the span between two executed pushes, identified by
-    `state.pushes`.  Each decision is planned once and its ranked candidates are
-    kept, so re-selections after an arm-plan failure only scan them again.  The
-    latest decision's planning time, pre-push cost and chosen candidate are kept
-    as attributes for reporting; `on_choose` runs when a candidate is chosen,
-    before its arm plan and push.
+    A decision spans two executed pushes, keyed by `state.pushes`. It is planned
+    once; re-selections after an arm-plan failure rescan its ranked candidates.
+    `on_choose` runs before the chosen push's arm plan.
     """
 
     def __init__(

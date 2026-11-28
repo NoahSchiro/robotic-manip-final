@@ -1,26 +1,20 @@
-"""The trained surrogate: an ensemble of standardized MLPs predicting a
-push's outcome from (eta, start state, action), and its adapter to the
-estimator's DynamicsModel protocol.
-
-The ensemble is trained on `gen-surrogate-data`'s dataset (Drake-predicted
-outcomes of sampled pushes) and saved as one .npz of weights and
-standardization statistics, so inference needs only numpy.
+"""The trained surrogate: an ensemble of standardized MLPs predicting a push's
+outcome from (eta, start state, action), and its adapter to the estimator's
+DynamicsModel protocol. Saved as one .npz of weights and statistics, so
+inference needs only numpy.
 
 Input columns (49), in order:
-    eta (mu, bx, by) — the hypothesis
-    start pose (x, y, yaw) — world, yaw in [0, 2 pi) (feature_start)
-    start velocity (vx, vy, wz) — world
-    site position (x, y, z) — object body frame
-    site normal (x, y, z) — object body frame
+    eta (mu, bx, by)
+    start pose (x, y, yaw), world, yaw in [0, 2 pi) (feature_start)
+    start velocity (vx, vy, wz), world
+    site position (x, y, z) and site normal (x, y, z), object body frame
     commanded speed (m/s), contact time (s)
-    tip path (x, y) at PATH_SAMPLES uniform window times; at
-        training time the executed (lagged) constructed path, at inference
-        the measured path downsampled exactly the same way.  The z row is
-        dropped: the constructed paths hold it constant, so it carries no
-        signal, while the arm's measured z wobbles by centimeters.
+    tip path (x, y) at PATH_SAMPLES uniform window times, world frame. The
+        z row is dropped: constructed paths hold z constant, and the
+        measured z wobbles by centimeters.
 
-Output columns (6), all in the start pose's frame:
-    displacement (dx, dy, dyaw). Window-end pose offset
+Output columns (6), in the start pose's frame:
+    displacement (dx, dy, dyaw) to the window's end
     push-end velocity (vx, vy, wz)
 """
 
@@ -47,9 +41,7 @@ MLPWeights = tuple[Layer, ...]
 
 @dataclass(frozen=True)
 class SurrogateEnsemble:
-    """The trained surrogate: standardization statistics plus one weight set
-    per member.  `predict` averages the members; `predict` with `member`
-    returns that member alone (the env's randomization draws on it)."""
+    """Standardization statistics and one weight set per member."""
 
     input_mean: np.ndarray
     input_std: np.ndarray
@@ -58,8 +50,8 @@ class SurrogateEnsemble:
     members: tuple[MLPWeights, ...]
 
     def predict(self, x: np.ndarray, member: int | None = None) -> np.ndarray:
-        """Predict standardized-to-raw outputs for the (N, 49) inputs `x`:
-        the members' mean, or one member's output."""
+        """Predict raw (N, 6) outputs for (N, 49) inputs `x`: the members'
+        mean, or the output of the single member `member`."""
         standardized = ((x - self.input_mean) / self.input_std).astype(np.float32)
         if member is None:
             outputs = [mlp_forward(w, standardized) for w in self.members]
@@ -119,10 +111,9 @@ def nominal_tip_path(
 
 
 def _path_times(events: np.ndarray, end: float) -> np.ndarray:
-    """Sample times (s) from 0 to `end` on SAMPLE_PERIOD, with `events` (the
-    maneuver's break times and the window end) included exactly.  Grid samples
-    within half a period of an event are dropped, so no two times nearly
-    coincide and the spline's breaks stay distinct."""
+    """Times (s) from 0 to `end` every SAMPLE_PERIOD, with `events` included
+    exactly. Grid samples within half a period of an event are dropped, so no
+    two times nearly coincide."""
     events = np.unique(np.round(events, TIME_DECIMALS))
     grid = np.arange(0.0, end, SAMPLE_PERIOD)
     grid = grid[np.abs(grid[:, None] - events).min(axis=1) > SAMPLE_PERIOD / 2]
@@ -135,14 +126,11 @@ def nominal_action_tip_path(
     settle_time: float,
     transfer_height: float,
 ) -> ActionTipPath:
-    """Sample push_maneuver's tip path from the standoff point through the
-    push, the release, the lift, and the hold.  Each leg is straight at
-    constant speed and the tip rests during the hold.  Times are seconds from
-    the standoff; the measurement window closes `settle_time` after the push
-    segment, wherever that falls along the path."""
+    """Sample push_maneuver's tip path from the standoff through the push,
+    release, lift, and hold. Each leg is straight at constant speed; the tip
+    rests during the hold. Times are seconds from the standoff; the window
+    closes `settle_time` after the push segment."""
     maneuver = push_maneuver(X_WO, action, transfer_height)
-    # From the standoff, where the dwell holds the tip: push, release, lift,
-    # then the hold at the lift's end.
     poses = [pose for pose, _duration in maneuver[LEG_DWELL:]]
     waypoints = np.column_stack(
         [*(pose.translation() for pose in poses), poses[-1].translation()]
@@ -174,9 +162,8 @@ def nominal_action_tip_path(
 
 
 def path_downsample(tip_times: np.ndarray, tip_positions: np.ndarray) -> np.ndarray:
-    """Resample the (3, n) tip path at PATH_SAMPLES uniform window times —
-    the conditioning block the surrogate sees (and the predictor rebuilds
-    from a measured path the same way)."""
+    """Resample the (3, n) tip path at PATH_SAMPLES uniform times on
+    [0, tip_times[-1]]: the surrogate's conditioning block."""
     samples = np.linspace(0.0, float(tip_times[-1]), PATH_SAMPLES)
     return np.vstack(
         [np.interp(samples, tip_times, tip_positions[row]) for row in range(3)]
@@ -244,11 +231,9 @@ def count_members(names: Sequence[str]) -> int:
 
 
 def feature_start(start: np.ndarray) -> np.ndarray:
-    """A start pose or planar state (..., 3 or 6; x, y, yaw first) as the
-    surrogate's input sees it: yaw in [0, 2*pi), the convention the training
-    data's start poses use.
-    Observations and the environment report yaw in [-pi, pi), which the
-    network never saw for negative yaws."""
+    """A start pose or planar state (..., 3 or 6; x, y, yaw first) with yaw
+    mapped to [0, 2*pi), the training data's convention. Observations report
+    yaw in [-pi, pi), which the network never saw for negative yaws."""
     features = np.array(start, dtype=float)
     features[..., 2] = np.mod(features[..., 2], 2.0 * np.pi)
     return features
@@ -293,9 +278,8 @@ def world_measurement(start: np.ndarray, outputs: np.ndarray) -> np.ndarray:
 
 
 def measured_path_block(obs: PushObservation) -> np.ndarray:
-    """Downsample the observation's measured tip path to PATH_SAMPLES
-    uniform window times — the surrogate's path-conditioning block, the
-    same resampling the dataset's tip_path columns were built with."""
+    """Downsample the observation's measured tip path to PATH_SAMPLES uniform
+    times on [0, duration], matching the dataset's tip_path columns."""
     samples = np.linspace(0.0, obs.duration, PATH_SAMPLES)
     return np.stack(
         [np.interp(samples, obs.tip_times, obs.tip_positions[row]) for row in range(2)]

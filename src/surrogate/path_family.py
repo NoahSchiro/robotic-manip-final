@@ -1,18 +1,9 @@
-"""The executed-path deviation family: a low-dimensional model of how the
-real arm's tracked tip paths deviate from the commanded ones.
+"""Low-dimensional model of the real arm's executed tip path deviation (world
+xy, a few mm) from the commanded path: a mean plus principal components with
+calibrated amplitudes, fitted to the recorded trials.
 
-The arm's PD tracking produces force- and gravity-dependent deviations of a
-few mm from the commanded tip path; a surrogate trained only on commanded
-paths would meet different paths at deployment.  This family is calibrated
-on the recorded trials' measured paths: each recorded push's measured xy
-path minus its reconstructed nominal path, stacked and decomposed by SVD.
-The result is a mean deviation plus principal components with calibrated
-amplitudes; sampled per push, they generate executed paths that span the
-real arm's deviation distribution (`calibrate-path-family` prints the
-residual).
-
-The deviation lives on PATH_SAMPLES uniform window-fraction points in the
-world xy frame, and is interpolated onto whatever time grid a path uses.
+The deviation is defined on PATH_SAMPLES uniform points of the window's
+normalized time and interpolated onto each path's time grid.
 """
 
 from dataclasses import dataclass
@@ -59,17 +50,22 @@ class PathFamily:
         return np.vstack([np.interp(u, u_model, curve[row]) for row in range(2)])
 
 
+def deviation_rms(family: PathFamily) -> float:
+    """The family's root-mean-square tip deviation (m) over its x and y
+    samples: mean offset and component spread together."""
+    total = (family.sigmas**2).sum() + (family.mean**2).sum()
+    return float(np.sqrt(total / family.mean.size))
+
+
 def calibrate_path_family(
     trials_path: Path,
     transfer_height: float,
     settle_time: float = 0.3,
     keep: int = KEEP_COMPONENTS,
 ) -> tuple[PathFamily, float]:
-    """Calibrate the family from a recorded-trials dataset: the deviations
-    of each recorded push's measured xy path from its reconstructed nominal
-    path (built at `transfer_height` m), decomposed by SVD.  Returns the family
-    and the residual RMS after the kept components (mm-scale diagnostics are
-    the caller's job)."""
+    """Fit the family to a recorded-trials dataset: each push's measured xy
+    path minus its nominal path (built at `transfer_height` m), decomposed by
+    SVD. Returns the family and the RMS residual (m) after the kept components."""
     with np.load(trials_path, allow_pickle=True) as data:
         tip_times = data["tip_times"]
         tip_positions = data["tip_positions"]
